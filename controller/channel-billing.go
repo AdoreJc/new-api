@@ -420,6 +420,47 @@ func updateChannelMoonshotBalance(channel *model.Channel) (float64, error) {
 	return availableBalanceUsd, nil
 }
 
+// updateChannelSub2APIBalance queries the Sub2API gateway's GET /v1/usage endpoint.
+// Sub2API keys come in two flavors: quota keys carry their remaining amount in
+// "remaining", wallet keys carry it in "balance" (balance is the account-wide
+// wallet, shared across keys — do not sum it across channels). Non-USD units
+// (e.g. NTS credits) are stored as-is; balance is only used for display and
+// the <=0 auto-disable check.
+func updateChannelSub2APIBalance(channel *model.Channel) (float64, error) {
+	baseURL := channel.GetBaseURL()
+	if baseURL == "" {
+		return 0, errors.New("sub2api 渠道缺少 base_url")
+	}
+	url := fmt.Sprintf("%s/v1/usage", strings.TrimRight(baseURL, "/"))
+	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
+	if err != nil {
+		return 0, err
+	}
+
+	type sub2apiUsageResponse struct {
+		Balance   *float64 `json:"balance"`
+		Remaining *float64 `json:"remaining"`
+		IsValid   *bool    `json:"isValid"`
+	}
+	usage := sub2apiUsageResponse{}
+	if err := common.Unmarshal(body, &usage); err != nil {
+		return 0, err
+	}
+
+	balance := usage.Remaining
+	if balance == nil {
+		balance = usage.Balance
+	}
+	if balance == nil {
+		return 0, errors.New("sub2api /v1/usage 响应缺少 remaining/balance 字段（可能是订阅组密钥，无可用余额字段）")
+	}
+	if usage.IsValid != nil && !*usage.IsValid {
+		return 0, errors.New("sub2api 密钥已失效 (isValid=false)")
+	}
+	channel.UpdateBalance(*balance)
+	return *balance, nil
+}
+
 func fetchAdvancedCustomBalance(channel *model.Channel) (channelBalanceResult, error) {
 	key := strings.TrimSpace(channel.Key)
 	info := &relaycommon.RelayInfo{
@@ -543,6 +584,8 @@ func updateStandardChannelBalance(channel *model.Channel) (float64, error) {
 		return updateChannelOpenRouterBalance(channel)
 	case constant.ChannelTypeMoonshot:
 		return updateChannelMoonshotBalance(channel)
+	case constant.ChannelTypeSub2API:
+		return updateChannelSub2APIBalance(channel)
 	default:
 		return 0, errors.New("尚未实现")
 	}
