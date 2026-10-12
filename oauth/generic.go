@@ -17,7 +17,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
 	"github.com/tidwall/gjson"
@@ -91,7 +90,7 @@ func (p *GenericOAuthProvider) ExchangeToken(ctx context.Context, code string, c
 		return nil, NewOAuthError(common.NewMessage(msgInvalidCode))
 	}
 
-	redirectUri := fmt.Sprintf("%s/oauth/%s", system_setting.ServerAddress, p.config.Slug)
+	redirectUri := CallbackAddress(c) + "/oauth/" + p.config.Slug
 	values := url.Values{}
 	values.Set("grant_type", "authorization_code")
 	values.Set("code", code)

@@ -276,3 +276,55 @@ func TestSubscriptionEpayReturn_RedirectsToFailOnMoneyMismatch(t *testing.T) {
 	require.NoError(t, model.DB.Where("trade_no = ?", testEpaySubscriptionNo).First(&stored).Error)
 	assert.Equal(t, common.TopUpStatusPending, stored.Status)
 }
+
+func TestSubscriptionEpayReturnFollowsAlternateLineAndNotifyStays(t *testing.T) {
+	setupSubscriptionEpayTest(t, 7.3)
+	createEpayTestPlan(t, 10)
+	previousAlternates := system_setting.AlternateServerAddresses
+	system_setting.AlternateServerAddresses = []string{"https://line2.example.com"}
+	t.Cleanup(func() { system_setting.AlternateServerAddresses = previousAlternates })
+	gin.SetMode(gin.TestMode)
+
+	for _, test := range []struct {
+		name     string
+		host     string
+		origin   string
+		expected string
+	}{
+		{name: "alternate line", host: "line2.example.com", origin: "https://line2.example.com", expected: "https://line2.example.com"},
+		{name: "primary line", host: "api.example.com", origin: "https://api.example.com", expected: "https://api.example.com"},
+		{name: "unconfigured host and origin", host: "attacker.example", origin: "https://attacker.example", expected: "https://api.example.com"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/api/subscription/pay/epay", strings.NewReader(`{"plan_id":1,"payment_method":"alipay"}`))
+			c.Request.Host = test.host
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Request.Header.Set("Origin", test.origin)
+			c.Set("id", 1)
+			SubscriptionRequestEpay(c)
+			var envelope apiEnvelope
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &envelope))
+			require.Equal(t, "success", envelope.Message)
+			assert.Equal(t, test.expected+"/api/subscription/epay/return", envelope.Data["return_url"])
+			assert.Equal(t, "https://api.example.com/api/subscription/epay/notify", envelope.Data["notify_url"])
+
+			// The return handler sends the browser to the console of the line it came back through.
+			recorder = httptest.NewRecorder()
+			c, _ = gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodGet, "/api/subscription/epay/return", nil)
+			c.Request.Host = test.host
+			SubscriptionEpayReturn(c)
+			assert.Equal(t, test.expected+"/wallet?pay=fail", recorder.Header().Get("Location"))
+		})
+	}
+
+	// A custom callback address still receives the return of every non-alternate request.
+	previousCallback := operation_setting.CustomCallbackAddress
+	operation_setting.CustomCallbackAddress = "https://callback.example.com"
+	t.Cleanup(func() { operation_setting.CustomCallbackAddress = previousCallback })
+	envelope := postJSON(t, SubscriptionRequestEpay, "/api/subscription/pay/epay", `{"plan_id":1,"payment_method":"alipay"}`, 1, nil)
+	assert.Equal(t, "https://callback.example.com/api/subscription/epay/return", envelope.Data["return_url"])
+	assert.Equal(t, "https://callback.example.com/api/subscription/epay/notify", envelope.Data["notify_url"])
+}

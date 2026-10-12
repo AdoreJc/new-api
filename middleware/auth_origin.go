@@ -3,10 +3,10 @@ package middleware
 import (
 	"crypto/subtle"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -21,7 +21,7 @@ func SessionCookieOriginGuard() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		origin, ok := requestBrowserOrigin(c.Request)
+		origin, ok := common.RequestBrowserOrigin(c.Request)
 		if !ok || !isAllowedSessionOrigin(c.Request, origin) {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 				"success": false,
@@ -32,30 +32,6 @@ func SessionCookieOriginGuard() gin.HandlerFunc {
 		}
 		c.Next()
 	}
-}
-
-func requestBrowserOrigin(request *http.Request) (string, bool) {
-	originValues := request.Header.Values("Origin")
-	if len(originValues) > 1 {
-		return "", false
-	}
-	if len(originValues) == 1 {
-		if strings.Contains(originValues[0], ",") {
-			return "", false
-		}
-		origin, err := common.NormalizeOrigin(originValues[0])
-		return origin, err == nil
-	}
-	refererValues := request.Header.Values("Referer")
-	if len(refererValues) != 1 {
-		return "", false
-	}
-	referer, err := url.Parse(strings.TrimSpace(refererValues[0]))
-	if err != nil || referer.Scheme == "" || referer.Host == "" || referer.User != nil {
-		return "", false
-	}
-	origin, err := common.NormalizeOrigin(referer.Scheme + "://" + referer.Host)
-	return origin, err == nil
 }
 
 func isAllowedSessionOrigin(request *http.Request, origin string) bool {
@@ -72,5 +48,7 @@ func isAllowedSessionOrigin(request *http.Request, origin string) bool {
 			return true
 		}
 	}
-	return false
+	// Website lines configured by the administrator are trusted the same way as
+	// SESSION_COOKIE_TRUSTED_URL, but only over HTTPS like that list.
+	return strings.HasPrefix(origin, "https://") && system_setting.MatchServerAddress(origin) != ""
 }

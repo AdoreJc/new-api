@@ -31,6 +31,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 
 import { FormDirtyIndicator } from '../components/form-dirty-indicator'
 import { FormNavigationGuard } from '../components/form-navigation-guard'
@@ -47,12 +48,14 @@ import {
   normalizeLocalizedContentOption,
   toLocalizedContentOptionValue,
 } from '../utils/localized-content'
+import { isValidAlternateServerAddresses } from './alternate-server-addresses'
 import { LocalizedContentField } from './localized-content-field'
 import { isValidTaskPublicAddress } from './task-public-address'
 
 const _systemInfoSchema = z.object({
   SystemName: z.string().min(1),
   ServerAddress: z.string().optional(),
+  AlternateServerAddresses: z.string().refine(isValidAlternateServerAddresses),
   TaskPublicAddress: z.string().refine(isValidTaskPublicAddress),
   Logo: z.string().url().optional().or(z.literal('')),
   Footer: z.string().optional(),
@@ -92,6 +95,9 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
   const normalizedDefaults: SystemInfoFormValues = {
     SystemName: normalizeValue(defaultValues.SystemName),
     ServerAddress: normalizeValue(defaultValues.ServerAddress),
+    AlternateServerAddresses: normalizeValue(
+      defaultValues.AlternateServerAddresses
+    ),
     TaskPublicAddress: normalizeValue(defaultValues.TaskPublicAddress),
     Logo: normalizeValue(defaultValues.Logo),
     Footer: normalizeValue(defaultValues.Footer),
@@ -128,6 +134,14 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
       error: () => t('System name is required'),
     }),
     ServerAddress: z.string().optional(),
+    AlternateServerAddresses: z
+      .string()
+      .refine(isValidAlternateServerAddresses, {
+        error: () =>
+          t(
+            'Enter one HTTP(S) origin per line, without a path, wildcard, or credentials'
+          ),
+      }),
     TaskPublicAddress: z.string().refine(isValidTaskPublicAddress, {
       error: () =>
         t(
@@ -223,6 +237,31 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                     <FormDescription>
                       {t(
                         'The public URL of your server, used for OAuth callbacks, webhooks, and other external integrations'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='AlternateServerAddresses'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Alternate Server Addresses')}</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        placeholder={
+                          'https://line2.example.com\nhttps://line3.example.com'
+                        }
+                        rows={3}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Other website addresses that reach this server, one per line. Users who open one stay on it for OAuth sign-in, password reset emails, and payment returns. Register each address as a callback URL with your OAuth providers.'
                       )}
                     </FormDescription>
                     <FormMessage />
