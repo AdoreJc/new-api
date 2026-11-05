@@ -297,11 +297,15 @@ type ClaudeOAuthTokenResponse struct {
 }
 
 // ClaudeOAuthTokenError is a failed token endpoint call. Permanent reports an
-// OAuth error that a retry with the same refresh token cannot fix.
+// OAuth error that a retry with the same refresh token cannot fix. ClientLevel
+// reports an error about the OAuth client itself (client id or upstream
+// incident), which affects every credential and is therefore transient for a
+// single channel.
 type ClaudeOAuthTokenError struct {
-	StatusCode int
-	Code       string
-	Permanent  bool
+	StatusCode  int
+	Code        string
+	Permanent   bool
+	ClientLevel bool
 }
 
 func (e *ClaudeOAuthTokenError) Error() string {
@@ -316,8 +320,11 @@ var claudeOAuthPermanentErrors = map[string]bool{
 	"invalid_refresh_token": true,
 	"token_expired":         true,
 	"refresh_token_reused":  true,
-	"invalid_client":        true,
-	"unauthorized_client":   true,
+}
+
+var claudeOAuthClientLevelErrors = map[string]bool{
+	"invalid_client":      true,
+	"unauthorized_client": true,
 }
 
 // IsPermanentClaudeOAuthError reports whether err is a token error the caller
@@ -325,6 +332,13 @@ var claudeOAuthPermanentErrors = map[string]bool{
 func IsPermanentClaudeOAuthError(err error) bool {
 	var tokenErr *ClaudeOAuthTokenError
 	return errors.As(err, &tokenErr) && tokenErr.Permanent
+}
+
+// IsClientLevelClaudeOAuthError reports whether err is a token error about the
+// OAuth client rather than the credential; it must not disable a channel.
+func IsClientLevelClaudeOAuthError(err error) bool {
+	var tokenErr *ClaudeOAuthTokenError
+	return errors.As(err, &tokenErr) && tokenErr.ClientLevel
 }
 
 // ExchangeClaudeAuthorizationCode trades the pasted code for a token set. The
@@ -410,9 +424,15 @@ func parseClaudeOAuthTokenError(statusCode int, raw []byte) error {
 		}
 	}
 	code = strings.TrimSpace(code)
-	// Only an explicit OAuth error code is permanent; a 400 or 401 without a
-	// parseable body (a proxy or WAF page) is treated as transient.
-	return &ClaudeOAuthTokenError{StatusCode: statusCode, Code: code, Permanent: claudeOAuthPermanentErrors[code]}
+	// Only an explicit credential-level OAuth error code is permanent; a 400
+	// or 401 without a parseable body (a proxy or WAF page) and a client-level
+	// code (invalid_client, unauthorized_client) are treated as transient.
+	return &ClaudeOAuthTokenError{
+		StatusCode:  statusCode,
+		Code:        code,
+		Permanent:   claudeOAuthPermanentErrors[code],
+		ClientLevel: claudeOAuthClientLevelErrors[code],
+	}
 }
 
 // noRedirectClient returns a copy of client that never follows redirects, so a

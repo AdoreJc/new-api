@@ -277,6 +277,8 @@ function ResetCreditsPanel(props: {
   response: ClaudeResetCreditsResponse | null
   isLoading: boolean
   isResetting: boolean
+  /** The last reset did not complete; credits must be re-queried first */
+  isStale: boolean
   errorMessage: string
   resetErrorMessage: string
   resetSuccessMessage: string
@@ -286,7 +288,7 @@ function ResetCreditsPanel(props: {
   const { t } = useTranslation()
   const credits = props.view?.credits ?? []
   const availableCount = props.view ? String(props.view.available_count) : '-'
-  const canReset = (props.view?.available_count ?? 0) > 0
+  const canReset = (props.view?.available_count ?? 0) > 0 && !props.isStale
   let eligibilityText = t('This account is not enrolled in reset credits.')
   if (props.view?.eligible && props.view.at_limit) {
     eligibilityText = t(
@@ -402,7 +404,19 @@ function ResetCreditsPanel(props: {
         </Button>
       </div>
 
-      {!canReset ? (
+      {props.isStale ? (
+        <Alert variant='destructive'>
+          <AlertTriangle />
+          <AlertTitle>{t('Reset credits need a refresh')}</AlertTitle>
+          <AlertDescription>
+            {t(
+              'The last reset request did not complete. Refresh the reset credits before applying another reset.'
+            )}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {!canReset && !props.isStale ? (
         <Alert>
           <AlertTriangle />
           <AlertTitle>{t('No reset credits available')}</AlertTitle>
@@ -446,6 +460,9 @@ export function ClaudeUsageDialog(props: ClaudeUsageDialogProps) {
   const [isResetting, setIsResetting] = useState(false)
   const [resetActionError, setResetActionError] = useState('')
   const [resetActionMessage, setResetActionMessage] = useState('')
+  // A failed reset (rejected, or interrupted with an unknown outcome) locks
+  // the reset button until the credits are queried again successfully.
+  const [resetCreditsStale, setResetCreditsStale] = useState(false)
 
   const response = props.response
   const channelId = props.channelId
@@ -460,7 +477,8 @@ export function ClaudeUsageDialog(props: ClaudeUsageDialogProps) {
   const availableCountText = resetCreditsView
     ? String(resetCreditsView.available_count)
     : '-'
-  const canReset = (resetCreditsView?.available_count ?? 0) > 0
+  const canReset =
+    (resetCreditsView?.available_count ?? 0) > 0 && !resetCreditsStale
 
   const channelLabelName = props.channelDisplayName ?? props.channelName ?? '-'
   let channelLabelId = ''
@@ -497,6 +515,7 @@ export function ClaudeUsageDialog(props: ClaudeUsageDialogProps) {
           )
         }
         setResetCreditsResponse(res)
+        setResetCreditsStale(false)
       } catch (error) {
         setResetCreditsError(
           error instanceof Error
@@ -528,6 +547,7 @@ export function ClaudeUsageDialog(props: ClaudeUsageDialogProps) {
       setIsResetting(false)
       setResetActionError('')
       setResetActionMessage('')
+      setResetCreditsStale(false)
     }
     props.onOpenChange(nextOpen)
   }
@@ -565,6 +585,8 @@ export function ClaudeUsageDialog(props: ClaudeUsageDialogProps) {
       await Promise.resolve(props.onRefresh?.())
       await loadResetCredits(true)
     } catch (error) {
+      setResetCreditsStale(true)
+      setResetConfirmOpen(false)
       setResetActionError(
         error instanceof Error ? error.message : t('Failed to reset usage')
       )
@@ -721,6 +743,7 @@ export function ClaudeUsageDialog(props: ClaudeUsageDialogProps) {
               response={resetCreditsResponse}
               isLoading={isLoadingResetCredits}
               isResetting={isResetting}
+              isStale={resetCreditsStale}
               errorMessage={resetCreditsError}
               resetErrorMessage={resetActionError}
               resetSuccessMessage={resetActionMessage}

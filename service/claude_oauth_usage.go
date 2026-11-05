@@ -366,14 +366,19 @@ func RedeemClaudeResetCredit(ctx context.Context, client *http.Client, baseURL s
 	}
 	setClaudeOAuthRequestHeaders(req, at, true)
 	req.Header.Set("Content-Type", "application/json")
-	// From here on the request may have reached upstream: never retry, and
-	// report anything but a well-formed answer as unknown.
+	// From here on the request may have reached upstream: never retry. Only
+	// a 4xx answer is a definite rejection; a transport error, a timeout, a
+	// 5xx (upstream, proxy or CDN) or an unparseable body leaves the outcome
+	// unknown.
 	status, raw, err := doClaudeOAuthRequest(ctx, client, req)
 	if err != nil {
 		return status, nil, fmt.Errorf("%w: %v", ErrClaudeResetOutcomeUnknown, err)
 	}
-	if status != http.StatusOK {
+	if status >= http.StatusBadRequest && status < http.StatusInternalServerError {
 		return status, nil, fmt.Errorf("reset request rejected with upstream status %d", status)
+	}
+	if status != http.StatusOK {
+		return status, nil, fmt.Errorf("%w: upstream status %d", ErrClaudeResetOutcomeUnknown, status)
 	}
 	var result struct {
 		Result        string     `json:"result"`

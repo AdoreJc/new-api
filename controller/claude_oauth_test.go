@@ -804,3 +804,113 @@ func TestResetClaudeChannelUsageReportsInterruptedRequestAsUnknown(t *testing.T)
 	assert.Contains(t, envelope.Message, "result is unknown")
 	assert.Equal(t, int32(1), resetCalls.Load())
 }
+
+func TestGetClaudeChannelUsageDoesNotRefreshOrRetryOnForbidden(t *testing.T) {
+	setupClaudeOAuthChannelDB(t)
+	var usageCalls, tokenCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/oauth/token":
+			tokenCalls.Add(1)
+			_, _ = w.Write([]byte(`{"access_token":"at-new","token_type":"Bearer","expires_in":3600}`))
+		case "/api/oauth/usage":
+			usageCalls.Add(1)
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":{"type":"permission_error","message":"scope"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	useClaudeOAuthTokenServer(t, server)
+
+	channel := newClaudeOAuthTestChannel(t, server.URL, service.ClaudeOAuthKey{AccessToken: "at-1", RefreshToken: "rt-1", Scope: "user:profile"})
+	envelope := getJSON(t, GetClaudeChannelUsage, "/api/channel/1/claude/usage", channelParams(channel.Id))
+	assert.False(t, envelope.Success)
+	assert.Equal(t, http.StatusForbidden, envelope.UpstreamStatus)
+	assert.Equal(t, int32(1), usageCalls.Load(), "a 403 is not retried")
+	assert.Equal(t, int32(0), tokenCalls.Load(), "a 403 does not rotate the token")
+	assert.Equal(t, "at-1", storedClaudeOAuthKey(t, channel.Id).AccessToken)
+}
+
+func TestClaudeOAuthKeyWithoutExpiryIsRefreshedByTaskNotInline(t *testing.T) {
+	server, tokenCalls := newClaudeOAuthTaskFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"at-new","token_type":"Bearer","expires_in":28800,"refresh_token":"rt-noexp-2"}`))
+	})
+	channel := newClaudeOAuthTestChannel(t, server.URL, service.ClaudeOAuthKey{AccessToken: "at-pasted", RefreshToken: "rt-noexp"})
+	pasted, err := service.ParseClaudeOAuthKey(channel.Key)
+	require.NoError(t, err)
+
+	// The relay path uses the pasted token as is.
+	key, err := service.EnsureClaudeChannelAccessToken(context.Background(), channel.Id, pasted)
+	require.NoError(t, err)
+	assert.Equal(t, "at-pasted", key.AccessToken)
+	assert.Equal(t, int32(0), tokenCalls.Load(), "an unknown expiry is not refreshed inline")
+
+	// The background task renews it once and stores a real expiry.
+	scanned, refreshed := service.RunClaudeCredentialAutoRefreshOnce()
+	assert.Equal(t, 1, scanned)
+	assert.Equal(t, 1, refreshed)
+	assert.Equal(t, int32(1), tokenCalls.Load())
+	stored := storedClaudeOAuthKey(t, channel.Id)
+	assert.Equal(t, "at-new", stored.AccessToken)
+	assert.Equal(t, "rt-noexp-2", stored.RefreshToken)
+	assert.WithinDuration(t, time.Now().Add(8*time.Hour), stored.ExpiresAtTime(), time.Minute)
+
+	_, refreshed = service.RunClaudeCredentialAutoRefreshOnce()
+	assert.Equal(t, 0, refreshed, "a key with a known, distant expiry is skipped on the next tick")
+	assert.Equal(t, int32(1), tokenCalls.Load())
+}
+
+func TestClaudeCredentialAutoRefreshTaskKeepsChannelOnClientLevelError(t *testing.T) {
+	server, tokenCalls := newClaudeOAuthTaskFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"invalid_client","error_description":"client not found"}`))
+	})
+	channel := newClaudeOAuthTaskChannel(t, server.URL, "rt-client-level", 10*time.Minute)
+
+	service.RunClaudeCredentialAutoRefreshOnce()
+	assert.Equal(t, common.ChannelStatusEnabled, channelStatus(t, channel.Id))
+	assert.Equal(t, "rt-client-level", storedClaudeOAuthKey(t, channel.Id).RefreshToken)
+
+	service.RunClaudeCredentialAutoRefreshOnce()
+	assert.Equal(t, int32(2), tokenCalls.Load(), "a client-level error is retried on the next tick")
+
+	_, _, err := service.RefreshClaudeChannelCredential(context.Background(), channel.Id, service.ClaudeCredentialRefreshOptions{Force: true})
+	require.Error(t, err)
+	assert.False(t, service.IsPermanentClaudeOAuthError(err))
+	assert.True(t, service.IsClientLevelClaudeOAuthError(err))
+}
+
+func TestResetClaudeChannelUsageReportsUpstreamServerErrorAsUnknown(t *testing.T) {
+	setupClaudeOAuthChannelDB(t)
+	future := time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339)
+	var resetCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/oauth/usage":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"cedar_ember":{"eligible":true,"at_limit":true,"next_grant_id":"grant_next","grants":[{"id":"grant_next","label":"Weekly reset","resets_left":1,"ends_at":"` + future + `","clears":["five_hour"],"usable_now":true,"use_requires_limit":true,"percent_used":{},"blocking":[]}]}}`))
+		case r.URL.Path == "/api/oauth/profile":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"organization":{"uuid":"2b3f6e9a-1b2c-4d5e-8f90-123456789abc"}}`))
+		case strings.HasSuffix(r.URL.Path, "/reset_rate_limits"):
+			resetCalls.Add(1)
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`<html>502 Bad Gateway</html>`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	channel := newClaudeOAuthTestChannel(t, server.URL, service.ClaudeOAuthKey{AccessToken: "at", Scope: "user:profile"})
+	envelope := postJSON(t, ResetClaudeChannelUsage, "/api/channel/1/claude/usage/reset", "", 1, channelParams(channel.Id))
+	assert.False(t, envelope.Success)
+	assert.Contains(t, envelope.Message, "result is unknown")
+	assert.Equal(t, int32(1), resetCalls.Load(), "a 5xx reset answer is not retried")
+}

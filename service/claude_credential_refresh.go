@@ -97,6 +97,9 @@ func RefreshClaudeChannelCredential(ctx context.Context, channelID int, opts Cla
 	}
 	res, err := RefreshClaudeOAuthToken(ctx, client, key.RefreshToken)
 	if err != nil {
+		if IsClientLevelClaudeOAuthError(err) {
+			logger.LogError(ctx, common.LogText("claude oauth: channel_id=%d token endpoint rejected the OAuth client, not this credential; check the client id and upstream status, the channel stays enabled: %v", ch.Id, err))
+		}
 		return nil, ch, err
 	}
 
@@ -136,7 +139,9 @@ func RefreshClaudeChannelCredential(ctx context.Context, channelID int, opts Cla
 
 // claudeOAuthKeyNeedsRefresh reports whether the access token expires within
 // leeway. A key without a parseable expires_at (pasted by hand) counts as
-// needing a refresh, which also records a real expiry on the first renewal.
+// needing a refresh so the background task records a real expiry on its next
+// tick; the relay path never refreshes such a key inline (see
+// EnsureClaudeChannelAccessToken).
 func claudeOAuthKeyNeedsRefresh(key *ClaudeOAuthKey, now time.Time, leeway time.Duration) bool {
 	expiresAt := key.ExpiresAtTime()
 	if expiresAt.IsZero() {
@@ -154,11 +159,15 @@ func EnsureClaudeChannelAccessToken(ctx context.Context, channelID int, key *Cla
 		return nil, fmt.Errorf("claude oauth channel: empty oauth key")
 	}
 	now := time.Now()
-	if !claudeOAuthKeyNeedsRefresh(key, now, claudeOAuthRequestLeeway) {
+	expiresAt := key.ExpiresAtTime()
+	// An unknown expiry is not refreshed on the request path: a failing token
+	// endpoint would otherwise cost every request a token call before it
+	// falls back to the still valid access token. The background task
+	// renews such a key once and stores a real expiry.
+	if expiresAt.IsZero() || !claudeOAuthKeyNeedsRefresh(key, now, claudeOAuthRequestLeeway) {
 		return key, nil
 	}
-	expiresAt := key.ExpiresAtTime()
-	expired := !expiresAt.IsZero() && !expiresAt.After(now)
+	expired := !expiresAt.After(now)
 	if channelID <= 0 || strings.TrimSpace(key.RefreshToken) == "" {
 		if expired {
 			return nil, fmt.Errorf("claude oauth channel: access token expired and no refresh token is available")
