@@ -775,6 +775,7 @@ func TestResetClaudeChannelUsageDoesNotRetryRejectedResetRequest(t *testing.T) {
 	channel := newClaudeOAuthTestChannel(t, server.URL, service.ClaudeOAuthKey{AccessToken: "at", RefreshToken: "rt-1", Scope: "user:profile"})
 	envelope := postJSON(t, ResetClaudeChannelUsage, "/api/channel/1/claude/usage/reset", "", 1, channelParams(channel.Id))
 	assert.False(t, envelope.Success)
+	assert.NotContains(t, envelope.Message, "result is unknown", "a 4xx answer is a definite rejection, not an unknown outcome")
 	assert.Equal(t, int32(1), resetCalls.Load(), "the reset POST is sent exactly once")
 	assert.Equal(t, int32(0), tokenCalls.Load(), "a rejected reset POST does not rotate the token")
 }
