@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
 import { Separator } from '@/components/ui/separator'
 import { useSystemConfig } from '@/hooks/use-system-config'
+import { formatLocalCurrencyAmount } from '@/lib/currency'
 import { formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { DEFAULT_CURRENCY_CONFIG } from '@/stores/system-config-store'
@@ -56,6 +57,8 @@ interface Props {
   enableWaffoPancake?: boolean
   enableOnlineTopUp?: boolean
   epayMethods?: PaymentMethod[]
+  /** Price charged per 1 USD of plan price when paying through Epay (admin "price per USD"). */
+  priceRatio?: number
   purchaseLimit?: number
   purchaseCount?: number
   userQuota?: number
@@ -87,7 +90,14 @@ export function SubscriptionPurchaseDialog(props: Props) {
     props.enableOnlineTopUp && (props.epayMethods || []).length > 0
   const hasAnyPayment = hasStripe || hasCreem || hasWaffoPancake || hasEpay
   const totalAmount = Number(plan.total_amount || 0)
-  const price = Number(plan.price_amount || 0).toFixed(2)
+  const priceAmount = Number(plan.price_amount || 0)
+  const price = priceAmount.toFixed(2)
+  // Mirrors the backend conversion for Epay orders: plan USD price × price per USD.
+  const priceRatio =
+    props.priceRatio && props.priceRatio > 0 ? props.priceRatio : 1
+  const epayPayAmount = formatLocalCurrencyAmount(
+    Math.round(priceAmount * priceRatio * 100) / 100
+  )
   const quotaPerUnit =
     currency?.quotaPerUnit && currency.quotaPerUnit > 0
       ? currency.quotaPerUnit
@@ -372,23 +382,36 @@ export function SubscriptionPurchaseDialog(props: Props) {
               </div>
             )}
             {hasEpay && (
-              <div className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'>
-                <Combobox
-                  options={(props.epayMethods || []).map((m) => ({
-                    value: m.type,
-                    label: m.name || m.type,
-                  }))}
-                  value={selectedEpayMethod}
-                  onValueChange={(v) => v !== null && setSelectedEpayMethod(v)}
-                  disabled={limitReached}
-                  className='flex-1'
-                />
-                <Button
-                  onClick={handlePayEpay}
-                  disabled={paying || !selectedEpayMethod || limitReached}
+              <div className='space-y-2'>
+                <div
+                  className='flex items-center justify-between gap-2 text-xs'
+                  data-testid='subscription-epay-amount'
                 >
-                  {t('Pay')}
-                </Button>
+                  <span className='text-muted-foreground'>
+                    {t('Online payment amount')}
+                  </span>
+                  <span className='font-medium'>{epayPayAmount}</span>
+                </div>
+                <div className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'>
+                  <Combobox
+                    options={(props.epayMethods || []).map((m) => ({
+                      value: m.type,
+                      label: m.name || m.type,
+                    }))}
+                    value={selectedEpayMethod}
+                    onValueChange={(v) =>
+                      v !== null && setSelectedEpayMethod(v)
+                    }
+                    disabled={limitReached}
+                    className='flex-1'
+                  />
+                  <Button
+                    onClick={handlePayEpay}
+                    disabled={paying || !selectedEpayMethod || limitReached}
+                  >
+                    {t('Pay {{amount}}', { amount: epayPayAmount })}
+                  </Button>
+                </div>
               </div>
             )}
           </div>

@@ -148,6 +148,15 @@ func GetEpayClient() *epay.Client {
 	return withUrl
 }
 
+// payMoneyFromUSD converts a USD-denominated amount into the amount charged by
+// the Epay gateway, using the administrator's "price per USD" setting
+// (operation_setting.Price). It is the single exchange-rate source shared by
+// Epay top-ups (getPayMoney) and Epay subscription orders; callers round the
+// result to two decimals right before it is sent to the gateway or stored.
+func payMoneyFromUSD(usd decimal.Decimal) decimal.Decimal {
+	return usd.Mul(decimal.NewFromFloat(operation_setting.Price))
+}
+
 func getPayMoney(amount int64, group string) float64 {
 	dAmount := decimal.NewFromInt(amount)
 	// 充值金额以“展示类型”为准：
@@ -163,7 +172,6 @@ func getPayMoney(amount int64, group string) float64 {
 	}
 
 	dTopupGroupRatio := decimal.NewFromFloat(topupGroupRatio)
-	dPrice := decimal.NewFromFloat(operation_setting.Price)
 	// apply optional preset discount by the original request amount (if configured), default 1.0
 	discount := 1.0
 	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(amount)]; ok {
@@ -173,7 +181,7 @@ func getPayMoney(amount int64, group string) float64 {
 	}
 	dDiscount := decimal.NewFromFloat(discount)
 
-	payMoney := dAmount.Mul(dPrice).Mul(dTopupGroupRatio).Mul(dDiscount)
+	payMoney := payMoneyFromUSD(dAmount).Mul(dTopupGroupRatio).Mul(dDiscount)
 
 	return payMoney.InexactFloat64()
 }

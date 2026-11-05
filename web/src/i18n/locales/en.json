@@ -4366,6 +4366,7 @@
     "one keyword per line": "one keyword per line",
     "online": "online",
     "Online": "Online",
+    "Online payment amount": "Online payment amount",
     "Online payment is not enabled. Please contact the administrator.": "Online payment is not enabled. Please contact the administrator.",
     "Online top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}": "Online top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}",
     "Online topup is not enabled. Please use redemption code or contact administrator.": "Online topup is not enabled. Please use redemption code or contact administrator.",

@@ -4366,6 +4366,7 @@
     "one keyword per line": "un mot-clé par ligne",
     "online": "en ligne",
     "Online": "En ligne",
+    "Online payment amount": "Montant du paiement en ligne",
     "Online payment is not enabled. Please contact the administrator.": "Le paiement en ligne n'est pas activé. Veuillez contacter l'administrateur.",
     "Online top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}": "Recharge en ligne réussie, montant ajouté : {{quota}}, montant payé : {{amount}}",
     "Online topup is not enabled. Please use redemption code or contact administrator.": "La recharge en ligne n'est pas activée. Veuillez utiliser un code d'échange ou contacter l'administrateur.",
