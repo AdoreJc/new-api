@@ -105,28 +105,52 @@ func fetchClaudeChannelOAuthData(c *gin.Context, fetch claudeOAuthFetchFunc, tim
 		return
 	}
 
+	statusCode, payload, ok := claudeChannelOAuthFetch(c, ch, fetch, timeout, logPrefix, userMessage)
+	if !ok {
+		return
+	}
+
+	if statusCode < 200 || statusCode >= 300 {
+		common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("Upstream returned status {{status}}", map[string]any{"status": statusCode}), gin.H{
+			"upstream_status": statusCode,
+			"data":            payload,
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":         true,
+		"message":         "",
+		"upstream_status": statusCode,
+		"data":            payload,
+	})
+}
+
+// claudeChannelOAuthFetch runs fetch with the channel's access token and
+// retries once after a forced refresh when upstream answers 401. On failure
+// the error response has already been written and ok is false.
+func claudeChannelOAuthFetch(c *gin.Context, ch *model.Channel, fetch claudeOAuthFetchFunc, timeout time.Duration, logPrefix string, userMessage string) (statusCode int, payload any, ok bool) {
 	key, err := service.ParseClaudeOAuthKey(ch.Key)
 	if err != nil {
 		common.SysError(common.LogText("failed to parse oauth key: %s", err.Error()))
 		common.ApiErrorT(c, "Failed to parse credentials. Please check the channel configuration")
-		return
+		return 0, nil, false
 	}
 	if !key.HasScope("user:profile") {
 		common.ApiErrorT(c, "This credential lacks the user:profile scope required for usage queries. Re-authorize the channel")
-		return
+		return 0, nil, false
 	}
 
 	setting := ch.GetSetting()
 	client, err := service.GetHttpClientWithProxySettings(setting.Proxy, setting)
 	if err != nil {
 		common.ApiError(c, err)
-		return
+		return 0, nil, false
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 	defer cancel()
 
-	statusCode, payload, err := fetch(ctx, client, ch.GetBaseURL(), key.AccessToken)
+	statusCode, payload, err = fetch(ctx, client, ch.GetBaseURL(), key.AccessToken)
 	if err == nil && statusCode == http.StatusUnauthorized && key.RefreshToken != "" {
 		refreshCtx, refreshCancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 		refreshedKey, _, refreshErr := service.RefreshClaudeChannelCredential(refreshCtx, ch.Id, service.ClaudeCredentialRefreshOptions{ResetCaches: true, Force: true})
@@ -150,20 +174,7 @@ func fetchClaudeChannelOAuthData(c *gin.Context, fetch claudeOAuthFetchFunc, tim
 			common.SysError(logPrefix + ": " + err.Error())
 			common.ApiErrorT(c, userMessage)
 		}
-		return
+		return statusCode, nil, false
 	}
-
-	if statusCode < 200 || statusCode >= 300 {
-		common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("Upstream returned status {{status}}", map[string]any{"status": statusCode}), gin.H{
-			"upstream_status": statusCode,
-			"data":            payload,
-		})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"success":         true,
-		"message":         "",
-		"upstream_status": statusCode,
-		"data":            payload,
-	})
+	return statusCode, payload, true
 }

@@ -73,6 +73,8 @@ var auditContentTemplates = map[string]string{
 	"subscription.plan_reset":       "Reset active subscriptions for plan ${plan_id}",
 	"subscription.user_plan_reset":  "Reset active plan ${plan_id} subscriptions for user ${target_user_id}",
 	"subscription.user_quota_reset": "Administrator reset the quota of subscription plan ${plan_title} (ID: ${plan_id})",
+	"subscription.channel_bind":     "Bound channel ${channel_id} to the subscription of user ${target_user_id}",
+	"subscription.channel_unbind":   "Unbound the channel from subscription ${subscription_id} of user ${target_user_id}",
 }
 
 func recordPasskeyDomainAudit(c *gin.Context, change *model.PasskeyDomainChange, confirmed bool, err error) {

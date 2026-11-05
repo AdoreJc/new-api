@@ -30,6 +30,9 @@ import type {
   SubscriptionPayResponse,
   SubscriptionPayRequest,
   SelfSubscriptionData,
+  SubscriptionBindableChannel,
+  BindSubscriptionChannelRequest,
+  SubscriptionUsageResponse,
 } from './types'
 
 // ============================================================================
@@ -104,6 +107,37 @@ export async function deleteUserSubscription(
 ): Promise<ApiResponse> {
   const res = await api.delete(
     `/api/subscription/admin/user_subscriptions/${subId}`
+  )
+  return res.data
+}
+
+// ============================================================================
+// Admin: OAuth channel account binding
+// ============================================================================
+
+export async function getBindableChannels(): Promise<
+  ApiResponse<SubscriptionBindableChannel[]>
+> {
+  const res = await api.get('/api/subscription/admin/bindable_channels')
+  return res.data
+}
+
+export async function bindSubscriptionChannel(
+  subId: number,
+  data: BindSubscriptionChannelRequest
+): Promise<ApiResponse<{ message?: string }>> {
+  const res = await api.post(
+    `/api/subscription/admin/user_subscriptions/${subId}/bind_channel`,
+    data
+  )
+  return res.data
+}
+
+export async function unbindSubscriptionChannel(
+  subId: number
+): Promise<ApiResponse<{ message?: string }>> {
+  const res = await api.post(
+    `/api/subscription/admin/user_subscriptions/${subId}/unbind_channel`
   )
   return res.data
 }
@@ -216,6 +250,15 @@ export async function getSelfSubscriptionFull(): Promise<
   ApiResponse<SelfSubscriptionData>
 > {
   const res = await api.get('/api/subscription/self')
+  return res.data
+}
+
+// Usage windows of the OAuth account bound to one of the caller's own
+// subscriptions. The server trims the upstream document to the windows.
+export async function getSelfSubscriptionUsage(
+  subId: number
+): Promise<SubscriptionUsageResponse> {
+  const res = await api.get(`/api/subscription/self/usage/${subId}`)
   return res.data
 }
 

@@ -65,6 +65,14 @@ func GetSubscriptionSelf(c *gin.Context) {
 	if err != nil {
 		activeSubscriptions = []model.SubscriptionSummary{}
 	}
+	// Channel names are administrator-facing; subscribers only learn the type.
+	for _, list := range [][]model.SubscriptionSummary{allSubscriptions, activeSubscriptions} {
+		for _, item := range list {
+			if item.Subscription != nil {
+				item.Subscription.BoundChannelName = ""
+			}
+		}
+	}
 
 	common.ApiSuccess(c, gin.H{
 		"billing_preference": pref,
@@ -400,6 +408,8 @@ func AdminListUserSubscriptions(c *gin.Context) {
 
 type AdminCreateUserSubscriptionRequest struct {
 	PlanId int `json:"plan_id"`
+	// Optional OAuth channel to bind in the same transaction
+	ChannelId int `json:"channel_id"`
 }
 
 type AdminResetSubscriptionRequest struct {
@@ -439,8 +449,22 @@ func AdminCreateUserSubscription(c *gin.Context) {
 		return
 	}
 	var req AdminCreateUserSubscriptionRequest
-	if err := c.ShouldBindJSON(&req); err != nil || req.PlanId <= 0 {
+	if err := c.ShouldBindJSON(&req); err != nil || req.PlanId <= 0 || req.ChannelId < 0 {
 		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	if req.ChannelId > 0 {
+		msg, err := model.AdminCreateUserSubscriptionWithChannel(userId, req.PlanId, req.ChannelId)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		recordManageAuditFor(c, userId, "subscription.channel_bind", map[string]any{
+			"target_user_id": userId,
+			"plan_id":        req.PlanId,
+			"channel_id":     req.ChannelId,
+		})
+		subscriptionChangeSuccess(c, msg)
 		return
 	}
 	msg, err := model.AdminBindSubscription(userId, req.PlanId, "")

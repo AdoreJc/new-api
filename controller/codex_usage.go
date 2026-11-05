@@ -82,38 +82,65 @@ func fetchCodexChannelWhamData(
 		return
 	}
 
+	statusCode, body, fetched := codexChannelWhamFetch(c, ch, fetch, logPrefix, userMessage)
+	if !fetched {
+		return
+	}
+
+	var payload any
+	if common.Unmarshal(body, &payload) != nil {
+		payload = string(body)
+	}
+
+	ok := statusCode >= 200 && statusCode < 300
+	resp := gin.H{
+		"success":         ok,
+		"message":         "",
+		"upstream_status": statusCode,
+		"data":            payload,
+	}
+	if !ok {
+		resp["message"] = fmt.Sprintf("upstream status: %d", statusCode)
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// codexChannelWhamFetch runs fetch with the channel's access token and
+// retries once after a token refresh when upstream answers 401/403. On
+// failure the error response has already been written and ok is false.
+func codexChannelWhamFetch(c *gin.Context, ch *model.Channel, fetch codexWhamFetchFunc, logPrefix string, userMessage string) (statusCode int, body []byte, ok bool) {
 	oauthKey, err := codex.ParseOAuthKey(strings.TrimSpace(ch.Key))
 	if err != nil {
 		common.SysError(common.LogText("failed to parse oauth key: %s", err.Error()))
 		common.ApiErrorT(c, "Failed to parse credentials. Please check the channel configuration")
-		return
+		return 0, nil, false
 	}
 	accessToken := strings.TrimSpace(oauthKey.AccessToken)
 	accountID := strings.TrimSpace(oauthKey.AccountID)
 	if accessToken == "" {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "codex channel: access_token is required"})
-		return
+		return 0, nil, false
 	}
 	if accountID == "" {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "codex channel: account_id is required"})
-		return
+		return 0, nil, false
 	}
 
 	setting := ch.GetSetting()
 	client, err := service.GetHttpClientWithProxySettings(setting.Proxy, setting)
 	if err != nil {
 		common.ApiError(c, err)
-		return
+		return 0, nil, false
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
 
-	statusCode, body, err := fetch(ctx, client, ch.GetBaseURL(), accessToken, accountID)
+	statusCode, body, err = fetch(ctx, client, ch.GetBaseURL(), accessToken, accountID)
 	if err != nil {
 		common.SysError(logPrefix + ": " + err.Error())
 		common.ApiErrorT(c, userMessage)
-		return
+		return 0, nil, false
 	}
 
 	if (statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden) && strings.TrimSpace(oauthKey.RefreshToken) != "" {
@@ -142,25 +169,9 @@ func fetchCodexChannelWhamData(
 			if err != nil {
 				common.SysError(common.LogText("%s after refresh: %s", logPrefix, err.Error()))
 				common.ApiErrorT(c, userMessage)
-				return
+				return 0, nil, false
 			}
 		}
 	}
-
-	var payload any
-	if common.Unmarshal(body, &payload) != nil {
-		payload = string(body)
-	}
-
-	ok := statusCode >= 200 && statusCode < 300
-	resp := gin.H{
-		"success":         ok,
-		"message":         "",
-		"upstream_status": statusCode,
-		"data":            payload,
-	}
-	if !ok {
-		resp["message"] = fmt.Sprintf("upstream status: %d", statusCode)
-	}
-	c.JSON(http.StatusOK, resp)
+	return statusCode, body, true
 }
