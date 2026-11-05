@@ -6,6 +6,7 @@ package claude_oauth
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/url"
 	"slices"
@@ -54,6 +55,13 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	query.Set("beta", "true")
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
+}
+
+// DoRequest must be redeclared here: the embedded Claude adaptor passes its
+// own receiver to channel.DoApiRequest, which would use the API-key headers
+// and URL instead of the overrides above.
+func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
+	return channel.DoApiRequest(a, c, info, requestBody)
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {

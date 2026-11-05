@@ -920,3 +920,42 @@ func TestResetClaudeChannelUsageReportsUpstreamServerErrorAsUnknown(t *testing.T
 	assert.Contains(t, envelope.Message, "result is unknown")
 	assert.Equal(t, int32(1), resetCalls.Load(), "a 5xx reset answer is not retried")
 }
+
+// The relay path calls DoRequest on the OAuth adaptor; the embedded Claude
+// adaptor must not be the one that builds the upstream request.
+func TestClaudeOAuthAdaptorDoRequestUsesBearerTokenAndBetaPath(t *testing.T) {
+	var upstreamPath, upstreamQuery string
+	var upstreamHeaders http.Header
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamPath = r.URL.Path
+		upstreamQuery = r.URL.RawQuery
+		upstreamHeaders = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-haiku-5-5","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer server.Close()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	encoded, err := common.Marshal(service.ClaudeOAuthKey{AccessToken: "at-1", ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339)})
+	require.NoError(t, err)
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ApiKey: string(encoded), ChannelBaseUrl: server.URL}}
+	adaptor := &claude_oauth.Adaptor{}
+	resp, err := adaptor.DoRequest(c, info, strings.NewReader(`{"model":"claude-haiku-5-5","max_tokens":1,"messages":[]}`))
+	require.NoError(t, err)
+	httpResp, ok := resp.(*http.Response)
+	require.True(t, ok)
+	defer httpResp.Body.Close()
+	assert.Equal(t, http.StatusOK, httpResp.StatusCode)
+
+	assert.Equal(t, "/v1/messages", upstreamPath)
+	assert.Equal(t, "beta=true", upstreamQuery)
+	assert.Equal(t, "Bearer at-1", upstreamHeaders.Get("Authorization"))
+	assert.Empty(t, upstreamHeaders.Get("x-api-key"))
+	assert.Contains(t, upstreamHeaders.Get("anthropic-beta"), "oauth-2025-04-20")
+	assert.Equal(t, "cli", upstreamHeaders.Get("x-app"))
+}
