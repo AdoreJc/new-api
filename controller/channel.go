@@ -289,6 +289,16 @@ func buildFetchModelsHeaders(channel *model.Channel, key string) (http.Header, e
 	switch channel.Type {
 	case constant.ChannelTypeAnthropic:
 		headers = GetClaudeAuthHeader(key)
+	case constant.ChannelTypeClaudeOAuth:
+		oauthKey, err := service.ParseClaudeOAuthKey(key)
+		if err != nil {
+			return nil, err
+		}
+		headers = http.Header{}
+		headers.Set("Authorization", "Bearer "+oauthKey.AccessToken)
+		headers.Set("anthropic-version", "2023-06-01")
+		headers.Set("anthropic-beta", service.ClaudeOAuthBeta)
+		headers.Set("User-Agent", service.ClaudeCLIUserAgent())
 	default:
 		headers = GetAuthHeader(key)
 	}
@@ -651,6 +661,17 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 			}
 			if v, ok := keyMap["account_id"]; !ok || v == nil || strings.TrimSpace(fmt.Sprintf("%v", v)) == "" {
 				return fmt.Errorf("Codex key JSON must include account_id")
+			}
+		}
+	}
+
+	// Claude Subscription (OAuth) keys are the JSON token set produced by the
+	// authorization flow; a single key per channel.
+	if channel.Type == constant.ChannelTypeClaudeOAuth {
+		trimmedKey := strings.TrimSpace(channel.Key)
+		if isAdd || trimmedKey != "" {
+			if _, err := service.ParseClaudeOAuthKey(trimmedKey); err != nil {
+				return fmt.Errorf("Claude OAuth key must be a JSON object that includes access_token")
 			}
 		}
 	}

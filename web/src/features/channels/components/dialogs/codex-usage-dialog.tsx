@@ -17,32 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
-  Copy,
+  AlertTriangle,
   Check,
-  RefreshCw,
   ChevronDown,
   ChevronUp,
+  Copy,
+  RefreshCw,
   RotateCcw,
-  AlertTriangle,
 } from 'lucide-react'
-/*
-Copyright (C) 2023-2026 QuantumNous
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as
-published by the Free Software Foundation, either version 3 of the
-License, or (at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-For commercial licensing, please contact support@quantumnous.com
-*/
 import { type ReactNode, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -55,7 +37,6 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
@@ -70,12 +51,11 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { Progress } from '@/components/ui/progress'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import dayjs from '@/lib/dayjs'
-import { formatDateTimeStr, formatTimestampToDate } from '@/lib/format'
+import { formatTimestampToDate } from '@/lib/format'
 import { createServerError, getServerMessage } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
@@ -84,6 +64,16 @@ import {
   resetCodexUsage,
   type CodexResetCreditsResponse,
 } from '../../api'
+import {
+  formatUsageDurationSeconds,
+  formatUsageIsoTimestamp,
+  formatUsageTimeLeftUntil,
+} from '../../lib/usage-format'
+import {
+  UsageInfoField,
+  UsageSectionHeading,
+  UsageWindowCard,
+} from './usage-dialog-shared'
 
 type CodexRateLimitWindow = {
   used_percent?: number
@@ -173,67 +163,6 @@ function clampPercent(value: unknown): number {
 function formatUnixSeconds(unixSeconds: unknown): string {
   const v = Number(unixSeconds)
   return Number.isFinite(v) && v > 0 ? formatTimestampToDate(v) : '-'
-}
-
-function formatIsoTimestamp(value: unknown): string {
-  if (typeof value !== 'string' || value.trim() === '') {
-    return '-'
-  }
-  const d = dayjs(value)
-  if (!d.isValid()) {
-    return value
-  }
-  return formatDateTimeStr(d.toDate())
-}
-
-function formatDurationSeconds(
-  seconds: unknown,
-  t: (key: string) => string
-): string {
-  const s = Number(seconds)
-  if (!Number.isFinite(s) || s <= 0) {
-    return '-'
-  }
-
-  const total = Math.floor(s)
-  const hours = Math.floor(total / 3600)
-  const minutes = Math.floor((total % 3600) / 60)
-  const secs = total % 60
-
-  if (hours > 0) {
-    return `${hours}${t('h')} ${minutes}${t('m')}`
-  }
-  if (minutes > 0) {
-    return `${minutes}${t('m')} ${secs}${t('s')}`
-  }
-  return `${secs}${t('s')}`
-}
-
-function formatTimeLeftUntil(
-  value: unknown,
-  t: (key: string) => string
-): string {
-  if (typeof value !== 'string' || value.trim() === '') {
-    return '-'
-  }
-  const expiresAt = dayjs(value)
-  if (!expiresAt.isValid()) {
-    return '-'
-  }
-
-  const secondsLeft = expiresAt.diff(dayjs(), 'second')
-  if (secondsLeft <= 0) {
-    return t('Expired')
-  }
-
-  const days = Math.floor(secondsLeft / (24 * 60 * 60))
-  const remainingSeconds = secondsLeft % (24 * 60 * 60)
-  if (days > 0) {
-    const hours = Math.floor(remainingSeconds / 3600)
-    return `${days} ${t('days')} ${hours}${t('h')}`
-  }
-
-  return formatDurationSeconds(secondsLeft, t)
 }
 
 function normalizePlanType(value: unknown): string {
@@ -387,17 +316,6 @@ function getResetCreditStatusBadge(
   )
 }
 
-function windowLabel(windowData?: CodexRateLimitWindow | null) {
-  const percent = clampPercent(windowData?.used_percent)
-  let variant: StatusBadgeProps['variant'] = 'info'
-  if (percent >= 95) {
-    variant = 'danger'
-  } else if (percent >= 80) {
-    variant = 'warning'
-  }
-  return { percent, variant }
-}
-
 function getUsageStatusBadge(
   rateLimit: CodexRateLimit | undefined,
   t: (key: string) => string
@@ -419,108 +337,37 @@ function formatLabelValue(label: string, value: string) {
   return label.endsWith('：') ? `${label}${value}` : `${label} ${value}`
 }
 
-const percentTextClassName: Record<
-  NonNullable<StatusBadgeProps['variant']>,
-  string
-> = {
-  success: 'text-success',
-  warning: 'text-warning',
-  danger: 'text-destructive',
-  info: 'text-info',
-  neutral: 'text-muted-foreground',
-  purple: 'text-chart-4',
-  amber: 'text-warning',
-  blue: 'text-chart-1',
-  cyan: 'text-chart-2',
-  green: 'text-success',
-  grey: 'text-muted-foreground',
-  indigo: 'text-chart-1',
-  'light-blue': 'text-info',
-  'light-green': 'text-emerald-500 dark:text-emerald-300',
-  lime: 'text-chart-3',
-  orange: 'text-warning',
-  pink: 'text-chart-5',
-  red: 'text-destructive',
-  teal: 'text-chart-2',
-  violet: 'text-chart-4',
-  yellow: 'text-warning',
-}
-
-type RateLimitWindowProps = {
+function RateLimitWindow(props: {
   title: string
   window?: CodexRateLimitWindow | null
-}
-
-function RateLimitWindow(props: RateLimitWindowProps) {
+}) {
   const { t } = useTranslation()
   const hasData =
     !!props.window &&
     typeof props.window === 'object' &&
     Object.keys(props.window).length > 0
-  const { percent, variant } = windowLabel(props.window)
-
   return (
-    <Card size='sm' className='gap-0 py-0'>
-      <CardHeader className='p-3 pb-2'>
-        <div className='flex items-start justify-between gap-3'>
-          <div className='min-w-0'>
-            <CardTitle className='text-sm font-semibold'>
-              {props.title}
-            </CardTitle>
-            <CardDescription className='mt-1 text-xs'>
-              {t('Window:')}{' '}
-              {hasData
-                ? formatDurationSeconds(props.window?.limit_window_seconds, t)
-                : '-'}
-            </CardDescription>
-          </div>
-          <div className='shrink-0 text-right'>
-            <div
-              className={cn(
-                'text-xl leading-none font-semibold tabular-nums',
-                percentTextClassName[variant ?? 'neutral']
-              )}
-            >
-              {hasData ? `${percent}%` : '-'}
-            </div>
-            <div className='text-muted-foreground mt-1 text-[11px]'>
-              {t('Used')}
-            </div>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className='p-3 pt-0'>
-        {hasData ? (
-          <Progress
-            value={percent}
-            aria-label={`${props.title} usage: ${percent}%`}
-            className='mt-1'
-          />
-        ) : (
-          <div className='text-muted-foreground mt-1 text-sm'>-</div>
-        )}
-        <div className='mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2'>
-          <div className='min-w-0'>
-            <div className='text-muted-foreground text-[11px]'>
-              {t('Reset at:')}
-            </div>
-            <div className='break-all tabular-nums'>
-              {hasData ? formatUnixSeconds(props.window?.reset_at) : '-'}
-            </div>
-          </div>
-          <div className='min-w-0 sm:text-right'>
-            <div className='text-muted-foreground text-[11px]'>
-              {t('Resets in:')}
-            </div>
-            <div className='tabular-nums'>
-              {hasData
-                ? formatDurationSeconds(props.window?.reset_after_seconds, t)
-                : '-'}
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+    <UsageWindowCard
+      title={props.title}
+      subtitle={`${t('Window:')} ${
+        hasData
+          ? formatUsageDurationSeconds(props.window?.limit_window_seconds, t)
+          : '-'
+      }`}
+      percent={hasData ? clampPercent(props.window?.used_percent) : null}
+      details={[
+        {
+          label: t('Reset at:'),
+          value: hasData ? formatUnixSeconds(props.window?.reset_at) : '-',
+        },
+        {
+          label: t('Resets in:'),
+          value: hasData
+            ? formatUsageDurationSeconds(props.window?.reset_after_seconds, t)
+            : '-',
+        },
+      ]}
+    />
   )
 }
 
@@ -541,30 +388,6 @@ function RateLimitWindowGrid(props: {
   )
 }
 
-function SectionHeading(props: {
-  title: string
-  description?: string
-  children?: ReactNode
-}) {
-  return (
-    <div className='flex flex-wrap items-start justify-between gap-3'>
-      <div className='min-w-0'>
-        <div className='text-sm font-semibold'>{props.title}</div>
-        {props.description ? (
-          <div className='text-muted-foreground mt-1 text-xs leading-5'>
-            {props.description}
-          </div>
-        ) : null}
-      </div>
-      {props.children ? (
-        <div className='flex shrink-0 flex-wrap items-center gap-2'>
-          {props.children}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
 type RateLimitGroupSectionProps = {
   title: string
   description?: string
@@ -579,9 +402,9 @@ function RateLimitGroupSection(props: RateLimitGroupSectionProps) {
 
   return (
     <section className='bg-muted/40 flex flex-col gap-3 rounded-xl p-3'>
-      <SectionHeading title={props.title} description={props.description}>
+      <UsageSectionHeading title={props.title} description={props.description}>
         {statusBadge}
-      </SectionHeading>
+      </UsageSectionHeading>
       {props.meteredFeature ? (
         <div className='bg-background ring-border/60 inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-lg px-2 py-1 text-xs ring-1'>
           <span className='text-muted-foreground text-[11px]'>
@@ -597,53 +420,6 @@ function RateLimitGroupSection(props: RateLimitGroupSectionProps) {
         weeklyWindow={weeklyWindow}
       />
     </section>
-  )
-}
-
-function InfoField(props: {
-  label: string
-  value?: string | null
-  mono?: boolean
-  copyable?: boolean
-  className?: string
-}) {
-  const { t } = useTranslation()
-  const { copyToClipboard, copiedText } = useCopyToClipboard({ notify: false })
-  const text = props.value?.trim() || ''
-  const hasCopied = copiedText === text
-
-  return (
-    <div
-      className={cn(
-        'bg-background ring-border/60 min-w-0 rounded-lg p-3 ring-1',
-        props.className
-      )}
-    >
-      <div className='text-muted-foreground text-[11px] font-medium'>
-        {props.label}
-      </div>
-      <div className='mt-1 flex min-w-0 items-start justify-between gap-2'>
-        <span
-          className={cn(
-            'min-w-0 flex-1 text-xs leading-5 break-all',
-            props.mono && 'font-mono tabular-nums'
-          )}
-        >
-          {text || '-'}
-        </span>
-        {props.copyable !== false && text ? (
-          <Button
-            type='button'
-            variant='ghost'
-            size='icon-xs'
-            aria-label={t('Copy')}
-            onClick={() => copyToClipboard(text)}
-          >
-            {hasCopied ? <Check className='text-success' /> : <Copy />}
-          </Button>
-        ) : null}
-      </div>
-    </div>
   )
 }
 
@@ -674,7 +450,7 @@ function ResetCreditItem(props: { credit: CodexResetCredit; index: number }) {
   const statusBadge = getResetCreditStatusBadge(props.credit.status, t)
   const title =
     props.credit.title?.trim() || `${t('Reset Credit')} ${props.index + 1}`
-  const expiresIn = formatTimeLeftUntil(props.credit.expires_at, t)
+  const expiresIn = formatUsageTimeLeftUntil(props.credit.expires_at, t)
   const isAvailable =
     normalizeResetCreditStatus(props.credit.status) === 'available'
 
@@ -720,15 +496,15 @@ function ResetCreditItem(props: { credit: CodexResetCredit; index: number }) {
       <div className='mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3'>
         <ResetCreditTimeField
           label={t('Granted at')}
-          value={formatIsoTimestamp(props.credit.granted_at)}
+          value={formatUsageIsoTimestamp(props.credit.granted_at)}
         />
         <ResetCreditTimeField
           label={t('Expires at')}
-          value={formatIsoTimestamp(props.credit.expires_at)}
+          value={formatUsageIsoTimestamp(props.credit.expires_at)}
         />
         <ResetCreditTimeField
           label={t('Redeemed at')}
-          value={formatIsoTimestamp(props.credit.redeemed_at)}
+          value={formatUsageIsoTimestamp(props.credit.redeemed_at)}
           emphasis={Boolean(props.credit.redeemed_at)}
         />
       </div>
@@ -812,19 +588,19 @@ function ResetCreditsPanel(props: {
   return (
     <div className='flex flex-col gap-3 p-3'>
       <div className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
-        <InfoField
+        <UsageInfoField
           label={t('Available reset credits')}
           value={availableCount}
           mono
           copyable={false}
         />
-        <InfoField
+        <UsageInfoField
           label={t('Total earned')}
           value={totalEarnedCount}
           mono
           copyable={false}
         />
-        <InfoField
+        <UsageInfoField
           label='HTTP'
           value={String(props.response?.upstream_status ?? '-')}
           mono
@@ -1162,13 +938,17 @@ export function CodexUsageDialog({
               ) : null}
             </div>
             <div className='mt-4 grid grid-cols-1 gap-3 md:grid-cols-2'>
-              <InfoField label={t('Email')} value={payload?.email} copyable />
-              <InfoField
+              <UsageInfoField
+                label={t('Email')}
+                value={payload?.email}
+                copyable
+              />
+              <UsageInfoField
                 label={t('Channel')}
                 value={channelLabel}
                 copyable={false}
               />
-              <InfoField
+              <UsageInfoField
                 label='User ID'
                 value={payload?.user_id}
                 mono
@@ -1234,12 +1014,12 @@ export function CodexUsageDialog({
         </Collapsible>
 
         <div className='flex flex-col gap-3'>
-          <SectionHeading
+          <UsageSectionHeading
             title={t('Base Limits')}
             description={t('Base rate limit windows for this account.')}
           >
             {getUsageStatusBadge(rateLimit, t)}
-          </SectionHeading>
+          </UsageSectionHeading>
           <RateLimitWindowGrid
             fiveHourWindow={fiveHourWindow}
             weeklyWindow={weeklyWindow}
@@ -1248,7 +1028,7 @@ export function CodexUsageDialog({
 
         {additionalRateLimits.length > 0 ? (
           <div className='flex flex-col gap-3'>
-            <SectionHeading
+            <UsageSectionHeading
               title={t('Additional Limits')}
               description={t(
                 'Per-feature metered windows split by model or capability.'

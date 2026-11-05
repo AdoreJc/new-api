@@ -20,6 +20,7 @@ import { z } from 'zod'
 
 import {
   CLAUDE_FIELD_PASSTHROUGH_TYPES,
+  CHANNEL_TYPE_CLAUDE_OAUTH,
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_OLLAMA,
   CHANNEL_TYPE_TASK_PLUGIN,
@@ -171,6 +172,20 @@ function isCodexCredential(value: string | undefined): boolean {
       parsed.access_token.trim().length > 0 &&
       typeof parsed.account_id === 'string' &&
       parsed.account_id.trim().length > 0
+    )
+  } catch {
+    return false
+  }
+}
+
+function isClaudeOAuthCredential(value: string | undefined): boolean {
+  try {
+    const parsed = parseOptionalJson(value)
+    if (parsed === undefined) return true
+    return (
+      isJsonObjectValue(parsed) &&
+      typeof parsed.access_token === 'string' &&
+      parsed.access_token.trim().length > 0
     )
   } catch {
     return false
@@ -374,6 +389,23 @@ export const channelFormSchema = z
           ctx,
           'key',
           'Codex credential must be a JSON object with access_token and account_id'
+        )
+      }
+    }
+
+    if (data.type === CHANNEL_TYPE_CLAUDE_OAUTH) {
+      if (data.multi_key_mode && data.multi_key_mode !== 'single') {
+        addRequiredIssue(
+          ctx,
+          'multi_key_mode',
+          'Claude OAuth channels do not support batch creation'
+        )
+      }
+      if (data.key?.trim() && !isClaudeOAuthCredential(data.key)) {
+        addRequiredIssue(
+          ctx,
+          'key',
+          'Claude OAuth credential must be a JSON object with access_token'
         )
       }
     }
