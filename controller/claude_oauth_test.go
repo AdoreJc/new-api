@@ -522,7 +522,13 @@ func TestClaudeOAuthAdaptorSendsBearerTokenAndClaudeCodeIdentity(t *testing.T) {
 	assert.True(t, strings.HasPrefix(headers.Get("User-Agent"), "claude-cli/"), headers.Get("User-Agent"))
 	assert.Equal(t, "2023-06-01", headers.Get("anthropic-version"))
 
-	assert.Equal(t, "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14", claude_oauth.MergeClaudeOAuthBetas(""))
+	// The Messages endpoint accepts a subscription token only on the beta path.
+	info.ChannelBaseUrl = "https://api.anthropic.com"
+	requestURL, err := adaptor.GetRequestURL(info)
+	require.NoError(t, err)
+	assert.Equal(t, "https://api.anthropic.com/v1/messages?beta=true", requestURL)
+
+	assert.Equal(t, "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14", claude_oauth.MergeClaudeOAuthBetas(""))
 	assert.Equal(t, "claude-code-20250219,oauth-2025-04-20,context-1m-2025-08-07", claude_oauth.MergeClaudeOAuthBetas("context-1m-2025-08-07, claude-code-20250219"))
 
 	tests := []struct {

@@ -7,6 +7,7 @@ package claude_oauth
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -23,9 +24,10 @@ import (
 const (
 	ChannelName = "claude_oauth"
 
-	betaClaudeCode          = "claude-code-20250219"
-	betaInterleavedThinking = "interleaved-thinking-2025-05-14"
-	tokenRefreshTimeout     = 15 * time.Second
+	betaClaudeCode               = "claude-code-20250219"
+	betaInterleavedThinking      = "interleaved-thinking-2025-05-14"
+	betaFineGrainedToolStreaming = "fine-grained-tool-streaming-2025-05-14"
+	tokenRefreshTimeout          = 15 * time.Second
 )
 
 type Adaptor struct {
@@ -34,6 +36,24 @@ type Adaptor struct {
 
 func (a *Adaptor) GetChannelName() string {
 	return ChannelName
+}
+
+// GetRequestURL always adds the beta=true query the Claude Code CLI sends: the
+// Messages endpoint only accepts a subscription OAuth token on that path and
+// answers "invalid x-api-key" without it.
+func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	requestURL, err := a.Adaptor.GetRequestURL(info)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(requestURL)
+	if err != nil {
+		return "", err
+	}
+	query := parsed.Query()
+	query.Set("beta", "true")
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {
@@ -139,7 +159,7 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 
 // MergeClaudeOAuthBetas puts the betas a subscription token requires in front
 // of whatever the client asked for, without duplicates. A client that sent no
-// beta header gets the Claude Code CLI default set.
+// beta header gets the Claude Code CLI default set (sub2api DefaultBetaHeader).
 func MergeClaudeOAuthBetas(clientBetas string) string {
 	required := []string{betaClaudeCode, service.ClaudeOAuthBeta}
 	merged := slices.Clone(required)
@@ -155,7 +175,7 @@ func MergeClaudeOAuthBetas(clientBetas string) string {
 		}
 	}
 	if !seen {
-		merged = append(merged, betaInterleavedThinking)
+		merged = append(merged, betaInterleavedThinking, betaFineGrainedToolStreaming)
 	}
 	return strings.Join(merged, ",")
 }
