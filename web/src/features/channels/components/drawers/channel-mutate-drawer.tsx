@@ -4582,6 +4582,9 @@ export function ChannelMutateDrawer({
                     <div className='text-muted-foreground text-xs'>
                       {t(
                         'Claude Subscription channels use an OAuth JSON credential as the key. Authorize in the browser to fill it in.'
+                      )}{' '}
+                      {t(
+                        'Keep request body pass-through off for this channel: the Claude Code identity is added during request conversion, and pass-through skips it.'
                       )}
                     </div>
                     <div className='flex flex-wrap items-center gap-2'>

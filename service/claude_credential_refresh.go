@@ -15,15 +15,29 @@ import (
 
 type ClaudeCredentialRefreshOptions struct {
 	ResetCaches bool
+	// Force refreshes even when the stored token is not near expiry; the
+	// manual endpoint and the usage 401 retry use it. Without it the refresh
+	// is skipped when another caller already renewed the key.
+	Force bool
+	// Leeway is the "near expiry" window used when Force is false; zero means
+	// claudeOAuthRequestLeeway.
+	Leeway time.Duration
 }
 
 // claudeRefreshLocks serialises refreshes per channel so concurrent relay
-// requests never send the same refresh token twice.
+// requests never send the same refresh token twice. Each entry is a one-slot
+// channel so waiting can honour the caller's context.
 var claudeRefreshLocks sync.Map
 
-func claudeRefreshLock(channelID int) *sync.Mutex {
-	lock, _ := claudeRefreshLocks.LoadOrStore(channelID, &sync.Mutex{})
-	return lock.(*sync.Mutex)
+func acquireClaudeRefreshLock(ctx context.Context, channelID int) (func(), error) {
+	entry, _ := claudeRefreshLocks.LoadOrStore(channelID, make(chan struct{}, 1))
+	slot := entry.(chan struct{})
+	select {
+	case slot <- struct{}{}:
+		return func() { <-slot }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func loadClaudeOAuthChannel(channelID int) (*model.Channel, *ClaudeOAuthKey, error) {
@@ -48,16 +62,30 @@ func loadClaudeOAuthChannel(channelID int) (*model.Channel, *ClaudeOAuthKey, err
 }
 
 // RefreshClaudeChannelCredential renews the stored token set with the refresh
-// token and writes the new key back to the channel. A permanent OAuth error
-// (IsPermanentClaudeOAuthError) means the credential must be re-authorized.
+// token and writes the new key back to the channel. The stored key is re-read
+// under the per-channel lock, so a caller that queued behind another refresh
+// gets the renewed key without a second token request unless opts.Force is
+// set. A permanent OAuth error (IsPermanentClaudeOAuthError) means the
+// credential must be re-authorized.
 func RefreshClaudeChannelCredential(ctx context.Context, channelID int, opts ClaudeCredentialRefreshOptions) (*ClaudeOAuthKey, *model.Channel, error) {
-	lock := claudeRefreshLock(channelID)
-	lock.Lock()
-	defer lock.Unlock()
+	release, err := acquireClaudeRefreshLock(ctx, channelID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("claude oauth channel: waiting for the credential lock: %w", err)
+	}
+	defer release()
 
 	ch, key, err := loadClaudeOAuthChannel(channelID)
 	if err != nil {
 		return nil, nil, err
+	}
+	if !opts.Force {
+		leeway := opts.Leeway
+		if leeway <= 0 {
+			leeway = claudeOAuthRequestLeeway
+		}
+		if !claudeOAuthKeyNeedsRefresh(key, time.Now(), leeway) {
+			return key, ch, nil
+		}
 	}
 	if strings.TrimSpace(key.RefreshToken) == "" {
 		return nil, ch, fmt.Errorf("claude oauth channel: refresh_token is required to refresh credential")
@@ -106,10 +134,13 @@ func RefreshClaudeChannelCredential(ctx context.Context, channelID int, opts Cla
 	return refreshed, ch, nil
 }
 
+// claudeOAuthKeyNeedsRefresh reports whether the access token expires within
+// leeway. A key without a parseable expires_at (pasted by hand) counts as
+// needing a refresh, which also records a real expiry on the first renewal.
 func claudeOAuthKeyNeedsRefresh(key *ClaudeOAuthKey, now time.Time, leeway time.Duration) bool {
 	expiresAt := key.ExpiresAtTime()
 	if expiresAt.IsZero() {
-		return false
+		return true
 	}
 	return expiresAt.Sub(now) <= leeway
 }
@@ -126,18 +157,13 @@ func EnsureClaudeChannelAccessToken(ctx context.Context, channelID int, key *Cla
 	if !claudeOAuthKeyNeedsRefresh(key, now, claudeOAuthRequestLeeway) {
 		return key, nil
 	}
-	expired := !key.ExpiresAtTime().After(now)
+	expiresAt := key.ExpiresAtTime()
+	expired := !expiresAt.IsZero() && !expiresAt.After(now)
 	if channelID <= 0 || strings.TrimSpace(key.RefreshToken) == "" {
 		if expired {
 			return nil, fmt.Errorf("claude oauth channel: access token expired and no refresh token is available")
 		}
 		return key, nil
-	}
-
-	// Another request may have refreshed the channel while this one waited
-	// for the lock; re-read the stored key before refreshing again.
-	if _, stored, err := loadClaudeOAuthChannel(channelID); err == nil && !claudeOAuthKeyNeedsRefresh(stored, now, claudeOAuthRequestLeeway) {
-		return stored, nil
 	}
 
 	refreshed, _, err := RefreshClaudeChannelCredential(ctx, channelID, ClaudeCredentialRefreshOptions{ResetCaches: true})

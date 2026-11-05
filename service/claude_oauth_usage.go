@@ -28,6 +28,12 @@ const (
 // fresh upstream status shows no redeemable grant.
 var ErrClaudeResetNotAvailable = errors.New("no reset credit is redeemable right now")
 
+// ErrClaudeResetOutcomeUnknown is returned when the reset request was sent
+// but no well-formed answer came back (timeout, dropped connection, invalid
+// body). Upstream may have consumed the credit, so the caller must re-query
+// before redeeming again.
+var ErrClaudeResetOutcomeUnknown = errors.New("reset outcome unknown")
+
 var claudeResetGrantIDPattern = regexp.MustCompile(`^[a-z0-9_-]{1,40}$`)
 
 // ClaudeResetCredit is one grant projected for the console. It carries no
@@ -360,12 +366,14 @@ func RedeemClaudeResetCredit(ctx context.Context, client *http.Client, baseURL s
 	}
 	setClaudeOAuthRequestHeaders(req, at, true)
 	req.Header.Set("Content-Type", "application/json")
+	// From here on the request may have reached upstream: never retry, and
+	// report anything but a well-formed answer as unknown.
 	status, raw, err := doClaudeOAuthRequest(ctx, client, req)
 	if err != nil {
-		return status, nil, err
+		return status, nil, fmt.Errorf("%w: %v", ErrClaudeResetOutcomeUnknown, err)
 	}
 	if status != http.StatusOK {
-		return status, nil, fmt.Errorf("reset upstream status: %d", status)
+		return status, nil, fmt.Errorf("reset request rejected with upstream status %d", status)
 	}
 	var result struct {
 		Result        string     `json:"result"`
@@ -374,7 +382,7 @@ func RedeemClaudeResetCredit(ctx context.Context, client *http.Client, baseURL s
 		CooldownUntil *time.Time `json:"cooldown_until"`
 	}
 	if err := common.Unmarshal(raw, &result); err != nil {
-		return status, nil, errors.New("invalid reset response")
+		return status, nil, fmt.Errorf("%w: invalid reset response", ErrClaudeResetOutcomeUnknown)
 	}
 	outcome := &ClaudeResetOutcome{Outcome: "unknown", CooldownUntil: result.CooldownUntil}
 	if claudeResetKnownOutcomes[result.Result] {

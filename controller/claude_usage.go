@@ -16,6 +16,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const (
+	claudeUsageRequestTimeout = 25 * time.Second
+	// claudeResetRequestTimeout covers the status query, the profile lookup,
+	// the single reset POST and the status re-fetch.
+	claudeResetRequestTimeout = 60 * time.Second
+)
+
 func GetClaudeChannelUsage(c *gin.Context) {
 	fetchClaudeChannelOAuthData(
 		c,
@@ -30,6 +37,7 @@ func GetClaudeChannelUsage(c *gin.Context) {
 			}
 			return status, payload, nil
 		},
+		claudeUsageRequestTimeout,
 		common.LogText("failed to fetch claude usage"),
 		"Failed to fetch usage. Please try again later",
 	)
@@ -45,6 +53,7 @@ func GetClaudeChannelResetCredits(c *gin.Context) {
 			}
 			return status, credits, nil
 		},
+		claudeUsageRequestTimeout,
 		common.LogText("failed to fetch claude reset credits"),
 		"Failed to fetch reset credit details. Please try again later",
 	)
@@ -60,6 +69,7 @@ func ResetClaudeChannelUsage(c *gin.Context) {
 			}
 			return status, outcome, nil
 		},
+		claudeResetRequestTimeout,
 		common.LogText("failed to reset claude usage"),
 		"Failed to reset usage. Please try again later",
 	)
@@ -68,8 +78,9 @@ func ResetClaudeChannelUsage(c *gin.Context) {
 type claudeOAuthFetchFunc func(ctx context.Context, client *http.Client, baseURL string, accessToken string) (statusCode int, payload any, err error)
 
 // fetchClaudeChannelOAuthData resolves the channel token, calls fetch, and
-// retries once after a refresh when upstream rejects the token.
-func fetchClaudeChannelOAuthData(c *gin.Context, fetch claudeOAuthFetchFunc, logPrefix string, userMessage string) {
+// retries once after a forced refresh when upstream answers 401. A 403 (scope
+// or plan) is reported as is.
+func fetchClaudeChannelOAuthData(c *gin.Context, fetch claudeOAuthFetchFunc, timeout time.Duration, logPrefix string, userMessage string) {
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		common.ApiError(c, fmt.Errorf("invalid channel id: %w", err))
@@ -82,15 +93,15 @@ func fetchClaudeChannelOAuthData(c *gin.Context, fetch claudeOAuthFetchFunc, log
 		return
 	}
 	if ch == nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel not found"})
+		common.ApiErrorT(c, "Channel not found")
 		return
 	}
 	if ch.Type != constant.ChannelTypeClaudeOAuth {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel type is not Claude Subscription (OAuth)"})
+		common.ApiErrorT(c, "This channel is not a Claude Subscription (OAuth) channel")
 		return
 	}
 	if ch.ChannelInfo.IsMultiKey {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "multi-key channel is not supported"})
+		common.ApiErrorT(c, "Multi-key channels are not supported")
 		return
 	}
 
@@ -112,41 +123,47 @@ func fetchClaudeChannelOAuthData(c *gin.Context, fetch claudeOAuthFetchFunc, log
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 25*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 	defer cancel()
 
 	statusCode, payload, err := fetch(ctx, client, ch.GetBaseURL(), key.AccessToken)
-	if err == nil && (statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden) && key.RefreshToken != "" {
+	if err == nil && statusCode == http.StatusUnauthorized && key.RefreshToken != "" {
 		refreshCtx, refreshCancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
-		refreshedKey, _, refreshErr := service.RefreshClaudeChannelCredential(refreshCtx, ch.Id, service.ClaudeCredentialRefreshOptions{ResetCaches: true})
+		refreshedKey, _, refreshErr := service.RefreshClaudeChannelCredential(refreshCtx, ch.Id, service.ClaudeCredentialRefreshOptions{ResetCaches: true, Force: true})
 		refreshCancel()
 		if refreshErr != nil {
 			common.SysError(common.LogText("%s: token refresh after upstream %d failed: %s", logPrefix, statusCode, refreshErr.Error()))
 		} else {
-			retryCtx, retryCancel := context.WithTimeout(c.Request.Context(), 25*time.Second)
+			retryCtx, retryCancel := context.WithTimeout(c.Request.Context(), timeout)
 			defer retryCancel()
 			statusCode, payload, err = fetch(retryCtx, client, ch.GetBaseURL(), refreshedKey.AccessToken)
 		}
 	}
 	if err != nil {
-		if errors.Is(err, service.ErrClaudeResetNotAvailable) {
+		switch {
+		case errors.Is(err, service.ErrClaudeResetNotAvailable):
 			common.ApiErrorT(c, "No reset credit is redeemable right now")
-			return
+		case errors.Is(err, service.ErrClaudeResetOutcomeUnknown):
+			common.SysError(logPrefix + ": " + err.Error())
+			common.ApiErrorT(c, "The reset request was interrupted and its result is unknown. Query the reset credits again before redeeming another credit")
+		default:
+			common.SysError(logPrefix + ": " + err.Error())
+			common.ApiErrorT(c, userMessage)
 		}
-		common.SysError(logPrefix + ": " + err.Error())
-		common.ApiErrorT(c, userMessage)
 		return
 	}
 
-	ok := statusCode >= 200 && statusCode < 300
-	resp := gin.H{
-		"success":         ok,
+	if statusCode < 200 || statusCode >= 300 {
+		common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("Upstream returned status {{status}}", map[string]any{"status": statusCode}), gin.H{
+			"upstream_status": statusCode,
+			"data":            payload,
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":         true,
 		"message":         "",
 		"upstream_status": statusCode,
 		"data":            payload,
-	}
-	if !ok {
-		resp["message"] = fmt.Sprintf("upstream status: %d", statusCode)
-	}
-	c.JSON(http.StatusOK, resp)
+	})
 }

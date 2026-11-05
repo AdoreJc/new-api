@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,12 +22,25 @@ const (
 	claudeCredentialRefreshTickInterval = 5 * time.Minute
 	claudeCredentialRefreshBatchSize    = 200
 	claudeCredentialRefreshTimeout      = 20 * time.Second
+	// ClaudeOAuthRefreshRejectedReason is the auto-disable reason; it is also a
+	// key in the web console locale files.
+	ClaudeOAuthRefreshRejectedReason = "Claude OAuth refresh token was rejected; re-authorize the channel"
 )
 
 var (
 	claudeCredentialRefreshOnce    sync.Once
 	claudeCredentialRefreshRunning atomic.Bool
+	// claudeRejectedRefreshTokens remembers, per channel, the fingerprint of a
+	// refresh token upstream rejected permanently, so the task does not resend
+	// it every tick. A re-authorized channel stores a different token and is
+	// retried.
+	claudeRejectedRefreshTokens sync.Map
 )
+
+func refreshTokenFingerprint(refreshToken string) string {
+	sum := sha256.Sum256([]byte(refreshToken))
+	return hex.EncodeToString(sum[:])
+}
 
 // StartClaudeCredentialAutoRefreshTask renews Claude Subscription (OAuth)
 // channel tokens on the master node before they expire, mirroring the Codex
@@ -43,25 +58,25 @@ func StartClaudeCredentialAutoRefreshTask() {
 			ticker := time.NewTicker(claudeCredentialRefreshTickInterval)
 			defer ticker.Stop()
 
-			runClaudeCredentialAutoRefreshOnce()
+			RunClaudeCredentialAutoRefreshOnce()
 			for range ticker.C {
-				runClaudeCredentialAutoRefreshOnce()
+				RunClaudeCredentialAutoRefreshOnce()
 			}
 		})
 	})
 }
 
-func runClaudeCredentialAutoRefreshOnce() {
+// RunClaudeCredentialAutoRefreshOnce performs one scan of the enabled and
+// auto-disabled Claude Subscription channels. It returns the number of
+// channels scanned and refreshed.
+func RunClaudeCredentialAutoRefreshOnce() (scanned int, refreshed int) {
 	if !claudeCredentialRefreshRunning.CompareAndSwap(false, true) {
-		return
+		return 0, 0
 	}
 	defer claudeCredentialRefreshRunning.Store(false)
 
 	ctx := context.Background()
 	now := time.Now()
-
-	var refreshed int
-	var scanned int
 
 	offset := 0
 	for {
@@ -79,7 +94,7 @@ func runClaudeCredentialAutoRefreshOnce() {
 			Find(&channels).Error
 		if err != nil {
 			logger.LogError(ctx, common.LogText("claude credential auto-refresh: query channels failed: %v", err))
-			return
+			return scanned, refreshed
 		}
 		if len(channels) == 0 {
 			break
@@ -99,18 +114,18 @@ func runClaudeCredentialAutoRefreshOnce() {
 			if !claudeOAuthKeyNeedsRefresh(key, now, claudeOAuthRefreshLeeway) {
 				continue
 			}
+			fingerprint := refreshTokenFingerprint(key.RefreshToken)
+			if rejected, ok := claudeRejectedRefreshTokens.Load(ch.Id); ok && rejected == fingerprint {
+				continue
+			}
 
 			refreshCtx, cancel := context.WithTimeout(ctx, claudeCredentialRefreshTimeout)
-			newKey, _, err := RefreshClaudeChannelCredential(refreshCtx, ch.Id, ClaudeCredentialRefreshOptions{ResetCaches: false})
+			newKey, _, err := RefreshClaudeChannelCredential(refreshCtx, ch.Id, ClaudeCredentialRefreshOptions{Leeway: claudeOAuthRefreshLeeway})
 			cancel()
 			if err != nil {
 				logger.LogWarn(ctx, common.LogText("claude credential auto-refresh: channel_id=%d name=%s refresh failed: %v", ch.Id, ch.Name, err))
-				if IsPermanentClaudeOAuthError(err) && ch.Status == common.ChannelStatusEnabled {
-					DisableChannel(types.ChannelError{
-						ChannelId:   ch.Id,
-						ChannelName: ch.Name,
-						AutoBan:     ch.GetAutoBan(),
-					}, "Claude OAuth refresh token was rejected; re-authorize the channel")
+				if IsPermanentClaudeOAuthError(err) {
+					disableClaudeChannelWithRejectedRefreshToken(ch, fingerprint)
 				}
 				continue
 			}
@@ -134,4 +149,25 @@ func runClaudeCredentialAutoRefreshOnce() {
 	if common.DebugEnabled {
 		logger.LogDebug(ctx, "claude credential auto-refresh: scanned=%d refreshed=%d", scanned, refreshed)
 	}
+	return scanned, refreshed
+}
+
+// disableClaudeChannelWithRejectedRefreshToken disables the channel only when
+// the stored refresh token is still the one upstream rejected. Another node or
+// an admin may have rotated or re-authorized the credential meanwhile; that
+// channel stays enabled.
+func disableClaudeChannelWithRejectedRefreshToken(ch *model.Channel, rejectedFingerprint string) {
+	_, stored, err := loadClaudeOAuthChannel(ch.Id)
+	if err != nil || refreshTokenFingerprint(stored.RefreshToken) != rejectedFingerprint {
+		return
+	}
+	claudeRejectedRefreshTokens.Store(ch.Id, rejectedFingerprint)
+	if ch.Status != common.ChannelStatusEnabled {
+		return
+	}
+	DisableChannel(types.ChannelError{
+		ChannelId:   ch.Id,
+		ChannelName: ch.Name,
+		AutoBan:     ch.GetAutoBan(),
+	}, ClaudeOAuthRefreshRejectedReason)
 }

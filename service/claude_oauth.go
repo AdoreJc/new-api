@@ -410,11 +410,9 @@ func parseClaudeOAuthTokenError(statusCode int, raw []byte) error {
 		}
 	}
 	code = strings.TrimSpace(code)
-	permanent := claudeOAuthPermanentErrors[code]
-	if code == "" && (statusCode == http.StatusBadRequest || statusCode == http.StatusUnauthorized) {
-		permanent = true
-	}
-	return &ClaudeOAuthTokenError{StatusCode: statusCode, Code: code, Permanent: permanent}
+	// Only an explicit OAuth error code is permanent; a 400 or 401 without a
+	// parseable body (a proxy or WAF page) is treated as transient.
+	return &ClaudeOAuthTokenError{StatusCode: statusCode, Code: code, Permanent: claudeOAuthPermanentErrors[code]}
 }
 
 // noRedirectClient returns a copy of client that never follows redirects, so a

@@ -119,7 +119,7 @@ func RefreshClaudeChannelCredential(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 	defer cancel()
 
-	key, ch, err := service.RefreshClaudeChannelCredential(ctx, channelId, service.ClaudeCredentialRefreshOptions{ResetCaches: true})
+	key, ch, err := service.RefreshClaudeChannelCredential(ctx, channelId, service.ClaudeCredentialRefreshOptions{ResetCaches: true, Force: true})
 	if err != nil {
 		common.SysError(common.LogText("failed to refresh claude oauth channel credential: %s", err.Error()))
 		if service.IsPermanentClaudeOAuthError(err) {
