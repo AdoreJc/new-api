@@ -699,3 +699,123 @@ export async function getPrefillGroups(
   const res = await api.get('/api/prefill_group', { params: { type } })
   return res.data
 }
+
+// ============================================================================
+// Browser OAuth authorization (Claude Subscription and Codex)
+// ============================================================================
+
+export type OAuthProvider = 'claude' | 'codex'
+
+export type OAuthStartResponse = {
+  success: boolean
+  message?: string
+  data?: {
+    session_id?: string
+    auth_url?: string
+    expires_in?: number
+    redirect_uri?: string
+  }
+}
+
+export type OAuthExchangeResponse = {
+  success: boolean
+  message?: string
+  data?: {
+    key?: string
+    email?: string
+    account_id?: string
+    org_uuid?: string
+    account_uuid?: string
+    scope?: string
+    expires_at?: string
+  }
+}
+
+export async function startChannelOAuth(
+  provider: OAuthProvider
+): Promise<OAuthStartResponse> {
+  const res = await api.post(
+    `/api/channel/${provider}/oauth/start`,
+    {},
+    channelActionConfig({ disableDuplicate: true })
+  )
+  return res.data
+}
+
+export async function exchangeChannelOAuth(
+  provider: OAuthProvider,
+  params: { session_id: string; code: string; proxy?: string }
+): Promise<OAuthExchangeResponse> {
+  const res = await api.post(
+    `/api/channel/${provider}/oauth/exchange`,
+    params,
+    channelActionConfig({ disableDuplicate: true })
+  )
+  return res.data
+}
+
+// ============================================================================
+// Claude Subscription (OAuth) Channel Operations
+// ============================================================================
+
+export type ClaudeUsageResponse = CodexUsageResponse
+
+export type ClaudeResetCreditsResponse = CodexUsageResponse
+
+export type ClaudeUsageResetResponse = CodexUsageResponse
+
+export type ClaudeCredentialRefreshResponse = {
+  success: boolean
+  message?: string
+  data?: {
+    expires_at?: string
+    last_refresh?: string
+    email?: string
+    org_uuid?: string
+    channel_id?: number
+    channel_type?: number
+    channel_name?: string
+  }
+}
+
+export async function refreshClaudeCredential(
+  channelId: number
+): Promise<ClaudeCredentialRefreshResponse> {
+  const res = await api.post(
+    `/api/channel/${channelId}/claude/refresh`,
+    {},
+    channelActionConfig()
+  )
+  return res.data
+}
+
+export async function getClaudeUsage(
+  channelId: number
+): Promise<ClaudeUsageResponse> {
+  const res = await api.get(
+    `/api/channel/${channelId}/claude/usage`,
+    channelActionConfig({ disableDuplicate: true })
+  )
+  return res.data
+}
+
+export async function getClaudeResetCredits(
+  channelId: number
+): Promise<ClaudeResetCreditsResponse> {
+  const res = await api.get(
+    `/api/channel/${channelId}/claude/usage/reset-credits`,
+    channelActionConfig({ disableDuplicate: true })
+  )
+  return res.data
+}
+
+export async function resetClaudeUsage(
+  channelId: number
+): Promise<ClaudeUsageResetResponse> {
+  const res = await api.post(
+    `/api/channel/${channelId}/claude/usage/reset`,
+    {},
+    channelActionConfig({ disableDuplicate: true })
+  )
+  return res.data
+}

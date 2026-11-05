@@ -60,9 +60,10 @@ import {
 } from '@/lib/server-error-message'
 import { truncateText } from '@/lib/utils'
 
-import { getCodexUsage, updateChannelBalance } from '../api'
+import { getClaudeUsage, getCodexUsage, updateChannelBalance } from '../api'
 import {
   CHANNEL_STATUS_CONFIG,
+  CHANNEL_TYPE_CLAUDE_OAUTH,
   CHANNEL_TYPE_TASK_PLUGIN,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
@@ -94,6 +95,10 @@ import { useChannels } from './channels-provider'
 import { DataTableRowActions } from './data-table-row-actions'
 import { DataTableTagRowActions } from './data-table-tag-row-actions'
 import { BalanceQueryDialog } from './dialogs/balance-query-dialog'
+import {
+  ClaudeUsageDialog,
+  type ClaudeUsageDialogData,
+} from './dialogs/claude-usage-dialog'
 import {
   CodexUsageDialog,
   type CodexUsageDialogData,
@@ -353,6 +358,11 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   const [codexUsageOpen, setCodexUsageOpen] = useState(false)
   const [codexUsageResponse, setCodexUsageResponse] =
     useState<CodexUsageDialogData | null>(null)
+  const [claudeUsageOpen, setClaudeUsageOpen] = useState(false)
+  const [claudeUsageResponse, setClaudeUsageResponse] =
+    useState<ClaudeUsageDialogData | null>(null)
+  const isClaudeOAuthChannel = channel.type === CHANNEL_TYPE_CLAUDE_OAUTH
+  const isSubscriptionUsageChannel = channel.type === 57 || isClaudeOAuthChannel
   const currencyLabel = getCurrencyLabel()
   const tokenSuffix = currencyLabel === 'Tokens' ? ' Tokens' : ''
   const withSuffix = (value: string) =>
@@ -449,6 +459,21 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     }
 
     setIsUpdating(true)
+    if (isClaudeOAuthChannel) {
+      try {
+        const res = await getClaudeUsage(channel.id)
+        if (!res.success) {
+          throw createServerError(res, t('Failed to fetch usage'))
+        }
+        setClaudeUsageResponse(res)
+        setClaudeUsageOpen(true)
+      } catch (error) {
+        handleServerError(error, t('Failed to fetch usage'))
+      } finally {
+        setIsUpdating(false)
+      }
+      return
+    }
     if (channel.type === 57) {
       try {
         const res = await getCodexUsage(channel.id)
@@ -495,7 +520,7 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   let remainingBadgeLabel = sensitiveVisible ? remainingDisplay : SENSITIVE_MASK
   if (sensitiveVisible && isUpdating) {
     remainingBadgeLabel = t('Updating...')
-  } else if (sensitiveVisible && channel.type === 57) {
+  } else if (sensitiveVisible && isSubscriptionUsageChannel) {
     remainingBadgeLabel = t('Account Info')
   } else if (sensitiveVisible && isInferenceChannel) {
     remainingBadgeLabel = inferenceStatusLabel
@@ -503,13 +528,15 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   let remainingTooltipLabel = remainingLabel
   if (!sensitiveVisible) {
     remainingTooltipLabel = maskedRemainingLabel
+  } else if (isClaudeOAuthChannel) {
+    remainingTooltipLabel = t('Click to view Claude usage')
   } else if (channel.type === 57) {
     remainingTooltipLabel = t('Click to view Codex usage')
   } else if (isInferenceChannel) {
     remainingTooltipLabel = inferenceStatusLabel
   }
   let remainingBadgeVariant: StatusBadgeProps['variant'] = variant
-  if (channel.type === 57 || isInferenceChannel) {
+  if (isSubscriptionUsageChannel || isInferenceChannel) {
     remainingBadgeVariant = 'info'
   } else if (isUpdating) {
     remainingBadgeVariant = 'neutral'
@@ -592,6 +619,33 @@ export function BalanceCell({ channel }: { channel: Channel }) {
               throw createServerError(res, t('Failed to fetch usage'))
             }
             setCodexUsageResponse(res)
+          } catch (error) {
+            handleServerError(error, t('Failed to fetch usage'))
+          } finally {
+            setIsUpdating(false)
+          }
+        }}
+        isRefreshing={isUpdating}
+      />
+      <ClaudeUsageDialog
+        open={claudeUsageOpen}
+        onOpenChange={setClaudeUsageOpen}
+        channelName={channel.name}
+        channelId={channel.id}
+        channelDisplayName={sensitiveVisible ? undefined : SENSITIVE_MASK}
+        channelDisplayId={sensitiveVisible ? undefined : SENSITIVE_MASK}
+        response={claudeUsageResponse}
+        onRefresh={async () => {
+          if (isUpdating) {
+            return
+          }
+          setIsUpdating(true)
+          try {
+            const res = await getClaudeUsage(channel.id)
+            if (!res.success) {
+              throw createServerError(res, t('Failed to fetch usage'))
+            }
+            setClaudeUsageResponse(res)
           } catch (error) {
             handleServerError(error, t('Failed to fetch usage'))
           } finally {

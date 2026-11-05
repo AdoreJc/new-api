@@ -35,9 +35,14 @@ import { formatTimestampToDate } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
 
-import { getCodexUsage, updateChannelBalance } from '../../api'
+import { getClaudeUsage, getCodexUsage, updateChannelBalance } from '../../api'
+import { CHANNEL_TYPE_CLAUDE_OAUTH } from '../../constants'
 import { channelsQueryKeys } from '../../lib'
 import { useChannels } from '../channels-provider'
+import {
+  ClaudeUsageDialog,
+  type ClaudeUsageDialogData,
+} from './claude-usage-dialog'
 import {
   CodexUsageDialog,
   type CodexUsageDialogData,
@@ -63,19 +68,31 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
   )
   const [codexUsageResponse, setCodexUsageResponse] =
     useState<CodexUsageDialogData | null>(null)
+  const [claudeUsageResponse, setClaudeUsageResponse] =
+    useState<ClaudeUsageDialogData | null>(null)
 
   const isCodex = currentRow?.type === 57
+  const isClaudeOAuth = currentRow?.type === CHANNEL_TYPE_CLAUDE_OAUTH
+  const isSubscriptionUsage = isCodex || isClaudeOAuth
 
-  const handleQueryCodexUsage = async () => {
+  const handleQuerySubscriptionUsage = async () => {
     const row = currentRow
     if (!row) return
     setIsQuerying(true)
     try {
-      const res = await getCodexUsage(row.id)
-      if (!res.success) {
-        throw createServerError(res, t('Failed to fetch usage'))
+      if (row.type === CHANNEL_TYPE_CLAUDE_OAUTH) {
+        const res = await getClaudeUsage(row.id)
+        if (!res.success) {
+          throw createServerError(res, t('Failed to fetch usage'))
+        }
+        setClaudeUsageResponse(res)
+      } else {
+        const res = await getCodexUsage(row.id)
+        if (!res.success) {
+          throw createServerError(res, t('Failed to fetch usage'))
+        }
+        setCodexUsageResponse(res)
       }
-      setCodexUsageResponse(res)
     } catch (error: unknown) {
       handleServerError(error, t('Failed to fetch usage'))
     } finally {
@@ -84,11 +101,11 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
   }
 
   useEffect(() => {
-    if (!isCodex) return
+    if (!isSubscriptionUsage) return
     if (!props.open) return
-    handleQueryCodexUsage()
+    handleQuerySubscriptionUsage()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.open, isCodex])
+  }, [props.open, isSubscriptionUsage])
 
   if (!currentRow) return null
 
@@ -133,6 +150,7 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
     setBalanceUpdatedTime(null)
     setRawResponse(null)
     setCodexUsageResponse(null)
+    setClaudeUsageResponse(null)
     props.onOpenChange(false)
   }
 
@@ -148,6 +166,22 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
     return formatTimestampToDate(timestamp)
   }
 
+  if (isClaudeOAuth) {
+    return (
+      <ClaudeUsageDialog
+        open={props.open}
+        onOpenChange={(v) => {
+          if (!v) handleClose()
+        }}
+        channelName={currentRow.name}
+        channelId={currentRow.id}
+        response={claudeUsageResponse}
+        onRefresh={handleQuerySubscriptionUsage}
+        isRefreshing={isQuerying}
+      />
+    )
+  }
+
   if (isCodex) {
     return (
       <CodexUsageDialog
@@ -158,7 +192,7 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
         channelName={currentRow.name}
         channelId={currentRow.id}
         response={codexUsageResponse}
-        onRefresh={handleQueryCodexUsage}
+        onRefresh={handleQuerySubscriptionUsage}
         isRefreshing={isQuerying}
       />
     )

@@ -34,6 +34,7 @@ import {
   FileText,
   Eraser,
   Eye,
+  KeyRound,
   RefreshCw,
   Code,
   Route,
@@ -134,12 +135,14 @@ import {
   getGroups,
   getPrefillGroups,
   getTaskPluginOptions,
+  refreshClaudeCredential,
   refreshCodexCredential,
 } from '../../api'
 import {
   ADD_MODE_OPTIONS,
   CLAUDE_FIELD_PASSTHROUGH_TYPES,
   CHANNEL_STATUS_LABELS,
+  CHANNEL_TYPE_CLAUDE_OAUTH,
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_OLLAMA,
   CHANNEL_TYPE_OPTIONS,
@@ -216,6 +219,10 @@ import {
   MissingModelsConfirmationDialog,
   type MissingModelsAction,
 } from '../dialogs/missing-models-confirmation-dialog'
+import {
+  OAuthAuthorizationDialog,
+  type OAuthAuthorizationResult,
+} from '../dialogs/oauth-authorization-dialog'
 import { ParamOverrideEditorDialog } from '../dialogs/param-override-editor-dialog'
 import {
   PassthroughWarningDialog,
@@ -428,6 +435,9 @@ export function ChannelMutateDrawer({
   const canRevealChannelKey = currentUser?.role === ROLE.SUPER_ADMIN
   const [isCodexCredentialRefreshing, setIsCodexCredentialRefreshing] =
     useState(false)
+  const [isClaudeCredentialRefreshing, setIsClaudeCredentialRefreshing] =
+    useState(false)
+  const [oauthDialogOpen, setOauthDialogOpen] = useState(false)
   const initialModelsRef = useRef<string[]>([])
   const initialModelMappingRef = useRef<string>('')
   const initialStatusCodeMappingRef = useRef<string>('')
@@ -690,7 +700,9 @@ export function ChannelMutateDrawer({
     multiKeyMode === 'batch' || multiKeyMode === 'multi_to_single'
   const isChannelDetailLoading = isEditing && isChannelLoading
   const supportsMultiKeyAddMode =
-    currentType !== 57 && !(currentType === 41 && vertexKeyType === 'api_key')
+    currentType !== 57 &&
+    currentType !== CHANNEL_TYPE_CLAUDE_OAUTH &&
+    !(currentType === 41 && vertexKeyType === 'api_key')
   const addModeOptions = useMemo(
     () =>
       supportsMultiKeyAddMode
@@ -1181,6 +1193,48 @@ export function ChannelMutateDrawer({
       setIsCodexCredentialRefreshing(false)
     }
   }, [channelId, queryClient, t])
+
+  const handleRefreshClaudeCredential = useCallback(async () => {
+    if (!channelId) return
+    setIsClaudeCredentialRefreshing(true)
+    try {
+      const res = await refreshClaudeCredential(channelId)
+      if (!res.success) {
+        throw createServerError(res, t('Failed to refresh credential'))
+      }
+      toast.success(t('Credential refreshed'))
+      queryClient.invalidateQueries({
+        queryKey: channelsQueryKeys.detail(channelId),
+      })
+    } catch (error) {
+      handleServerError(error, t('Refresh failed'))
+    } finally {
+      setIsClaudeCredentialRefreshing(false)
+    }
+  }, [channelId, queryClient, t])
+
+  const handleOAuthAuthorizationComplete = useCallback(
+    (result: OAuthAuthorizationResult) => {
+      form.setValue('key', result.key, {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+      if (!form.getValues('name')?.trim() && result.email) {
+        form.setValue('name', result.email, { shouldDirty: true })
+      }
+      toast.success(
+        result.email
+          ? t(
+              'Authorized as {{email}}. Save the channel to store the credential.',
+              { email: result.email }
+            )
+          : t(
+              'Authorization completed. Save the channel to store the credential.'
+            )
+      )
+    },
+    [form, t]
+  )
 
   // Unified function to update models
   const updateModels = useCallback(
@@ -4480,6 +4534,16 @@ export function ChannelMutateDrawer({
                       )}
                     </div>
                     <div className='flex flex-wrap items-center gap-2'>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='sm'
+                        onClick={() => setOauthDialogOpen(true)}
+                        disabled={sensitiveLocked}
+                      >
+                        <KeyRound className='mr-2 h-4 w-4' />
+                        {t('Obtain via OAuth')}
+                      </Button>
                       {isEditing && channelId && (
                         <Button
                           type='button'
@@ -4506,6 +4570,57 @@ export function ChannelMutateDrawer({
                     <AlertDescription>
                       {t(
                         "Disclaimer: Personal use only. Do not distribute or share any credentials. This channel has prerequisites and requires prior setup; use it only if you understand the flow and risks, and comply with OpenAI's terms and policies. Credentials and configuration are for Codex CLI integration only, and are not intended for any other client, platform, or channel."
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              )}
+
+              {currentType === CHANNEL_TYPE_CLAUDE_OAUTH && (
+                <div className='border-border/60 flex flex-col gap-3 border-y py-4'>
+                  <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+                    <div className='text-muted-foreground text-xs'>
+                      {t(
+                        'Claude Subscription channels use an OAuth JSON credential as the key. Authorize in the browser to fill it in.'
+                      )}
+                    </div>
+                    <div className='flex flex-wrap items-center gap-2'>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='sm'
+                        onClick={() => setOauthDialogOpen(true)}
+                        disabled={sensitiveLocked}
+                      >
+                        <KeyRound className='mr-2 h-4 w-4' />
+                        {t('Authorize via OAuth')}
+                      </Button>
+                      {isEditing && channelId && (
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='sm'
+                          onClick={handleRefreshClaudeCredential}
+                          disabled={
+                            sensitiveLocked || isClaudeCredentialRefreshing
+                          }
+                        >
+                          {isClaudeCredentialRefreshing ? (
+                            <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                          ) : (
+                            <RefreshCw className='mr-2 h-4 w-4' />
+                          )}
+                          {isClaudeCredentialRefreshing
+                            ? t('Refreshing...')
+                            : t('Refresh credential')}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  <Alert className='border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
+                    <AlertDescription>
+                      {t(
+                        "Disclaimer: Personal use only. Do not distribute or share any credentials. This channel uses a Claude subscription through the Claude Code OAuth client; use it only if you understand the flow and risks, and comply with Anthropic's terms and policies. Tokens are refreshed automatically before they expire."
                       )}
                     </AlertDescription>
                   </Alert>
@@ -5086,6 +5201,13 @@ export function ChannelMutateDrawer({
       )}
 
       <SecureVerificationDialog {...verification.dialogProps} />
+      <OAuthAuthorizationDialog
+        open={oauthDialogOpen}
+        onOpenChange={setOauthDialogOpen}
+        provider={currentType === 57 ? 'codex' : 'claude'}
+        proxy={currentProxy}
+        onComplete={handleOAuthAuthorizationComplete}
+      />
 
       {/* Missing Models Confirmation Dialog */}
       <MissingModelsConfirmationDialog

@@ -33,6 +33,8 @@ export const CHANNEL_TYPE_VLLM = 62
 
 export const CHANNEL_TYPE_SGLANG = 63
 
+export const CHANNEL_TYPE_CLAUDE_OAUTH = 64
+
 export const CHANNEL_TYPES = {
   0: 'Unknown',
   1: 'OpenAI',
@@ -94,6 +96,7 @@ export const CHANNEL_TYPES = {
   61: 'Task Plugin',
   62: 'vLLM',
   63: 'SGLang',
+  64: 'Claude Subscription (OAuth)',
 } as const
 
 export type ChannelProviderPresentation = {
@@ -177,15 +180,19 @@ export const CHANNEL_PROVIDER_PRESENTATION: Partial<
   },
   62: { descriptionKey: 'Connect to self-hosted models served by vLLM' },
   63: { descriptionKey: 'Connect to self-hosted models served by SGLang' },
+  64: {
+    descriptionKey:
+      'Access Claude using a Claude subscription authorized through OAuth',
+  },
 } satisfies Record<
   Exclude<keyof typeof CHANNEL_TYPES, 0 | typeof CHANNEL_TYPE_TASK_PLUGIN>,
   ChannelProviderPresentation
 >
 
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
-  1, 14, 24, 33, 43, 3, 41, 17, 45, 25, 26, 23, 48, 60, 58, 59, 61, 42, 34, 20,
-  4, 62, 40, 27, 15, 46, 18, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 22, 21,
-  44, 2, 5, 36, 50, 51, 52, 53, 54, 55, 56,
+  1, 14, 64, 24, 33, 43, 3, 41, 17, 45, 25, 26, 23, 48, 60, 58, 59, 61, 42, 34,
+  20, 4, 62, 40, 27, 15, 46, 18, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 22,
+  21, 44, 2, 5, 36, 50, 51, 52, 53, 54, 55, 56,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
@@ -520,6 +527,7 @@ export const MODEL_FETCHABLE_TYPES = new Set([
   58,
   59,
   60,
+  CHANNEL_TYPE_CLAUDE_OAUTH,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
 ])
@@ -527,6 +535,7 @@ export const MODEL_FETCHABLE_TYPES = new Set([
 export const FIELD_PASSTHROUGH_TYPES = new Set([
   1,
   14,
+  CHANNEL_TYPE_CLAUDE_OAUTH,
   57,
   58,
   59,
@@ -547,6 +556,7 @@ export const OPENAI_FIELD_PASSTHROUGH_TYPES = new Set([
 
 export const CLAUDE_FIELD_PASSTHROUGH_TYPES = new Set([
   14,
+  CHANNEL_TYPE_CLAUDE_OAUTH,
   58,
   59,
   CHANNEL_TYPE_NEW_API,
@@ -563,6 +573,7 @@ export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
   50: 'Format: AccessKey|SecretKey (or just ApiKey if upstream is New API)',
   51: 'Format: Access Key ID|Secret Access Key',
   57: 'Paste Codex OAuth JSON credential (access_token / refresh_token / account_id)',
+  64: 'Use the OAuth authorization below, or paste a Claude OAuth JSON credential (access_token / refresh_token)',
   59: 'Enter API key for this channel',
   60: 'Enter API key for this channel',
   62: 'vLLM API key, or EMPTY if authentication is disabled',
