@@ -70,3 +70,16 @@ func TestGetRequestAutoGroupsDoesNotFallBackAfterPermissionChange(t *testing.T) 
 
 	assert.Empty(t, groups)
 }
+
+func TestGetRequestAutoGroupsPinsSubscriptionBoundUsersToTheirGroup(t *testing.T) {
+	configureRequestAutoGroupsTest(t)
+	ctx := newRequestAutoGroupsContext()
+	common.SetContextKey(ctx, constant.ContextKeyTokenAutoGroups, []string{"vip", "default"})
+
+	assert.Empty(t, GetRequestAutoGroups(ctx, "oauth-ch7"), "a binding group without a ratio never falls back to the shared pools")
+
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":1,"svip":1,"oauth-ch7":1}`))
+	assert.Equal(t, []string{"oauth-ch7"}, GetRequestAutoGroups(ctx, "oauth-ch7"))
+	assert.Equal(t, []string{"oauth-ch7"}, GetRequestAutoGroups(newRequestAutoGroupsContext(), "oauth-ch7"))
+	assert.Equal(t, []string{"vip", "default"}, GetRequestAutoGroups(ctx, "default"))
+}

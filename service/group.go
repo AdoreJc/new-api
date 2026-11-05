@@ -96,6 +96,9 @@ func FilterUserTokenAutoGroups(userGroup string, groups []string) []string {
 // The absence of the context value means that the token inherits the complete
 // global Auto list; a present (even empty) value is an explicit token snapshot.
 func GetRequestAutoGroups(c *gin.Context, userGroup string) []string {
+	if pinned, ok := subscriptionPinnedAutoGroups(userGroup); ok {
+		return pinned
+	}
 	value, ok := common.GetContextKey(c, constant.ContextKeyTokenAutoGroups)
 	if !ok {
 		return GetUserAutoGroup(userGroup)
@@ -105,6 +108,20 @@ func GetRequestAutoGroups(c *gin.Context, userGroup string) []string {
 		return []string{}
 	}
 	return FilterUserTokenAutoGroups(userGroup, groups)
+}
+
+// subscriptionPinnedAutoGroups pins Auto tokens of a user whose group is a
+// subscription binding group (oauth-ch<id>) to that group alone, so requests
+// never fall through to the shared pools. A binding group without a ratio
+// yields an empty list, which the selector reports as Auto being unavailable.
+func subscriptionPinnedAutoGroups(userGroup string) ([]string, bool) {
+	if !model.IsSubscriptionBoundGroup(userGroup) {
+		return nil, false
+	}
+	if !ratio_setting.ContainsGroupRatio(userGroup) {
+		return []string{}, true
+	}
+	return []string{userGroup}, true
 }
 
 // GetGroupsEnabledModels 按 groups 顺序获取各分组启用的模型并去重

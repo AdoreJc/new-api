@@ -16,7 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Ban, Plus, RotateCcw, Trash2 } from 'lucide-react'
+import {
+  Activity,
+  Ban,
+  Link2,
+  Plus,
+  RotateCcw,
+  Trash2,
+  Unlink,
+} from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -48,9 +56,18 @@ import {
   SheetDescription,
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
+import { getClaudeUsage, getCodexUsage } from '@/features/channels/api'
+import {
+  ClaudeUsageDialog,
+  type ClaudeUsageDialogData,
+} from '@/features/channels/components/dialogs/claude-usage-dialog'
+import {
+  CodexUsageDialog,
+  type CodexUsageDialogData,
+} from '@/features/channels/components/dialogs/codex-usage-dialog'
 import { formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
-import { getServerMessage } from '@/lib/server-error-message'
+import { createServerError, getServerMessage } from '@/lib/server-error-message'
 
 import {
   getAdminPlans,
@@ -59,9 +76,24 @@ import {
   invalidateUserSubscription,
   deleteUserSubscription,
   resetUserSubscriptionsByPlan,
+  getBindableChannels,
+  unbindSubscriptionChannel,
 } from '../../api'
 import { formatTimestamp } from '../../lib'
-import type { PlanRecord, UserSubscriptionRecord } from '../../types'
+import {
+  BOUND_CHANNEL_TYPE_CLAUDE_OAUTH,
+  BOUND_CHANNEL_TYPE_CODEX,
+  bindableChannelLabel,
+  boundAccountLabelKey,
+  isSubscriptionBound,
+} from '../../lib/channel-binding'
+import type {
+  PlanRecord,
+  SubscriptionBindableChannel,
+  UserSubscription,
+  UserSubscriptionRecord,
+} from '../../types'
+import { BindChannelDialog } from './bind-channel-dialog'
 
 interface Props {
   open: boolean
@@ -119,9 +151,20 @@ export function UserSubscriptionsDialog(props: Props) {
     planTitle: string
   } | null>(null)
   const [confirmAction, setConfirmAction] = useState<{
-    type: 'invalidate' | 'delete'
+    type: 'invalidate' | 'delete' | 'unbind'
     subId: number
   } | null>(null)
+  const [bindableChannels, setBindableChannels] = useState<
+    SubscriptionBindableChannel[]
+  >([])
+  const [selectedChannelId, setSelectedChannelId] = useState<string>('')
+  const [bindTarget, setBindTarget] = useState<UserSubscription | null>(null)
+  const [usageTarget, setUsageTarget] = useState<UserSubscription | null>(null)
+  const [usageLoading, setUsageLoading] = useState(false)
+  const [claudeUsageResponse, setClaudeUsageResponse] =
+    useState<ClaudeUsageDialogData | null>(null)
+  const [codexUsageResponse, setCodexUsageResponse] =
+    useState<CodexUsageDialogData | null>(null)
 
   const planTitleMap = useMemo(() => {
     const map = new Map<number, string>()
@@ -135,9 +178,10 @@ export function UserSubscriptionsDialog(props: Props) {
     if (!props.user?.id) return
     setLoading(true)
     try {
-      const [plansRes, subsRes] = await Promise.all([
+      const [plansRes, subsRes, channelsRes] = await Promise.all([
         getAdminPlans(),
         getUserSubscriptions(props.user.id),
+        getBindableChannels(),
       ])
       if (plansRes.success) {
         setPlans(plansRes.data || [])
@@ -149,6 +193,11 @@ export function UserSubscriptionsDialog(props: Props) {
       } else {
         handleServerError(subsRes)
       }
+      if (channelsRes.success) {
+        setBindableChannels(channelsRes.data || [])
+      } else {
+        handleServerError(channelsRes)
+      }
     } catch (error) {
       handleServerError(error, t('Loading failed'))
     } finally {
@@ -159,9 +208,73 @@ export function UserSubscriptionsDialog(props: Props) {
   useEffect(() => {
     if (props.open && props.user?.id) {
       setSelectedPlanId('')
+      setSelectedChannelId('')
       loadData()
     }
   }, [props.open, props.user?.id, loadData])
+
+  const channelOptions = useMemo(
+    () => [
+      { value: '', label: t('No account binding') },
+      ...bindableChannels.map((channel) => ({
+        value: String(channel.id),
+        label: bindableChannelLabel(channel, t),
+        disabled: channel.bound_subscription_id > 0,
+      })),
+    ],
+    [bindableChannels, t]
+  )
+
+  const openUsage = async (sub: UserSubscription) => {
+    if (!isSubscriptionBound(sub) || usageLoading) return
+    setUsageLoading(true)
+    try {
+      if (sub.bound_channel_type === BOUND_CHANNEL_TYPE_CLAUDE_OAUTH) {
+        const res = await getClaudeUsage(Number(sub.bound_channel_id))
+        if (!res.success) {
+          throw createServerError(res, t('Failed to fetch usage'))
+        }
+        setClaudeUsageResponse(res)
+      } else if (sub.bound_channel_type === BOUND_CHANNEL_TYPE_CODEX) {
+        const res = await getCodexUsage(Number(sub.bound_channel_id))
+        if (!res.success) {
+          throw createServerError(res, t('Failed to fetch usage'))
+        }
+        setCodexUsageResponse(res)
+      } else {
+        return
+      }
+      setUsageTarget(sub)
+    } catch (error) {
+      handleServerError(error, t('Failed to fetch usage'))
+    } finally {
+      setUsageLoading(false)
+    }
+  }
+
+  const refreshUsage = async () => {
+    if (!usageTarget || usageLoading) return
+    setUsageLoading(true)
+    try {
+      if (usageTarget.bound_channel_type === BOUND_CHANNEL_TYPE_CLAUDE_OAUTH) {
+        const res = await getClaudeUsage(Number(usageTarget.bound_channel_id))
+        if (!res.success) {
+          throw createServerError(res, t('Failed to fetch usage'))
+        }
+        setClaudeUsageResponse(res)
+      } else {
+        const res = await getCodexUsage(Number(usageTarget.bound_channel_id))
+        if (!res.success) {
+          throw createServerError(res, t('Failed to fetch usage'))
+        }
+        setCodexUsageResponse(res)
+      }
+    } catch (error) {
+      handleServerError(error, t('Failed to fetch usage'))
+    } finally {
+      setUsageLoading(false)
+    }
+  }
 
   const handleCreate = async () => {
     if (!props.user?.id || !selectedPlanId) {
@@ -172,10 +285,12 @@ export function UserSubscriptionsDialog(props: Props) {
     try {
       const res = await createUserSubscription(props.user.id, {
         plan_id: Number(selectedPlanId),
+        channel_id: selectedChannelId ? Number(selectedChannelId) : undefined,
       })
       if (res.success) {
         toast.success(getServerMessage(res.data) || t('Added successfully'))
         setSelectedPlanId('')
+        setSelectedChannelId('')
         await loadData()
         props.onSuccess?.()
       } else {
@@ -195,6 +310,15 @@ export function UserSubscriptionsDialog(props: Props) {
         const res = await invalidateUserSubscription(confirmAction.subId)
         if (res.success) {
           toast.success(getServerMessage(res.data) || t('Has been invalidated'))
+          await loadData()
+          props.onSuccess?.()
+        } else {
+          handleServerError(res)
+        }
+      } else if (confirmAction.type === 'unbind') {
+        const res = await unbindSubscriptionChannel(confirmAction.subId)
+        if (res.success) {
+          toast.success(getServerMessage(res.data) || t('Unbound successfully'))
           await loadData()
           props.onSuccess?.()
         } else {
@@ -256,7 +380,7 @@ export function UserSubscriptionsDialog(props: Props) {
           </SheetHeader>
 
           <div className={sideDrawerFormClassName()}>
-            <div className='flex gap-2'>
+            <div className='flex flex-col gap-2 sm:flex-row'>
               <Combobox
                 options={plans.map((p) => ({
                   value: String(p.plan.id),
@@ -266,6 +390,14 @@ export function UserSubscriptionsDialog(props: Props) {
                 onValueChange={(v) => v !== null && setSelectedPlanId(v)}
                 className='flex-1'
                 placeholder={t('Select subscription plan')}
+              />
+              <Combobox
+                options={channelOptions}
+                value={selectedChannelId}
+                onValueChange={(v) => setSelectedChannelId(v ?? '')}
+                className='flex-1'
+                placeholder={t('Bind account (optional)')}
+                aria-label={t('Bind account (optional)')}
               />
               <Button
                 onClick={handleCreate}
@@ -345,6 +477,27 @@ export function UserSubscriptionsDialog(props: Props) {
                   },
                 },
                 {
+                  id: 'bound',
+                  header: t('Bound account'),
+                  cell: (record) => {
+                    const sub = record.subscription
+                    if (!isSubscriptionBound(sub)) {
+                      return <span className='text-muted-foreground'>-</span>
+                    }
+                    return (
+                      <div className='text-sm'>
+                        <div className='font-medium'>
+                          #{sub.bound_channel_id} {sub.bound_channel_name || ''}
+                        </div>
+                        <div className='text-muted-foreground text-xs'>
+                          {t(boundAccountLabelKey(sub.bound_channel_type))}
+                          {sub.bound_group ? ` · ${sub.bound_group}` : ''}
+                        </div>
+                      </div>
+                    )
+                  },
+                },
+                {
                   id: 'actions',
                   header: t('Actions'),
                   className: 'text-right',
@@ -356,8 +509,47 @@ export function UserSubscriptionsDialog(props: Props) {
                       (sub.end_time || 0) > 0 && sub.end_time < now
                     const isActive = sub.status === 'active' && !isExpired
 
+                    const bound = isSubscriptionBound(sub)
+                    const usageSupported =
+                      bound &&
+                      (sub.bound_channel_type ===
+                        BOUND_CHANNEL_TYPE_CLAUDE_OAUTH ||
+                        sub.bound_channel_type === BOUND_CHANNEL_TYPE_CODEX)
+
                     return (
                       <DataTableRowActionMenu ariaLabel={t('Actions')}>
+                        <DropdownMenuItem
+                          disabled={!isActive}
+                          onClick={() => setBindTarget(sub)}
+                        >
+                          {bound
+                            ? t('Change bound account')
+                            : t('Bind account')}
+                          <DropdownMenuShortcut>
+                            <Link2 size={16} />
+                          </DropdownMenuShortcut>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!usageSupported || usageLoading}
+                          onClick={() => void openUsage(sub)}
+                        >
+                          {t('View account usage')}
+                          <DropdownMenuShortcut>
+                            <Activity size={16} />
+                          </DropdownMenuShortcut>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!bound}
+                          onClick={() =>
+                            setConfirmAction({ type: 'unbind', subId: sub.id })
+                          }
+                        >
+                          {t('Unbind account')}
+                          <DropdownMenuShortcut>
+                            <Unlink size={16} />
+                          </DropdownMenuShortcut>
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
                         <DropdownMenuItem
                           disabled={!isActive}
                           onClick={() => {
@@ -418,20 +610,8 @@ export function UserSubscriptionsDialog(props: Props) {
         <ConfirmDialog
           open
           onOpenChange={(v) => !v && setConfirmAction(null)}
-          title={
-            confirmAction.type === 'invalidate'
-              ? t('Confirm invalidate')
-              : t('Confirm delete')
-          }
-          desc={
-            confirmAction.type === 'invalidate'
-              ? t(
-                  'After invalidating, this subscription will be immediately deactivated. Historical records are not affected. Continue?'
-                )
-              : t(
-                  'Deleting will permanently remove this subscription record (including benefit details). Continue?'
-                )
-          }
+          title={confirmDialogTitle(confirmAction.type, t)}
+          desc={confirmDialogDescription(confirmAction.type, t)}
           handleConfirm={handleConfirmAction}
           destructive={confirmAction.type === 'delete'}
         />
@@ -459,6 +639,69 @@ export function UserSubscriptionsDialog(props: Props) {
           </label>
         </ConfirmDialog>
       )}
+
+      <BindChannelDialog
+        open={bindTarget !== null}
+        onOpenChange={(open) => !open && setBindTarget(null)}
+        subscription={bindTarget}
+        onSuccess={async () => {
+          await loadData()
+          props.onSuccess?.()
+        }}
+      />
+
+      <ClaudeUsageDialog
+        open={
+          usageTarget !== null &&
+          usageTarget.bound_channel_type === BOUND_CHANNEL_TYPE_CLAUDE_OAUTH
+        }
+        onOpenChange={(open) => !open && setUsageTarget(null)}
+        channelName={usageTarget?.bound_channel_name}
+        channelId={usageTarget?.bound_channel_id}
+        response={claudeUsageResponse}
+        onRefresh={refreshUsage}
+        isRefreshing={usageLoading}
+      />
+      <CodexUsageDialog
+        open={
+          usageTarget !== null &&
+          usageTarget.bound_channel_type === BOUND_CHANNEL_TYPE_CODEX
+        }
+        onOpenChange={(open) => !open && setUsageTarget(null)}
+        channelName={usageTarget?.bound_channel_name}
+        channelId={usageTarget?.bound_channel_id}
+        response={codexUsageResponse}
+        onRefresh={refreshUsage}
+        isRefreshing={usageLoading}
+      />
     </>
+  )
+}
+
+function confirmDialogTitle(
+  type: 'invalidate' | 'delete' | 'unbind',
+  t: (key: string) => string
+): string {
+  if (type === 'invalidate') return t('Confirm invalidate')
+  if (type === 'unbind') return t('Confirm unbind')
+  return t('Confirm delete')
+}
+
+function confirmDialogDescription(
+  type: 'invalidate' | 'delete' | 'unbind',
+  t: (key: string) => string
+): string {
+  if (type === 'invalidate') {
+    return t(
+      'After invalidating, this subscription will be immediately deactivated. Historical records are not affected. Continue?'
+    )
+  }
+  if (type === 'unbind') {
+    return t(
+      'The channel returns to its previous group and the user leaves the dedicated group. Continue?'
+    )
+  }
+  return t(
+    'Deleting will permanently remove this subscription record (including benefit details). Continue?'
   )
 }

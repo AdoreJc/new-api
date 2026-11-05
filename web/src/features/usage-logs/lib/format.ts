@@ -560,6 +560,10 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'subscription.bind': 'Bound a subscription',
   'subscription.user_quota_reset':
     'Administrator reset the quota of subscription plan {{plan_title}} (ID: {{plan_id}})',
+  'subscription.channel_bind':
+    'Bound channel {{channel_id}} to the subscription of user {{target_user_id}}',
+  'subscription.channel_unbind':
+    'Unbound the channel from subscription {{subscription_id}} of user {{target_user_id}}',
   // Logs
   'log.clear': 'Cleared historical logs',
   'log.cleanup_start': 'Log cleanup task started.',

@@ -67,9 +67,58 @@ export const userSubscriptionSchema = z.object({
   amount_total: z.number(),
   amount_used: z.number(),
   next_reset_time: z.number().optional(),
+  // OAuth channel account bound by an administrator (0 = none)
+  bound_channel_id: z.number().optional(),
+  bound_group: z.string().optional(),
+  bound_channel_type: z.number().optional(),
+  // Only present in administrator responses
+  bound_channel_name: z.string().optional(),
+  bound_channel_status: z.number().optional(),
 })
 
 export type UserSubscription = z.infer<typeof userSubscriptionSchema>
+
+// ============================================================================
+// Channel binding (admin) & bound account usage (user)
+// ============================================================================
+
+export interface SubscriptionBindableChannel {
+  id: number
+  name: string
+  type: number
+  status: number
+  group: string
+  bound_subscription_id: number
+  bound_user_id: number
+  bound_username: string
+}
+
+export interface BindSubscriptionChannelRequest {
+  channel_id: number
+}
+
+export interface SubscriptionUsageWindow {
+  utilization: number
+  resets_at?: string
+  window_seconds?: number
+}
+
+export interface SubscriptionUsageData {
+  subscription_id: number
+  provider: 'claude' | 'codex' | string
+  channel_type: number
+  windows: Record<string, SubscriptionUsageWindow>
+  plan_type?: string
+  limit_reached: boolean
+  fetched_at: number
+}
+
+export interface SubscriptionUsageResponse {
+  success: boolean
+  message?: string
+  upstream_status?: number
+  data?: SubscriptionUsageData
+}
 
 export interface UserSubscriptionRecord {
   subscription: UserSubscription
@@ -115,6 +164,8 @@ export interface SubscriptionPayResponse {
 
 export interface CreateUserSubscriptionRequest {
   plan_id: number
+  // Optional OAuth channel bound in the same step
+  channel_id?: number
 }
 
 export interface ResetUserSubscriptionsRequest {

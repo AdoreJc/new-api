@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Crown, RefreshCw, Sparkles, Check } from 'lucide-react'
+import { Activity, Crown, RefreshCw, Sparkles, Check } from 'lucide-react'
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -51,9 +51,15 @@ import {
   updateBillingPreference,
 } from '@/features/subscriptions/api'
 import { SubscriptionPurchaseDialog } from '@/features/subscriptions/components/dialogs/subscription-purchase-dialog'
+import { SubscriptionUsageDialog } from '@/features/subscriptions/components/dialogs/subscription-usage-dialog'
 import { formatDuration, formatResetPeriod } from '@/features/subscriptions/lib'
+import {
+  boundAccountLabelKey,
+  isSubscriptionBound,
+} from '@/features/subscriptions/lib/channel-binding'
 import type {
   PlanRecord,
+  UserSubscription,
   UserSubscriptionRecord,
 } from '@/features/subscriptions/types'
 import { formatQuota } from '@/lib/format'
@@ -116,6 +122,8 @@ export function SubscriptionPlansCard({
 
   const [purchaseOpen, setPurchaseOpen] = useState(false)
   const [selectedPlan, setSelectedPlan] = useState<PlanRecord | null>(null)
+  const [usageSubscription, setUsageSubscription] =
+    useState<UserSubscription | null>(null)
 
   const enableStripe = !!topupInfo?.enable_stripe_topup
   const enableCreem = !!topupInfo?.enable_creem_topup
@@ -508,6 +516,32 @@ export function SubscriptionPlansCard({
                       {totalAmount > 0 && isActive && (
                         <Progress value={usagePercent} className='mt-2 h-1.5' />
                       )}
+                      {isActive && isSubscriptionBound(subscription) && (
+                        <div className='mt-2 flex flex-wrap items-center justify-between gap-2 border-t pt-2'>
+                          <span className='text-muted-foreground'>
+                            {t('Bound account')}:{' '}
+                            {t(
+                              boundAccountLabelKey(
+                                subscription?.bound_channel_type
+                              )
+                            )}
+                            {subscription?.bound_group
+                              ? ` · ${t('Group')} ${subscription.bound_group}`
+                              : ''}
+                          </span>
+                          <Button
+                            variant='outline'
+                            size='sm'
+                            className='h-7 text-xs'
+                            onClick={() =>
+                              setUsageSubscription(subscription ?? null)
+                            }
+                          >
+                            <Activity data-icon='inline-start' />
+                            {t('View account usage')}
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   )
                 })}
@@ -660,6 +694,12 @@ export function SubscriptionPlansCard({
             ? planPurchaseCountMap.get(selectedPlan.plan.id)
             : undefined
         }
+      />
+
+      <SubscriptionUsageDialog
+        open={usageSubscription !== null}
+        onOpenChange={(open) => !open && setUsageSubscription(null)}
+        subscription={usageSubscription}
       />
     </>
   )

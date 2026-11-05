@@ -276,6 +276,22 @@ type UserSubscription struct {
 	// Whether wallet fallback is allowed after this subscription's quota is exhausted (snapshot from plan)
 	AllowWalletOverflow bool `json:"allow_wallet_overflow"`
 
+	// OAuth channel account bound to this subscription (0 = none). While bound,
+	// UpgradeGroup holds the dedicated group BoundGroup so the existing
+	// expiry/invalidate/delete group restore paths apply unchanged.
+	BoundChannelId int `json:"bound_channel_id" gorm:"index;default:0"`
+	// Dedicated group created for the binding (oauth-ch<channelId>)
+	BoundGroup string `json:"bound_group" gorm:"type:varchar(64);default:''"`
+	// Channel group before the binding, restored when the channel is released
+	BoundChannelPrevGroup string `json:"bound_channel_prev_group" gorm:"type:varchar(64);default:''"`
+	// UpgradeGroup snapshot before the binding, restored on unbind
+	BoundPrevUpgradeGroup string `json:"bound_prev_upgrade_group" gorm:"type:varchar(64);default:''"`
+
+	// Bound channel projection for list responses (not stored)
+	BoundChannelType   int    `json:"bound_channel_type" gorm:"-"`
+	BoundChannelName   string `json:"bound_channel_name,omitempty" gorm:"-"`
+	BoundChannelStatus int    `json:"bound_channel_status,omitempty" gorm:"-"`
+
 	CreatedAt int64 `json:"created_at" gorm:"bigint"`
 	UpdatedAt int64 `json:"updated_at" gorm:"bigint"`
 }
@@ -502,7 +518,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 			return nil, common.NewMessage("Purchase limit for this plan has been reached")
 		}
 	}
-	nowUnix := GetDBTimestamp()
+	nowUnix := getDBTimestampTx(tx)
 	now := time.Unix(nowUnix, 0)
 	endUnix, err := calcPlanEndTime(now, plan)
 	if err != nil {
@@ -919,6 +935,7 @@ func buildSubscriptionSummaries(subs []UserSubscription) []SubscriptionSummary {
 	if len(subs) == 0 {
 		return []SubscriptionSummary{}
 	}
+	attachBoundChannelInfo(subs)
 	result := make([]SubscriptionSummary, 0, len(subs))
 	for _, sub := range subs {
 		subCopy := sub
@@ -937,6 +954,7 @@ func AdminInvalidateUserSubscription(userSubscriptionId int) (*common.Message, e
 	now := common.GetTimestamp()
 	cacheGroup := ""
 	downgradeGroup := ""
+	channelReleased := false
 	var userId int
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var sub UserSubscription
@@ -960,10 +978,18 @@ func AdminInvalidateUserSubscription(userSubscriptionId int) (*common.Message, e
 			cacheGroup = target
 			downgradeGroup = target
 		}
+		released, err := clearSubscriptionChannelBindingTx(tx, &sub)
+		if err != nil {
+			return err
+		}
+		channelReleased = released
 		return nil
 	})
 	if err != nil {
 		return nil, err
+	}
+	if channelReleased {
+		InitChannelCache()
 	}
 	if cacheGroup != "" && userId > 0 {
 		refreshSubscriptionUserGroupCache(userId, common.LogText("admin subscription update"))
@@ -982,6 +1008,7 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (*common.Message, error
 	now := common.GetTimestamp()
 	cacheGroup := ""
 	downgradeGroup := ""
+	channelReleased := false
 	var userId int
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var sub UserSubscription
@@ -998,6 +1025,11 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (*common.Message, error
 			cacheGroup = target
 			downgradeGroup = target
 		}
+		released, err := releaseBoundChannelTx(tx, &sub)
+		if err != nil {
+			return err
+		}
+		channelReleased = released
 		if err := tx.Where("id = ?", userSubscriptionId).Delete(&UserSubscription{}).Error; err != nil {
 			return err
 		}
@@ -1005,6 +1037,9 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (*common.Message, error
 	})
 	if err != nil {
 		return nil, err
+	}
+	if channelReleased {
+		InitChannelCache()
 	}
 	if cacheGroup != "" && userId > 0 {
 		refreshSubscriptionUserGroupCache(userId, common.LogText("admin subscription deletion"))
