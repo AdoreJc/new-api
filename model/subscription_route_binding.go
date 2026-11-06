@@ -187,21 +187,41 @@ func clearSubscriptionRouteModelCache() {
 	subscriptionRouteModelMemory.clear()
 }
 
-// ResolveSubscriptionRouteGroup returns the dedicated group a request of
-// userId for modelName is steered to: the user holds an active channel binding
-// and the bound channel serves the model in that group. Every other request
-// (no binding, expired or cancelled subscription, model not on the channel,
-// model or channel disabled) keeps its original group.
-func ResolveSubscriptionRouteGroup(userId int, modelName string, now int64) (string, bool) {
+// ResolveSubscriptionRoute returns the binding a request of userId for
+// modelName is steered by: the user holds an active channel binding and the
+// bound channel serves the model in the binding's dedicated group. Every other
+// request (no binding, expired or cancelled subscription, model not on the
+// channel, model or channel disabled) keeps its original group and is not
+// billed to the bound subscription.
+func ResolveSubscriptionRoute(userId int, modelName string, now int64) (SubscriptionRouteBinding, bool) {
 	if modelName == "" {
-		return "", false
+		return SubscriptionRouteBinding{}, false
 	}
 	binding, ok := GetUserSubscriptionRouteBinding(userId, now)
 	if !ok {
-		return "", false
+		return SubscriptionRouteBinding{}, false
 	}
 	if !subscriptionBoundChannelServesModel(binding.Group, modelName, binding.ChannelId) {
-		return "", false
+		return SubscriptionRouteBinding{}, false
 	}
-	return binding.Group, true
+	return binding, true
+}
+
+// SubscriptionFallsBackToSharedPool reports whether the plan of a bound
+// subscription lets a request whose bound account hit its usage limit move
+// back to its original group, billed to the wallet. The plan is read when the
+// limit is hit, so changing the plan applies to subscriptions already sold.
+func SubscriptionFallsBackToSharedPool(userSubscriptionId int) (bool, error) {
+	if userSubscriptionId <= 0 {
+		return false, nil
+	}
+	var sub UserSubscription
+	if err := DB.Select("id", "plan_id").Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
+		return false, err
+	}
+	plan, err := GetSubscriptionPlanById(sub.PlanId)
+	if err != nil {
+		return false, err
+	}
+	return plan.FallbackToSharedPoolOnLimit != nil && *plan.FallbackToSharedPoolOnLimit, nil
 }

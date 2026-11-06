@@ -193,6 +193,18 @@ func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) 
 	if relayInfo.UserSetting.BillingPreference != "" {
 		other.SetPublic("billing_preference", relayInfo.UserSetting.BillingPreference)
 	}
+	// The bound account hit its usage limit and the request was served by the
+	// shared pool, billed to the wallet.
+	if route := relayInfo.SubscriptionRoute; route != nil && route.FellBack {
+		other.SetPublic("subscription_fallback", map[string]any{
+			"reason":          "bound_account_limited",
+			"subscription_id": route.SubscriptionId,
+			"from_group":      route.Group,
+			"to_group":        route.OriginalGroup,
+			"limit_window":    route.LimitWindow,
+		})
+		other.SetAdmin("subscription_fallback_channel_id", route.ChannelId)
+	}
 	if relayInfo.BillingSource == "subscription" {
 		if relayInfo.SubscriptionId != 0 {
 			other.SetPublic("subscription_id", relayInfo.SubscriptionId)

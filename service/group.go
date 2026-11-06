@@ -6,6 +6,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -155,6 +156,11 @@ func FilterUserTokenAutoGroups(userGroup string, groups []string) []string {
 // first; a malformed snapshot still fails closed.
 func GetRequestAutoGroups(c *gin.Context, userGroup string) []string {
 	userId := c.GetInt("id")
+	// A request whose bound account hit its usage limit and fell back to the
+	// shared pool must not be sent to the dedicated group again.
+	if route, ok := common.GetContextKeyType[*relaycommon.SubscriptionRoute](c, constant.ContextKeySubscriptionRoute); ok && route != nil && route.FellBack {
+		userId = 0
+	}
 	value, ok := common.GetContextKey(c, constant.ContextKeyTokenAutoGroups)
 	if !ok {
 		return GetUserAutoGroupForUser(userId, userGroup)

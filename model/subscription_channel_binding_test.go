@@ -374,9 +374,9 @@ func TestLegacyOAuthChBindingKeepsWorkingUnderItsStoredGroup(t *testing.T) {
 		routed, ok := GetUserSubscriptionRouteBinding(f.user.Id, time.Now().Unix())
 		require.True(t, ok)
 		assert.Equal(t, legacy, routed.Group, "the stored group is used, not re-derived")
-		group, ok := ResolveSubscriptionRouteGroup(f.user.Id, "claude-sonnet-4-5", time.Now().Unix())
+		resolved, ok := ResolveSubscriptionRoute(f.user.Id, "claude-sonnet-4-5", time.Now().Unix())
 		require.True(t, ok)
-		assert.Equal(t, legacy, group)
+		assert.Equal(t, legacy, resolved.Group)
 	})
 
 	t.Run("unbind of an unmigrated row restores the plan snapshot and the channel", func(t *testing.T) {
@@ -438,18 +438,19 @@ func TestSubscriptionRouteBindingCacheFollowsBindingLifecycle(t *testing.T) {
 
 	_, ok := GetUserSubscriptionRouteBinding(f.user.Id, now)
 	assert.False(t, ok, "no binding yet")
-	_, ok = ResolveSubscriptionRouteGroup(f.user.Id, "claude-sonnet-4-5", now)
+	_, ok = ResolveSubscriptionRoute(f.user.Id, "claude-sonnet-4-5", now)
 	assert.False(t, ok)
 
 	_, err := AdminBindSubscriptionChannel(sub.Id, f.channel.Id)
 	require.NoError(t, err)
 	dedicated := SubscriptionBoundGroupName(f.channel.Type, f.channel.Id)
-	group, ok := ResolveSubscriptionRouteGroup(f.user.Id, "claude-sonnet-4-5", now)
+	resolved, ok := ResolveSubscriptionRoute(f.user.Id, "claude-sonnet-4-5", now)
 	require.True(t, ok, "the bind invalidated the cached miss")
-	assert.Equal(t, dedicated, group)
-	_, ok = ResolveSubscriptionRouteGroup(f.user.Id, "gpt-4o", now)
+	assert.Equal(t, dedicated, resolved.Group)
+	assert.Equal(t, sub.Id, resolved.SubscriptionId)
+	_, ok = ResolveSubscriptionRoute(f.user.Id, "gpt-4o", now)
 	assert.False(t, ok, "models the bound channel does not serve keep their group")
-	_, ok = ResolveSubscriptionRouteGroup(f.user.Id, "", now)
+	_, ok = ResolveSubscriptionRoute(f.user.Id, "", now)
 	assert.False(t, ok)
 
 	// The cache answers until it is invalidated: a row edited behind its back

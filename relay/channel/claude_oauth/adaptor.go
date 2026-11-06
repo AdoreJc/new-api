@@ -63,12 +63,18 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 //
 // Every upstream answer, streamed or not and whatever its status, carries the
 // account's rate-limit headers; they are sampled here so the usage dialog can
-// show windows the usage API leaves out.
+// show windows the usage API leaves out, and kept on the request so a usage
+// limit of a subscription-bound account can be told apart from other errors.
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
 	resp, err := channel.DoApiRequest(a, c, info, requestBody)
-	if err == nil && resp != nil && info != nil {
-		service.RecordClaudePassiveUsage(info.ChannelId, resp.Header)
+	var headers http.Header
+	if err == nil && resp != nil {
+		headers = resp.Header
+		if info != nil {
+			service.RecordClaudePassiveUsage(info.ChannelId, resp.Header)
+		}
 	}
+	service.RecordSubscriptionLimitHeaders(c, headers)
 	return resp, err
 }
 
