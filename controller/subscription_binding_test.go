@@ -129,6 +129,36 @@ func TestGetSubscriptionSelfUsageProjectsClaudeWindowsWithoutAccountDetails(t *t
 	}
 }
 
+func TestGetSubscriptionSelfUsageBackfillsFableWindowFromSampledHeaders(t *testing.T) {
+	setupSubscriptionUsageDB(t)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"five_hour":{"utilization":33.5,"resets_at":"2026-11-05T10:00:00Z"},"seven_day":{"utilization":20}}`))
+	}))
+	t.Cleanup(upstream.Close)
+	channel := newClaudeOAuthTestChannel(t, upstream.URL, service.ClaudeOAuthKey{AccessToken: "token", Scope: "user:profile"})
+	now := time.Now()
+	info := channel.GetOtherInfo()
+	info[service.ClaudePassiveUsageKey] = map[string]service.ClaudePassiveUsageWindow{
+		"seven_day_overage_included": {Utilization: 37.5, ResetsAt: now.Add(time.Hour).Unix(), SampledAt: now.Unix()},
+	}
+	channel.SetOtherInfo(info)
+	require.NoError(t, model.DB.Model(channel).Update("other_info", channel.OtherInfo).Error)
+	sub := newSubscriptionUsageSub(t, 1, channel.Id, time.Hour)
+
+	envelope := getSubscriptionUsage(t, 1, sub.Id)
+	require.True(t, envelope.Success, envelope.Message)
+	windows, ok := envelope.Data["windows"].(map[string]any)
+	require.True(t, ok)
+	assert.Len(t, windows, 3)
+	fable := windows["seven_day_overage_included"].(map[string]any)
+	assert.EqualValues(t, 37.5, fable["utilization"])
+	assert.Equal(t, "passive", fable["source"])
+	assert.Equal(t, now.UTC().Format(time.RFC3339), fable["sampled_at"])
+	_, hasSource := windows["seven_day"].(map[string]any)["source"]
+	assert.False(t, hasSource, "API windows carry no source")
+}
+
 func TestGetSubscriptionSelfUsageProjectsCodexWindows(t *testing.T) {
 	setupSubscriptionUsageDB(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

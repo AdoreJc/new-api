@@ -69,6 +69,61 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe('ClaudeUsageDialog usage windows', () => {
+  test('a window filled from sampled headers shows the Fable label, the source badge and the sample time', () => {
+    render(
+      <ClaudeUsageDialog
+        open
+        onOpenChange={() => {}}
+        channelId={7}
+        response={{
+          ...usageResponse,
+          data: {
+            ...usageResponse.data,
+            seven_day_overage_included: {
+              utilization: 37.5,
+              resets_at: '2026-11-09T00:00:00Z',
+              source: 'passive',
+              sampled_at: '2026-11-05T12:00:00Z',
+            },
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByText('7-Day Fable Window')).toBeVisible()
+    expect(screen.queryByText('7-Day Overage Window')).not.toBeInTheDocument()
+    expect(screen.getByText('From response headers')).toBeVisible()
+    expect(screen.getByText('Sampled at:')).toBeVisible()
+    expect(
+      screen.getByRole('progressbar', {
+        name: '7-Day Fable Window usage: 37.5%',
+      })
+    ).toBeInTheDocument()
+  })
+
+  test('windows reported by the usage API carry no source badge', () => {
+    render(
+      <ClaudeUsageDialog
+        open
+        onOpenChange={() => {}}
+        channelId={7}
+        response={{
+          ...usageResponse,
+          data: {
+            ...usageResponse.data,
+            seven_day_overage_included: { utilization: 37.5 },
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByText('7-Day Fable Window')).toBeVisible()
+    expect(screen.queryByText('From response headers')).not.toBeInTheDocument()
+    expect(screen.queryByText('Sampled at:')).not.toBeInTheDocument()
+  })
+})
+
 describe('ClaudeUsageDialog reset credits', () => {
   test('a failed reset locks "Apply reset" until the credits are queried again', async () => {
     const get = vi.spyOn(api, 'get').mockResolvedValue(creditsResponse)

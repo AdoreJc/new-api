@@ -337,6 +337,27 @@ func (channel *Channel) SetOtherInfo(otherInfo map[string]any) {
 	channel.OtherInfo = string(otherInfoBytes)
 }
 
+// UpdateChannelOtherInfoEntry merges one key into the channel's other_info
+// JSON and persists only that column. It serializes with the status writers
+// on the channel's polling lock so neither saves a stale snapshot.
+func UpdateChannelOtherInfoEntry(channelId int, key string, value any) error {
+	if channelId <= 0 {
+		return errors.New("channel ID is 0")
+	}
+	lock := GetChannelPollingLock(channelId)
+	lock.Lock()
+	defer lock.Unlock()
+
+	channel := &Channel{}
+	if err := DB.Select("id", "other_info").First(channel, "id = ?", channelId).Error; err != nil {
+		return err
+	}
+	info := channel.GetOtherInfo()
+	info[key] = value
+	channel.SetOtherInfo(info)
+	return DB.Model(&Channel{}).Where("id = ?", channelId).Update("other_info", channel.OtherInfo).Error
+}
+
 func (channel *Channel) GetTag() string {
 	if channel.Tag == nil {
 		return ""

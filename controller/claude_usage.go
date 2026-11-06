@@ -26,14 +26,19 @@ const (
 func GetClaudeChannelUsage(c *gin.Context) {
 	fetchClaudeChannelOAuthData(
 		c,
-		func(ctx context.Context, client *http.Client, baseURL string, accessToken string) (int, any, error) {
-			status, body, err := service.FetchClaudeOAuthUsage(ctx, client, baseURL, accessToken)
+		func(ctx context.Context, client *http.Client, ch *model.Channel, accessToken string) (int, any, error) {
+			status, body, err := service.FetchClaudeOAuthUsage(ctx, client, ch.GetBaseURL(), accessToken)
 			if err != nil {
 				return status, nil, err
 			}
 			var payload any
 			if common.Unmarshal(body, &payload) != nil {
 				payload = string(body)
+			}
+			// Windows the usage API left out are filled from the rate-limit
+			// headers sampled on relayed requests; API values take precedence.
+			if doc, ok := payload.(map[string]any); ok && status >= 200 && status < 300 {
+				service.BackfillClaudeUsageWindows(doc, service.LoadClaudePassiveUsage(ch), time.Now())
 			}
 			return status, payload, nil
 		},
@@ -46,8 +51,8 @@ func GetClaudeChannelUsage(c *gin.Context) {
 func GetClaudeChannelResetCredits(c *gin.Context) {
 	fetchClaudeChannelOAuthData(
 		c,
-		func(ctx context.Context, client *http.Client, baseURL string, accessToken string) (int, any, error) {
-			status, credits, err := service.FetchClaudeResetCredits(ctx, client, baseURL, accessToken)
+		func(ctx context.Context, client *http.Client, ch *model.Channel, accessToken string) (int, any, error) {
+			status, credits, err := service.FetchClaudeResetCredits(ctx, client, ch.GetBaseURL(), accessToken)
 			if err != nil || credits == nil {
 				return status, nil, err
 			}
@@ -62,8 +67,8 @@ func GetClaudeChannelResetCredits(c *gin.Context) {
 func ResetClaudeChannelUsage(c *gin.Context) {
 	fetchClaudeChannelOAuthData(
 		c,
-		func(ctx context.Context, client *http.Client, baseURL string, accessToken string) (int, any, error) {
-			status, outcome, err := service.RedeemClaudeResetCredit(ctx, client, baseURL, accessToken)
+		func(ctx context.Context, client *http.Client, ch *model.Channel, accessToken string) (int, any, error) {
+			status, outcome, err := service.RedeemClaudeResetCredit(ctx, client, ch.GetBaseURL(), accessToken)
 			if err != nil || outcome == nil {
 				return status, nil, err
 			}
@@ -75,7 +80,7 @@ func ResetClaudeChannelUsage(c *gin.Context) {
 	)
 }
 
-type claudeOAuthFetchFunc func(ctx context.Context, client *http.Client, baseURL string, accessToken string) (statusCode int, payload any, err error)
+type claudeOAuthFetchFunc func(ctx context.Context, client *http.Client, ch *model.Channel, accessToken string) (statusCode int, payload any, err error)
 
 // fetchClaudeChannelOAuthData resolves the channel token, calls fetch, and
 // retries once after a forced refresh when upstream answers 401. A 403 (scope
@@ -150,7 +155,7 @@ func claudeChannelOAuthFetch(c *gin.Context, ch *model.Channel, fetch claudeOAut
 	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 	defer cancel()
 
-	statusCode, payload, err = fetch(ctx, client, ch.GetBaseURL(), key.AccessToken)
+	statusCode, payload, err = fetch(ctx, client, ch, key.AccessToken)
 	if err == nil && statusCode == http.StatusUnauthorized && key.RefreshToken != "" {
 		refreshCtx, refreshCancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 		refreshedKey, _, refreshErr := service.RefreshClaudeChannelCredential(refreshCtx, ch.Id, service.ClaudeCredentialRefreshOptions{ResetCaches: true, Force: true})
@@ -160,7 +165,7 @@ func claudeChannelOAuthFetch(c *gin.Context, ch *model.Channel, fetch claudeOAut
 		} else {
 			retryCtx, retryCancel := context.WithTimeout(c.Request.Context(), timeout)
 			defer retryCancel()
-			statusCode, payload, err = fetch(retryCtx, client, ch.GetBaseURL(), refreshedKey.AccessToken)
+			statusCode, payload, err = fetch(retryCtx, client, ch, refreshedKey.AccessToken)
 		}
 	}
 	if err != nil {

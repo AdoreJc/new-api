@@ -78,13 +78,15 @@ export type SubscriptionUsageWindowView = {
   utilization: number
   resetsAt: string | null
   windowSeconds: number | null
+  source: 'api' | 'passive'
+  sampledAt: string | null
 }
 
 const CLAUDE_WINDOW_LABELS: { key: string; labelKey: string }[] = [
   { key: 'five_hour', labelKey: '5-Hour Window' },
   { key: 'seven_day', labelKey: '7-Day Window' },
   { key: 'seven_day_sonnet', labelKey: '7-Day Sonnet Window' },
-  { key: 'seven_day_overage_included', labelKey: '7-Day Overage Window' },
+  { key: 'seven_day_overage_included', labelKey: '7-Day Fable Window' },
 ]
 
 const CODEX_WINDOW_LABELS: { key: string; labelKey: string }[] = [
@@ -109,6 +111,7 @@ function readWindow(
       ? raw.resets_at
       : null
   const windowSeconds = Number(raw.window_seconds)
+  const passive = raw.source === 'passive'
   return {
     key,
     labelKey,
@@ -117,6 +120,11 @@ function readWindow(
     windowSeconds:
       Number.isFinite(windowSeconds) && windowSeconds > 0
         ? windowSeconds
+        : null,
+    source: passive ? 'passive' : 'api',
+    sampledAt:
+      passive && typeof raw.sampled_at === 'string' && raw.sampled_at !== ''
+        ? raw.sampled_at
         : null,
   }
 }

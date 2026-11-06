@@ -94,6 +94,10 @@ type SubscriptionUsageWindow struct {
 	ResetsAt string `json:"resets_at,omitempty"`
 	// Window length when upstream reports it (Codex)
 	WindowSeconds int64 `json:"window_seconds,omitempty"`
+	// "passive" when the window was filled from sampled rate-limit headers
+	Source string `json:"source,omitempty"`
+	// RFC 3339 time of the sampled response, with Source
+	SampledAt string `json:"sampled_at,omitempty"`
 }
 
 type SubscriptionUsageResponse struct {
@@ -135,6 +139,12 @@ func projectClaudeSubscriptionUsage(payload any) map[string]SubscriptionUsageWin
 		}
 		if resetsAt, ok := block["resets_at"].(string); ok {
 			window.ResetsAt = strings.TrimSpace(resetsAt)
+		}
+		if source, ok := block["source"].(string); ok && source == service.ClaudePassiveUsageSource {
+			window.Source = source
+			if sampledAt, ok := block["sampled_at"].(string); ok {
+				window.SampledAt = strings.TrimSpace(sampledAt)
+			}
 		}
 		windows[key] = window
 	}
@@ -243,14 +253,17 @@ func GetSubscriptionSelfUsage(c *gin.Context) {
 		var ok bool
 		statusCode, payload, ok = claudeChannelOAuthFetch(
 			c, ch,
-			func(ctx context.Context, client *http.Client, baseURL string, accessToken string) (int, any, error) {
-				status, body, err := service.FetchClaudeOAuthUsage(ctx, client, baseURL, accessToken)
+			func(ctx context.Context, client *http.Client, ch *model.Channel, accessToken string) (int, any, error) {
+				status, body, err := service.FetchClaudeOAuthUsage(ctx, client, ch.GetBaseURL(), accessToken)
 				if err != nil {
 					return status, nil, err
 				}
 				var doc any
 				if common.Unmarshal(body, &doc) != nil {
 					doc = nil
+				}
+				if windows, ok := doc.(map[string]any); ok && status >= 200 && status < 300 {
+					service.BackfillClaudeUsageWindows(windows, service.LoadClaudePassiveUsage(ch), time.Now())
 				}
 				return status, doc, nil
 			},

@@ -47,6 +47,8 @@ export type UsageWindowCardProps = {
   title: string
   /** Secondary line under the title, e.g. the window length */
   subtitle?: string
+  /** Badge rendered next to the title, e.g. the data source */
+  badge?: ReactNode
   /** 0-100 when data is present; null renders the empty state */
   percent: number | null
   /** Label/value pairs shown under the progress bar */
@@ -64,9 +66,12 @@ export function UsageWindowCard(props: UsageWindowCardProps) {
       <CardHeader className='p-3 pb-2'>
         <div className='flex items-start justify-between gap-3'>
           <div className='min-w-0'>
-            <CardTitle className='text-sm font-semibold'>
-              {props.title}
-            </CardTitle>
+            <div className='flex flex-wrap items-center gap-2'>
+              <CardTitle className='text-sm font-semibold'>
+                {props.title}
+              </CardTitle>
+              {props.badge}
+            </div>
             {props.subtitle ? (
               <CardDescription className='mt-1 text-xs'>
                 {props.subtitle}
