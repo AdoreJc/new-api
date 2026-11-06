@@ -43,7 +43,7 @@ func newSubscriptionUsageSub(t *testing.T, userID int, channelID int, endOffset 
 		BoundChannelId: channelID,
 	}
 	if channelID > 0 {
-		sub.BoundGroup = model.SubscriptionBoundGroupName(channelID)
+		sub.BoundGroup = model.SubscriptionBoundGroupName(constant.ChannelTypeClaudeOAuth, channelID)
 	}
 	require.NoError(t, model.DB.Create(sub).Error)
 	return sub

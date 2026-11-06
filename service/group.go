@@ -111,9 +111,10 @@ func GetRequestAutoGroups(c *gin.Context, userGroup string) []string {
 }
 
 // subscriptionPinnedAutoGroups pins Auto tokens of a user whose group is a
-// subscription binding group (oauth-ch<id>) to that group alone, so requests
-// never fall through to the shared pools. A binding group without a ratio
-// yields an empty list, which the selector reports as Auto being unavailable.
+// subscription binding group (claude-ch<id>, codex-ch<id> or the legacy
+// oauth-ch<id>) to that group alone, so requests never fall through to the
+// shared pools. A binding group without a ratio yields an empty list, which
+// the selector reports as Auto being unavailable.
 func subscriptionPinnedAutoGroups(userGroup string) ([]string, bool) {
 	if !model.IsSubscriptionBoundGroup(userGroup) {
 		return nil, false

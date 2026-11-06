@@ -28,7 +28,10 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { getServerMessage } from '@/lib/server-error-message'
 
 import { bindSubscriptionChannel, getBindableChannels } from '../../api'
-import { bindableChannelLabel } from '../../lib/channel-binding'
+import {
+  bindableChannelLabel,
+  subscriptionBoundGroupName,
+} from '../../lib/channel-binding'
 import type { SubscriptionBindableChannel, UserSubscription } from '../../types'
 
 type BindChannelDialogProps = {
@@ -87,10 +90,19 @@ export function BindChannelDialog(props: BindChannelDialogProps) {
   )
 
   const selectedChannel = channels.find((c) => String(c.id) === selected)
-  const dedicatedGroup = selectedChannel ? `oauth-ch${selectedChannel.id}` : ''
+  // Keeping the current channel keeps its stored group, which may still use
+  // the legacy oauth-ch<id> name.
+  let dedicatedGroup = ''
+  if (selectedChannel) {
+    dedicatedGroup =
+      selectedChannel.id === currentChannelId && subscription?.bound_group
+        ? subscription.bound_group
+        : subscriptionBoundGroupName(selectedChannel)
+  }
   const channelLeavesGroup =
     selectedChannel &&
     selectedChannel.group &&
+    dedicatedGroup &&
     selectedChannel.group !== dedicatedGroup
 
   const handleSubmit = async () => {

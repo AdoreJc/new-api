@@ -23,6 +23,7 @@ import {
   isSubscriptionBound,
   isSubscriptionUsageWindow,
   parseSubscriptionUsageWindows,
+  subscriptionBoundGroupName,
 } from '../lib/channel-binding'
 import type { SubscriptionUsageData } from '../types'
 
@@ -32,6 +33,14 @@ describe('boundAccountLabelKey', () => {
     expect(boundAccountLabelKey(57)).toBe('ChatGPT Subscription (Codex)')
     expect(boundAccountLabelKey(1)).toBe('OAuth account')
     expect(boundAccountLabelKey(undefined)).toBe('OAuth account')
+  })
+})
+
+describe('subscriptionBoundGroupName', () => {
+  test('names the dedicated group by channel type and rejects other types', () => {
+    expect(subscriptionBoundGroupName({ id: 12, type: 64 })).toBe('claude-ch12')
+    expect(subscriptionBoundGroupName({ id: 12, type: 57 })).toBe('codex-ch12')
+    expect(subscriptionBoundGroupName({ id: 12, type: 1 })).toBe('')
   })
 })
 
