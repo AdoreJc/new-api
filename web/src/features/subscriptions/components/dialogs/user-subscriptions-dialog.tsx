@@ -698,7 +698,7 @@ function confirmDialogDescription(
   }
   if (type === 'unbind') {
     return t(
-      'The channel returns to its previous group and the user leaves the dedicated group. Continue?'
+      'The channel returns to its previous group and requests for its models are no longer routed to the dedicated group. Continue?'
     )
   }
   return t(

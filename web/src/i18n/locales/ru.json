@@ -6349,7 +6349,7 @@
     "The button fills in this website and keeps any existing website addresses. Save changes on the settings page to apply.": "Кнопка подставит текущий сайт и сохранит уже указанные адреса. Для применения сохраните изменения на странице настроек.",
     "The change succeeded, but the notification email could not be sent.": "Изменение выполнено, но отправить уведомление по почте не удалось.",
     "The changelog could not be fetched or parsed. Please try again.": "Не удалось получить или разобрать историю изменений. Повторите попытку.",
-    "The channel returns to its previous group and the user leaves the dedicated group. Continue?": "Канал вернётся в прежнюю группу, а пользователь покинет выделенную группу. Продолжить?",
+    "The channel returns to its previous group and requests for its models are no longer routed to the dedicated group. Continue?": "Канал вернётся в прежнюю группу, а запросы к его моделям больше не будут направляться в выделенную группу. Продолжить?",
     "The channel leaves its current group": "Канал покинет свою текущую группу",
     "The channel moves into a dedicated group that only this user can use. The user's own group is not changed.": "Канал переносится в выделенную группу, доступную только этому пользователю. Собственная группа пользователя не меняется.",
     "The Classic frontend has been removed. The theme can only be set to default": "Интерфейс Classic удалён. Тему можно установить только в default",

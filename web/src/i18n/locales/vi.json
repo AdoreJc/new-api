@@ -6349,7 +6349,7 @@
     "The button fills in this website and keeps any existing website addresses. Save changes on the settings page to apply.": "Nút này điền trang hiện tại và giữ các địa chỉ đã có. Lưu thay đổi trên trang cài đặt để áp dụng.",
     "The change succeeded, but the notification email could not be sent.": "Thay đổi đã hoàn tất nhưng không thể gửi email thông báo.",
     "The changelog could not be fetched or parsed. Please try again.": "Không thể tải hoặc phân tích nhật ký thay đổi. Vui lòng thử lại.",
-    "The channel returns to its previous group and the user leaves the dedicated group. Continue?": "Kênh sẽ trở về nhóm trước đó và người dùng rời khỏi nhóm riêng. Tiếp tục?",
+    "The channel returns to its previous group and requests for its models are no longer routed to the dedicated group. Continue?": "Kênh sẽ trở về nhóm trước đó và yêu cầu cho các mô hình của nó không còn được định tuyến tới nhóm riêng. Tiếp tục?",
     "The channel leaves its current group": "Kênh sẽ rời khỏi nhóm hiện tại",
     "The channel moves into a dedicated group that only this user can use. The user's own group is not changed.": "Kênh được chuyển vào nhóm riêng chỉ người dùng này dùng được. Nhóm của chính người dùng không thay đổi.",
     "The Classic frontend has been removed. The theme can only be set to default": "Giao diện Classic đã bị gỡ bỏ. Chủ đề chỉ có thể đặt là default",

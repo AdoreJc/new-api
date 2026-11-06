@@ -6349,7 +6349,7 @@
     "The button fills in this website and keeps any existing website addresses. Save changes on the settings page to apply.": "點擊按鈕會填入目前網站，並保留既有的網站位址。回到設定頁儲存後生效。",
     "The change succeeded, but the notification email could not be sent.": "變更已完成，但通知郵件傳送失敗。",
     "The changelog could not be fetched or parsed. Please try again.": "無法取得或解析更新日誌，請重試。",
-    "The channel returns to its previous group and the user leaves the dedicated group. Continue?": "渠道將回到原分組，用戶將離開專屬分組。是否繼續？",
+    "The channel returns to its previous group and requests for its models are no longer routed to the dedicated group. Continue?": "渠道將回到原分組，該用戶對其模型的請求不再定向到專屬分組。是否繼續？",
     "The channel leaves its current group": "渠道將離開目前分組",
     "The channel moves into a dedicated group that only this user can use. The user's own group is not changed.": "渠道會移入只有該用戶能使用的專屬分組，用戶自身的分組不變。",
     "The Classic frontend has been removed. The theme can only be set to default": "Classic 前端已移除，主題只能設定為 default",
