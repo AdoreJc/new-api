@@ -76,10 +76,11 @@ func TestGetRequestAutoGroupsPinsSubscriptionBoundUsersToTheirGroup(t *testing.T
 	ctx := newRequestAutoGroupsContext()
 	common.SetContextKey(ctx, constant.ContextKeyTokenAutoGroups, []string{"vip", "default"})
 
-	assert.Empty(t, GetRequestAutoGroups(ctx, "oauth-ch7"), "a binding group without a ratio never falls back to the shared pools")
+	assert.Empty(t, GetRequestAutoGroups(ctx, "claude-ch7"), "a binding group without a ratio never falls back to the shared pools")
 
-	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":1,"svip":1,"oauth-ch7":1}`))
-	assert.Equal(t, []string{"oauth-ch7"}, GetRequestAutoGroups(ctx, "oauth-ch7"))
-	assert.Equal(t, []string{"oauth-ch7"}, GetRequestAutoGroups(newRequestAutoGroupsContext(), "oauth-ch7"))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":1,"svip":1,"claude-ch7":1,"oauth-ch8":1}`))
+	assert.Equal(t, []string{"claude-ch7"}, GetRequestAutoGroups(ctx, "claude-ch7"))
+	assert.Equal(t, []string{"claude-ch7"}, GetRequestAutoGroups(newRequestAutoGroupsContext(), "claude-ch7"))
+	assert.Equal(t, []string{"oauth-ch8"}, GetRequestAutoGroups(newRequestAutoGroupsContext(), "oauth-ch8"), "legacy binding groups stay pinned")
 	assert.Equal(t, []string{"vip", "default"}, GetRequestAutoGroups(ctx, "default"))
 }

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -93,7 +94,7 @@ func createActiveSubscription(t *testing.T, f bindingFixture) *UserSubscription 
 func TestBindSubscriptionChannelMovesChannelAndUserIntoDedicatedGroup(t *testing.T) {
 	f := newBindingFixture(t, "", "default,vip")
 	sub := createActiveSubscription(t, f)
-	dedicated := SubscriptionBoundGroupName(f.channel.Id)
+	dedicated := "claude-ch" + strconv.Itoa(f.channel.Id)
 
 	notice, err := AdminBindSubscriptionChannel(sub.Id, f.channel.Id)
 	require.NoError(t, err)
@@ -165,8 +166,10 @@ func TestRebindSubscriptionChannelReleasesPreviousChannel(t *testing.T) {
 	assert.Equal(t, codex.Id, stored.BoundChannelId)
 	assert.Equal(t, "vip", stored.BoundChannelPrevGroup)
 	assert.Equal(t, "default", stored.PrevUserGroup)
-	assert.Equal(t, SubscriptionBoundGroupName(codex.Id), userGroupOf(t, f.user.Id))
-	assert.Equal(t, SubscriptionBoundGroupName(codex.Id), channelGroupOf(t, codex.Id))
+	codexGroup := "codex-ch" + strconv.Itoa(codex.Id)
+	assert.Equal(t, codexGroup, stored.BoundGroup)
+	assert.Equal(t, codexGroup, userGroupOf(t, f.user.Id))
+	assert.Equal(t, codexGroup, channelGroupOf(t, codex.Id))
 	assert.Equal(t, "default", channelGroupOf(t, f.channel.Id), "previous channel returns to its original group")
 	assert.Equal(t, []string{"default"}, abilityGroupsOf(t, f.channel.Id))
 }
@@ -180,7 +183,7 @@ func TestUnbindSubscriptionChannelRestoresPlanUpgradeGroup(t *testing.T) {
 	bound := subscriptionOf(t, sub.Id)
 	assert.Equal(t, "pro", bound.BoundPrevUpgradeGroup)
 	assert.Equal(t, "default", bound.PrevUserGroup)
-	assert.InDelta(t, 2, ratio_setting.GetGroupRatio(SubscriptionBoundGroupName(f.channel.Id)), 0.0001, "ratio copied from the user's group at bind time")
+	assert.InDelta(t, 2, ratio_setting.GetGroupRatio(SubscriptionBoundGroupName(f.channel.Type, f.channel.Id)), 0.0001, "ratio copied from the user's group at bind time")
 
 	notice, err := AdminUnbindSubscriptionChannel(sub.Id)
 	require.NoError(t, err)
@@ -253,7 +256,7 @@ func TestExpiredBoundSubscriptionRevertsUserButKeepsChannelParkedUntilRebound(t 
 	sub := createActiveSubscription(t, f)
 	_, err := AdminBindSubscriptionChannel(sub.Id, f.channel.Id)
 	require.NoError(t, err)
-	dedicated := SubscriptionBoundGroupName(f.channel.Id)
+	dedicated := SubscriptionBoundGroupName(f.channel.Type, f.channel.Id)
 
 	require.NoError(t, DB.Model(&UserSubscription{}).Where("id = ?", sub.Id).Update("end_time", time.Now().Unix()-1).Error)
 	expired, err := ExpireDueSubscriptions(10)
@@ -284,7 +287,7 @@ func TestExpiredBoundSubscriptionRevertsUserButKeepsChannelParkedUntilRebound(t 
 
 func TestCreateUserSubscriptionWithChannelBindsInOneStep(t *testing.T) {
 	f := newBindingFixture(t, "", "default")
-	dedicated := SubscriptionBoundGroupName(f.channel.Id)
+	dedicated := SubscriptionBoundGroupName(f.channel.Type, f.channel.Id)
 
 	notice, err := AdminCreateUserSubscriptionWithChannel(f.user.Id, f.plan.Id, f.channel.Id)
 	require.NoError(t, err)
@@ -307,9 +310,101 @@ func TestCreateUserSubscriptionWithChannelBindsInOneStep(t *testing.T) {
 }
 
 func TestSubscriptionBoundGroupNames(t *testing.T) {
-	assert.Equal(t, "oauth-ch12", SubscriptionBoundGroupName(12))
-	assert.True(t, IsSubscriptionBoundGroup("oauth-ch12"))
-	assert.False(t, IsSubscriptionBoundGroup("oauth-ch"))
-	assert.False(t, IsSubscriptionBoundGroup("oauth-chx"))
-	assert.False(t, IsSubscriptionBoundGroup("default"))
+	assert.Equal(t, "claude-ch12", SubscriptionBoundGroupName(constant.ChannelTypeClaudeOAuth, 12))
+	assert.Equal(t, "codex-ch12", SubscriptionBoundGroupName(constant.ChannelTypeCodex, 12))
+	assert.Equal(t, "", SubscriptionBoundGroupName(constant.ChannelTypeOpenAI, 12), "unbindable types get no group")
+	assert.Equal(t, "", SubscriptionBoundGroupName(constant.ChannelTypeAnthropic, 12), "unbindable types get no group")
+
+	cases := map[string]bool{
+		"claude-ch12":  true,
+		"codex-ch12":   true,
+		"oauth-ch12":   true, // legacy bindings keep their original name
+		"claude-ch":    false,
+		"codex-ch":     false,
+		"oauth-ch":     false,
+		"claude-chx":   false,
+		"codex-ch12a":  false,
+		"oauth-ch-1":   false,
+		"claude-ch 12": false,
+		"xclaude-ch12": false,
+		"default":      false,
+		"":             false,
+	}
+	for group, want := range cases {
+		assert.Equal(t, want, IsSubscriptionBoundGroup(group), group)
+	}
+}
+
+// bindLegacySubscriptionChannel reproduces a binding created before groups
+// were named by channel type: everything points at oauth-ch<id>.
+func bindLegacySubscriptionChannel(t *testing.T, f bindingFixture, sub *UserSubscription) string {
+	t.Helper()
+	legacy := "oauth-ch" + strconv.Itoa(f.channel.Id)
+	require.NoError(t, ensureSubscriptionBoundGroupRatio(legacy, "default"))
+	prevChannelGroup := f.channel.Group
+	require.NoError(t, setChannelGroupTx(DB, f.channel.Id, legacy))
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", f.user.Id).Update("group", legacy).Error)
+	require.NoError(t, DB.Model(&UserSubscription{}).Where("id = ?", sub.Id).Updates(map[string]any{
+		"upgrade_group":            legacy,
+		"prev_user_group":          "default",
+		"bound_channel_id":         f.channel.Id,
+		"bound_group":              legacy,
+		"bound_channel_prev_group": prevChannelGroup,
+		"bound_prev_upgrade_group": "",
+	}).Error)
+	require.NoError(t, RefreshUserGroupCache(f.user.Id))
+	return legacy
+}
+
+func TestLegacyOAuthChBindingKeepsWorkingUnderItsStoredGroup(t *testing.T) {
+	t.Run("unbind restores the user and the channel", func(t *testing.T) {
+		f := newBindingFixture(t, "", "default,vip")
+		sub := createActiveSubscription(t, f)
+		legacy := bindLegacySubscriptionChannel(t, f, sub)
+		require.Equal(t, []string{legacy}, abilityGroupsOf(t, f.channel.Id))
+
+		notice, err := AdminUnbindSubscriptionChannel(sub.Id)
+		require.NoError(t, err)
+		require.NotNil(t, notice)
+		assert.Equal(t, "default", notice.Params["group"])
+		assert.Equal(t, "default", userGroupOf(t, f.user.Id))
+		assert.Equal(t, "default,vip", channelGroupOf(t, f.channel.Id))
+		assert.Equal(t, []string{"default", "vip"}, abilityGroupsOf(t, f.channel.Id))
+		stored := subscriptionOf(t, sub.Id)
+		assert.Equal(t, 0, stored.BoundChannelId)
+		assert.Equal(t, "", stored.BoundGroup)
+		assert.Equal(t, "", stored.UpgradeGroup)
+	})
+
+	t.Run("invalidate releases the channel", func(t *testing.T) {
+		f := newBindingFixture(t, "", "default")
+		sub := createActiveSubscription(t, f)
+		bindLegacySubscriptionChannel(t, f, sub)
+
+		_, err := AdminInvalidateUserSubscription(sub.Id)
+		require.NoError(t, err)
+		assert.Equal(t, "default", userGroupOf(t, f.user.Id))
+		assert.Equal(t, "default", channelGroupOf(t, f.channel.Id))
+	})
+
+	t.Run("a parked channel rebinds under the typed name and keeps its origin", func(t *testing.T) {
+		f := newBindingFixture(t, "", "default,vip")
+		sub := createActiveSubscription(t, f)
+		legacy := bindLegacySubscriptionChannel(t, f, sub)
+		require.NoError(t, DB.Model(&UserSubscription{}).Where("id = ?", sub.Id).Update("end_time", time.Now().Unix()-1).Error)
+		_, err := ExpireDueSubscriptions(10)
+		require.NoError(t, err)
+		require.Equal(t, "default", userGroupOf(t, f.user.Id))
+		require.Equal(t, legacy, channelGroupOf(t, f.channel.Id))
+
+		renewal := createActiveSubscription(t, f)
+		_, err = AdminBindSubscriptionChannel(renewal.Id, f.channel.Id)
+		require.NoError(t, err)
+		typed := "claude-ch" + strconv.Itoa(f.channel.Id)
+		stored := subscriptionOf(t, renewal.Id)
+		assert.Equal(t, typed, stored.BoundGroup)
+		assert.Equal(t, "default,vip", stored.BoundChannelPrevGroup, "the legacy parking group is not mistaken for the origin")
+		assert.Equal(t, typed, userGroupOf(t, f.user.Id))
+		assert.Equal(t, typed, channelGroupOf(t, f.channel.Id))
+	})
 }

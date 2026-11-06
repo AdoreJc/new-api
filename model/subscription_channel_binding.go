@@ -2,7 +2,7 @@ package model
 
 import (
 	"errors"
-	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -11,28 +11,91 @@ import (
 	"gorm.io/gorm"
 )
 
-// SubscriptionBoundGroupPrefix prefixes the dedicated group a bound OAuth
-// channel is moved into. The group name is derived from the channel id so the
-// same channel always maps to the same group.
-const SubscriptionBoundGroupPrefix = "oauth-ch"
+// Prefixes of the dedicated group a bound OAuth channel is moved into. The
+// group name is the prefix for the channel type followed by the channel id, so
+// the same channel always maps to the same group.
+const (
+	SubscriptionBoundGroupPrefixClaude = "claude-ch"
+	SubscriptionBoundGroupPrefixCodex  = "codex-ch"
+	// SubscriptionBoundGroupPrefixLegacy is the type-agnostic prefix used
+	// before groups were named by channel type. Bindings created with it keep
+	// that name (stored in UserSubscription.BoundGroup) and are not renamed;
+	// it is only recognised, never generated.
+	SubscriptionBoundGroupPrefixLegacy = "oauth-ch"
+)
 
-// SubscriptionBoundGroupName returns the dedicated group for a bound channel.
-func SubscriptionBoundGroupName(channelId int) string {
-	return fmt.Sprintf("%s%d", SubscriptionBoundGroupPrefix, channelId)
+// subscriptionBoundGroupPrefixes lists every prefix a dedicated binding group
+// may carry, including the legacy one.
+var subscriptionBoundGroupPrefixes = [...]string{
+	SubscriptionBoundGroupPrefixClaude,
+	SubscriptionBoundGroupPrefixCodex,
+	SubscriptionBoundGroupPrefixLegacy,
 }
 
-// IsSubscriptionBoundGroup reports whether group is a dedicated binding group.
-func IsSubscriptionBoundGroup(group string) bool {
-	rest, ok := strings.CutPrefix(group, SubscriptionBoundGroupPrefix)
-	if !ok || rest == "" {
-		return false
+// SubscriptionBoundGroupName returns the dedicated group for a bound channel:
+// claude-ch<id> for Claude Subscription (OAuth), codex-ch<id> for ChatGPT
+// Subscription (Codex). Other channel types cannot be bound and yield "".
+func SubscriptionBoundGroupName(channelType int, channelId int) string {
+	switch channelType {
+	case constant.ChannelTypeClaudeOAuth:
+		return SubscriptionBoundGroupPrefixClaude + strconv.Itoa(channelId)
+	case constant.ChannelTypeCodex:
+		return SubscriptionBoundGroupPrefixCodex + strconv.Itoa(channelId)
+	default:
+		return ""
 	}
-	for _, r := range rest {
-		if r < '0' || r > '9' {
-			return false
+}
+
+// IsSubscriptionBoundGroup reports whether group is a dedicated binding group
+// (claude-ch<id>, codex-ch<id> or the legacy oauth-ch<id>).
+func IsSubscriptionBoundGroup(group string) bool {
+	for _, prefix := range subscriptionBoundGroupPrefixes {
+		rest, ok := strings.CutPrefix(group, prefix)
+		if !ok || rest == "" {
+			continue
+		}
+		if strings.Trim(rest, "0123456789") == "" {
+			return true
 		}
 	}
-	return true
+	return false
+}
+
+// isChannelSubscriptionBoundGroup reports whether group is a dedicated binding
+// group of channelId under any current or legacy prefix.
+func isChannelSubscriptionBoundGroup(group string, channelId int) bool {
+	suffix := strconv.Itoa(channelId)
+	for _, prefix := range subscriptionBoundGroupPrefixes {
+		if group == prefix+suffix {
+			return true
+		}
+	}
+	return false
+}
+
+// isSubscriptionBoundGroupOf reports whether group is the dedicated group of
+// sub's binding. The stored BoundGroup is authoritative, so a binding created
+// under the legacy oauth-ch prefix keeps resolving to its real group; a row
+// without one falls back to any dedicated name of the bound channel id.
+func isSubscriptionBoundGroupOf(sub *UserSubscription, group string) bool {
+	if sub == nil || sub.BoundChannelId <= 0 || group == "" {
+		return false
+	}
+	if bound := strings.TrimSpace(sub.BoundGroup); bound != "" {
+		return group == bound
+	}
+	return isChannelSubscriptionBoundGroup(group, sub.BoundChannelId)
+}
+
+// subscriptionBoundGroupForChannel returns the dedicated group a new binding
+// of channelId would use, or "" when the channel is missing or not bindable;
+// the bind transaction then reports the precise error.
+func subscriptionBoundGroupForChannel(channelId int) string {
+	var channel Channel
+	if err := DB.Select("id", "type").Where("id = ?", channelId).First(&channel).Error; err != nil {
+		return ""
+	}
+	return SubscriptionBoundGroupName(channel.Type, channel.Id)
 }
 
 // IsSubscriptionBindableChannelType reports whether a channel type carries an
@@ -152,12 +215,11 @@ func releaseBoundChannelTx(tx *gorm.DB, sub *UserSubscription) (bool, error) {
 		}
 		return false, err.Error
 	}
-	dedicated := SubscriptionBoundGroupName(sub.BoundChannelId)
-	if channel.Group != dedicated {
+	if !isSubscriptionBoundGroupOf(sub, channel.Group) {
 		return false, nil
 	}
 	target := strings.TrimSpace(sub.BoundChannelPrevGroup)
-	if target == "" || target == dedicated {
+	if target == "" || target == channel.Group {
 		target = "default"
 	}
 	if err := setChannelGroupTx(tx, channel.Id, target); err != nil {
@@ -207,10 +269,16 @@ func bindSubscriptionChannelTx(tx *gorm.DB, sub *UserSubscription, channelId int
 		return nil, err
 	}
 	change := &SubscriptionChannelBindingChange{UserId: sub.UserId}
-	dedicated := SubscriptionBoundGroupName(channel.Id)
 	if sub.BoundChannelId == channel.Id {
-		change.Group = dedicated
+		change.Group = sub.BoundGroup
+		if change.Group == "" {
+			change.Group = SubscriptionBoundGroupName(channel.Type, channel.Id)
+		}
 		return change, nil
+	}
+	dedicated := SubscriptionBoundGroupName(channel.Type, channel.Id)
+	if dedicated == "" {
+		return nil, common.NewMessage("Only Claude Subscription (OAuth) and ChatGPT Subscription (Codex) channels can be bound")
 	}
 
 	var activeCount int64
@@ -232,9 +300,10 @@ func bindSubscriptionChannelTx(tx *gorm.DB, sub *UserSubscription, channelId int
 	}
 
 	// Where the channel goes back to when released. A channel still parked in
-	// its dedicated group by an ended subscription keeps that older origin.
+	// its dedicated group (current or legacy name) by an ended subscription
+	// keeps that older origin.
 	prevChannelGroup := strings.TrimSpace(channel.Group)
-	if prevChannelGroup == dedicated {
+	if isChannelSubscriptionBoundGroup(prevChannelGroup, channel.Id) {
 		var lastBinding UserSubscription
 		query := tx.Where("bound_channel_id = ? AND id <> ?", channel.Id, sub.Id).
 			Order("id desc").Limit(1).Find(&lastBinding)
@@ -243,7 +312,7 @@ func bindSubscriptionChannelTx(tx *gorm.DB, sub *UserSubscription, channelId int
 		}
 		prevChannelGroup = strings.TrimSpace(lastBinding.BoundChannelPrevGroup)
 	}
-	if prevChannelGroup == "" || prevChannelGroup == dedicated {
+	if prevChannelGroup == "" || isChannelSubscriptionBoundGroup(prevChannelGroup, channel.Id) {
 		prevChannelGroup = "default"
 	}
 	// Ended subscriptions that still point at this channel lose the reference
@@ -311,10 +380,6 @@ func unbindSubscriptionChannelTx(tx *gorm.DB, sub *UserSubscription, now int64) 
 	}
 	change.ChannelChanged = released
 
-	dedicated := sub.BoundGroup
-	if dedicated == "" {
-		dedicated = SubscriptionBoundGroupName(sub.BoundChannelId)
-	}
 	restoredUpgradeGroup := strings.TrimSpace(sub.BoundPrevUpgradeGroup)
 	if isUserSubscriptionActive(sub, now) {
 		currentGroup, err := getUserGroupByIdTx(tx, sub.UserId)
@@ -325,7 +390,7 @@ func unbindSubscriptionChannelTx(tx *gorm.DB, sub *UserSubscription, now int64) 
 		if target == "" {
 			target = strings.TrimSpace(sub.PrevUserGroup)
 		}
-		if currentGroup == dedicated && target != "" && target != currentGroup {
+		if isSubscriptionBoundGroupOf(sub, currentGroup) && target != "" && target != currentGroup {
 			if err := tx.Model(&User{}).Where("id = ?", sub.UserId).Update("group", target).Error; err != nil {
 				return nil, err
 			}
@@ -403,9 +468,16 @@ func AdminBindSubscriptionChannel(userSubscriptionId int, channelId int) (*commo
 	if err := DB.Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
 		return nil, err
 	}
-	sourceGroup, _ := GetUserGroup(sub.UserId, true)
-	if err := ensureSubscriptionBoundGroupRatio(SubscriptionBoundGroupName(channelId), sourceGroup); err != nil {
-		return nil, err
+	// Rebinding the same channel keeps its stored (possibly legacy) group.
+	dedicated := sub.BoundGroup
+	if sub.BoundChannelId != channelId || dedicated == "" {
+		dedicated = subscriptionBoundGroupForChannel(channelId)
+	}
+	if dedicated != "" {
+		sourceGroup, _ := GetUserGroup(sub.UserId, true)
+		if err := ensureSubscriptionBoundGroupRatio(dedicated, sourceGroup); err != nil {
+			return nil, err
+		}
 	}
 	now := GetDBTimestamp()
 	var change *SubscriptionChannelBindingChange
@@ -469,9 +541,11 @@ func AdminCreateUserSubscriptionWithChannel(userId int, planId int, channelId in
 	if err != nil {
 		return nil, err
 	}
-	sourceGroup, _ := GetUserGroup(userId, true)
-	if err := ensureSubscriptionBoundGroupRatio(SubscriptionBoundGroupName(channelId), sourceGroup); err != nil {
-		return nil, err
+	if dedicated := subscriptionBoundGroupForChannel(channelId); dedicated != "" {
+		sourceGroup, _ := GetUserGroup(userId, true)
+		if err := ensureSubscriptionBoundGroupRatio(dedicated, sourceGroup); err != nil {
+			return nil, err
+		}
 	}
 	now := GetDBTimestamp()
 	var change *SubscriptionChannelBindingChange

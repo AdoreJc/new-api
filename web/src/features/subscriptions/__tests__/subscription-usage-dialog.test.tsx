@@ -34,7 +34,7 @@ const subscription: UserSubscription = {
   amount_total: 0,
   amount_used: 0,
   bound_channel_id: 7,
-  bound_group: 'oauth-ch7',
+  bound_group: 'claude-ch7',
   bound_channel_type: 64,
 }
 

@@ -64,6 +64,24 @@ export function bindableChannelLabel(
   return base
 }
 
+const BOUND_GROUP_PREFIXES: Record<number, string> = {
+  [BOUND_CHANNEL_TYPE_CLAUDE_OAUTH]: 'claude-ch',
+  [BOUND_CHANNEL_TYPE_CODEX]: 'codex-ch',
+}
+
+/**
+ * Dedicated group a new binding of the channel moves into: claude-ch<id> for
+ * Claude Subscription (OAuth), codex-ch<id> for ChatGPT Subscription (Codex),
+ * '' for channel types that cannot be bound. Mirrors
+ * model.SubscriptionBoundGroupName.
+ */
+export function subscriptionBoundGroupName(
+  channel: Pick<SubscriptionBindableChannel, 'id' | 'type'>
+): string {
+  const prefix = BOUND_GROUP_PREFIXES[channel.type]
+  return prefix ? `${prefix}${channel.id}` : ''
+}
+
 export function isSubscriptionBound(
   sub: Pick<UserSubscription, 'bound_channel_id'> | null | undefined
 ): boolean {

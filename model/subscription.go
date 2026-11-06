@@ -280,7 +280,8 @@ type UserSubscription struct {
 	// UpgradeGroup holds the dedicated group BoundGroup so the existing
 	// expiry/invalidate/delete group restore paths apply unchanged.
 	BoundChannelId int `json:"bound_channel_id" gorm:"index;default:0"`
-	// Dedicated group created for the binding (oauth-ch<channelId>)
+	// Dedicated group created for the binding (claude-ch<channelId> or
+	// codex-ch<channelId>; legacy bindings keep oauth-ch<channelId>)
 	BoundGroup string `json:"bound_group" gorm:"type:varchar(64);default:''"`
 	// Channel group before the binding, restored when the channel is released
 	BoundChannelPrevGroup string `json:"bound_channel_prev_group" gorm:"type:varchar(64);default:''"`
