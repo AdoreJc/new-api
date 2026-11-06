@@ -137,7 +137,7 @@ export function BindChannelDialog(props: BindChannelDialogProps) {
         currentChannelId > 0 ? t('Change bound account') : t('Bind account')
       }
       description={t(
-        'The channel moves into a dedicated group that only this user can use, and the user is switched to that group while the subscription is active.'
+        "The channel moves into a dedicated group that only this user can use. The user's own group is not changed."
       )}
       contentClassName='sm:max-w-lg'
       contentHeight='auto'
@@ -193,9 +193,14 @@ export function BindChannelDialog(props: BindChannelDialogProps) {
         </Alert>
       ) : null}
       <p className='text-muted-foreground text-xs leading-5'>
-        {t(
-          'Tokens that follow the user group or use Auto are routed to the bound account only. Tokens pinned to another group are not affected.'
-        )}
+        {dedicatedGroup
+          ? t(
+              'Requests from this user for models on the channel are routed to the dedicated group {{group}}; other requests are not affected.',
+              { group: dedicatedGroup }
+            )
+          : t(
+              'Requests from this user for models on the bound channel are routed to its dedicated group; other requests, including Auto and the default group, are not affected.'
+            )}
       </p>
     </Dialog>
   )

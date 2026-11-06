@@ -71,16 +71,15 @@ func TestGetRequestAutoGroupsDoesNotFallBackAfterPermissionChange(t *testing.T) 
 	assert.Empty(t, groups)
 }
 
-func TestGetRequestAutoGroupsPinsSubscriptionBoundUsersToTheirGroup(t *testing.T) {
+func TestGetRequestAutoGroupsTreatsSubscriptionBindingGroupsLikeAnyOther(t *testing.T) {
 	configureRequestAutoGroupsTest(t)
 	ctx := newRequestAutoGroupsContext()
 	common.SetContextKey(ctx, constant.ContextKeyTokenAutoGroups, []string{"vip", "default"})
-
-	assert.Empty(t, GetRequestAutoGroups(ctx, "claude-ch7"), "a binding group without a ratio never falls back to the shared pools")
-
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":1,"svip":1,"claude-ch7":1,"oauth-ch8":1}`))
-	assert.Equal(t, []string{"claude-ch7"}, GetRequestAutoGroups(ctx, "claude-ch7"))
-	assert.Equal(t, []string{"claude-ch7"}, GetRequestAutoGroups(newRequestAutoGroupsContext(), "claude-ch7"))
-	assert.Equal(t, []string{"oauth-ch8"}, GetRequestAutoGroups(newRequestAutoGroupsContext(), "oauth-ch8"), "legacy binding groups stay pinned")
+
+	// Binding routing is request-scoped (ResolveSubscriptionRouteGroup), so a
+	// user whose group still carries a binding name is not pinned to it.
+	assert.Equal(t, []string{"vip", "default"}, GetRequestAutoGroups(ctx, "claude-ch7"))
+	assert.Equal(t, []string{"vip", "default", "svip"}, GetRequestAutoGroups(newRequestAutoGroupsContext(), "oauth-ch8"))
 	assert.Equal(t, []string{"vip", "default"}, GetRequestAutoGroups(ctx, "default"))
 }

@@ -95,6 +95,16 @@ func Distribute() func(c *gin.Context) {
 						common.SetContextKey(c, constant.ContextKeyUsingGroup, playgroundRequest.Group)
 					}
 				}
+				// A user whose subscription is bound to an OAuth channel account
+				// has that channel's models served from the binding's dedicated
+				// group, whatever group the token or playground asked for; every
+				// other model keeps the group chosen above.
+				if group, ok := model.ResolveSubscriptionRouteGroup(c.GetInt("id"), modelRequest.Model, common.GetTimestamp()); ok {
+					if previous := common.GetContextKeyString(c, constant.ContextKeyUsingGroup); previous != group {
+						common.SetContextKey(c, constant.ContextKeyUsingGroup, group)
+						logger.LogDebug(c, "subscription binding routes model %s from group %s to the dedicated group %s", modelRequest.Model, previous, group)
+					}
+				}
 			}
 		}
 		if pinned || shouldSelectChannel {
