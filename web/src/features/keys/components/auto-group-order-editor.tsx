@@ -16,13 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { ArrowRight01Icon } from '@hugeicons/core-free-icons'
+import { ArrowRight01Icon, LockIcon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Reorder } from 'motion/react'
 import { useMemo, type ComponentProps } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AutoGroupOrderItem } from '@/components/auto-group-order-item'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Empty,
@@ -43,6 +44,9 @@ type AutoGroupOrderEditorProps = Omit<ComponentProps<'div'>, 'onChange'> & {
   mode: 'inherit' | 'custom'
   options: ApiKeyGroupOption[]
   globalOptions: ApiKeyGroupOption[]
+  // The user's subscription dedicated group: always tried first, outside the
+  // editable order and its limit.
+  pinnedOption?: ApiKeyGroupOption
   maxCount: number
   onChange: (value: { groups: string[]; mode: 'inherit' | 'custom' }) => void
   'data-slot'?: string
@@ -135,6 +139,37 @@ export function AutoGroupOrderEditor(props: AutoGroupOrderEditorProps) {
         disabled={atLimit || candidates.length === 0}
       />
 
+      {props.pinnedOption && (
+        <div
+          data-slot='auto-group-pinned'
+          title={t(
+            'Always tried first in Auto. It cannot be removed or reordered.'
+          )}
+          className='bg-muted/30 flex min-w-0 items-center gap-2 rounded-lg border p-2'
+        >
+          <span className='text-muted-foreground flex size-7 shrink-0 items-center justify-center'>
+            <HugeiconsIcon
+              icon={LockIcon}
+              strokeWidth={2}
+              aria-hidden='true'
+              className='size-4'
+            />
+          </span>
+          <div className='flex min-w-0 flex-1 flex-wrap items-center gap-2'>
+            <span
+              className='min-w-0 truncate text-sm font-medium'
+              title={props.pinnedOption.value}
+            >
+              {props.pinnedOption.label}
+            </span>
+            <Badge variant='secondary'>
+              {t('Subscription account · Auto first')}
+            </Badge>
+          </div>
+          <GroupRatioBadge ratio={props.pinnedOption.ratio} />
+        </div>
+      )}
+
       {isInheriting && props.globalOptions.length === 0 && (
         <Empty className='min-h-28 border'>
           <EmptyHeader>
@@ -173,7 +208,7 @@ export function AutoGroupOrderEditor(props: AutoGroupOrderEditorProps) {
                   aria-hidden='true'
                   className='bg-primary/10 text-primary flex size-4 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold tabular-nums'
                 >
-                  {index + 1}
+                  {index + (props.pinnedOption ? 2 : 1)}
                 </span>
                 <span
                   data-slot='global-auto-order-name'

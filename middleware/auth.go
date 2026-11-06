@@ -622,8 +622,13 @@ func TokenAuth() func(c *gin.Context) {
 		userGroup := userCache.Group
 		tokenGroup := token.Group
 		if tokenGroup != "" {
-			// check common.UserUsableGroups[userGroup]
-			if _, ok := service.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
+			// check common.UserUsableGroups[userGroup] plus the owner's active
+			// subscription dedicated group
+			if _, ok := service.GetUserUsableGroupsForUser(token.UserId, userGroup)[tokenGroup]; !ok {
+				if model.IsSubscriptionBoundGroup(tokenGroup) {
+					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgAuthTokenSubscriptionGroupInactive, map[string]any{"Group": tokenGroup}))
+					return
+				}
 				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgAuthTokenGroupForbidden, map[string]any{"Group": tokenGroup}))
 				return
 			}

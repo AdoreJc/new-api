@@ -28,14 +28,22 @@ func GetUserGroups(c *gin.Context) {
 	userGroup := ""
 	userId := c.GetInt("id")
 	userGroup, _ = model.GetUserGroup(userId, false)
-	userUsableGroups := service.GetUserUsableGroups(userGroup)
-	for groupName, _ := range ratio_setting.GetGroupRatioCopy() {
+	userUsableGroups := service.GetUserUsableGroupsForUser(userId, userGroup)
+	subscriptionGroup, _ := service.GetUserSubscriptionGroup(userId)
+	for groupName := range ratio_setting.GetGroupRatioCopy() {
 		// UserUsableGroups contains the groups that the user can use
 		if desc, ok := userUsableGroups[groupName]; ok {
-			usableGroups[groupName] = map[string]any{
+			info := map[string]any{
 				"ratio": service.GetUserGroupRatio(userGroup, groupName),
 				"desc":  desc,
 			}
+			// The subscription dedicated group only serves the bound
+			// account's models and is always first in Auto, never stored in
+			// a token's Auto list.
+			if groupName == subscriptionGroup {
+				info["subscription_bound"] = true
+			}
+			usableGroups[groupName] = info
 		}
 	}
 	if _, ok := userUsableGroups["auto"]; ok {

@@ -232,3 +232,93 @@ func TestGetTokenAutoGroupsReturnsFullFilteredGlobalOrderAndLimit(t *testing.T) 
 	assert.Equal(t, []string{"vip", "default"}, data.Groups)
 	assert.Equal(t, 1, data.MaxCount)
 }
+
+func TestSubscriptionBoundGroupIsUsableOnlyByItsOwner(t *testing.T) {
+	configureTokenAutoGroupsTest(t, "1", `["default","vip"]`)
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":1,"claude-ch7":1}`))
+	owner := setupTokenAutoGroupsControllerTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.UserSubscription{}))
+	other := &model.User{Id: 102, Username: "token-auto-other", Password: "password", Group: "default", Status: common.UserStatusEnabled, AffCode: "token-auto-other"}
+	require.NoError(t, model.DB.Create(other).Error)
+	now := common.GetTimestamp()
+	require.NoError(t, model.DB.Create(&model.UserSubscription{
+		UserId: owner.Id, PlanId: 1, Status: "active", StartTime: now - 60, EndTime: now + 3600, BoundChannelId: 7, BoundGroup: "claude-ch7",
+	}).Error)
+	for _, userId := range []int{owner.Id, other.Id} {
+		model.InvalidateSubscriptionRouteBindingCache(userId)
+		t.Cleanup(func() { model.InvalidateSubscriptionRouteBindingCache(userId) })
+	}
+
+	userGroups := func(t *testing.T, userId int) map[string]map[string]any {
+		ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodGet, "/api/user/self/groups", nil, userId)
+		GetUserGroups(ctx)
+		response := decodeAPIResponse(t, recorder)
+		require.True(t, response.Success, response.Message)
+		var groups map[string]map[string]any
+		require.NoError(t, common.Unmarshal(response.Data, &groups))
+		return groups
+	}
+	addToken := func(t *testing.T, userId int, request map[string]any) tokenAPIResponse {
+		ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", request, userId)
+		AddToken(ctx)
+		return decodeAPIResponse(t, recorder)
+	}
+	dedicatedTokenRequest := func(name string) map[string]any {
+		request := baseAutoTokenRequest(name)
+		request["group"] = "claude-ch7"
+		request["cross_group_retry"] = false
+		return request
+	}
+
+	t.Run("the owner's group list carries the dedicated group", func(t *testing.T) {
+		groups := userGroups(t, owner.Id)
+		require.Contains(t, groups, "claude-ch7")
+		assert.Equal(t, "Subscription account (bound channel models only)", groups["claude-ch7"]["desc"])
+		assert.Equal(t, true, groups["claude-ch7"]["subscription_bound"])
+		assert.NotContains(t, groups["default"], "subscription_bound")
+	})
+	t.Run("other users never see it", func(t *testing.T) {
+		assert.NotContains(t, userGroups(t, other.Id), "claude-ch7")
+	})
+	t.Run("the owner can create a token in it", func(t *testing.T) {
+		response := addToken(t, owner.Id, dedicatedTokenRequest("owner-dedicated"))
+		require.True(t, response.Success, response.Message)
+		var token model.Token
+		require.NoError(t, model.DB.Where("name = ?", "owner-dedicated").First(&token).Error)
+		assert.Equal(t, "claude-ch7", token.Group)
+	})
+	t.Run("another user cannot create a token in it", func(t *testing.T) {
+		response := addToken(t, other.Id, dedicatedTokenRequest("other-dedicated"))
+		assert.False(t, response.Success)
+		assert.Contains(t, response.Message, "claude-ch7")
+	})
+	t.Run("the owner's Auto groups start with it", func(t *testing.T) {
+		ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodGet, "/api/token/auto-groups", nil, owner.Id)
+		GetTokenAutoGroups(ctx)
+		response := decodeAPIResponse(t, recorder)
+		require.True(t, response.Success, response.Message)
+		var data struct {
+			Groups   []string `json:"groups"`
+			MaxCount int      `json:"max_count"`
+		}
+		require.NoError(t, common.Unmarshal(response.Data, &data))
+		assert.Equal(t, []string{"claude-ch7", "default", "vip"}, data.Groups)
+		assert.Equal(t, 1, data.MaxCount)
+	})
+	t.Run("a saved Auto list drops it silently and does not count it", func(t *testing.T) {
+		request := baseAutoTokenRequest("auto-dedicated")
+		request["auto_groups"] = []string{"claude-ch7", "vip"}
+		response := addToken(t, owner.Id, request)
+		require.True(t, response.Success, response.Message)
+		var token model.Token
+		require.NoError(t, model.DB.Where("name = ?", "auto-dedicated").First(&token).Error)
+		assert.JSONEq(t, `["vip"]`, token.AutoGroups)
+	})
+	t.Run("another user's Auto list still rejects it", func(t *testing.T) {
+		request := baseAutoTokenRequest("other-auto-dedicated")
+		request["auto_groups"] = []string{"claude-ch7"}
+		response := addToken(t, other.Id, request)
+		assert.False(t, response.Success)
+		assert.Contains(t, response.Message, "Auto group claude-ch7")
+	})
+}
