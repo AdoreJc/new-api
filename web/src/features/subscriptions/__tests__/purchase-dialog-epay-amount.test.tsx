@@ -84,9 +84,9 @@ describe('SubscriptionPurchaseDialog Epay amount', () => {
 
     const amountRow = screen.getByTestId('subscription-epay-amount')
     expect(within(amountRow).getByText('Online payment amount')).toBeVisible()
-    expect(within(amountRow).getByText(/73/)).toBeVisible()
+    expect(within(amountRow).getByText('¥73')).toBeVisible()
     expect(within(amountRow).queryByText(/\$10/)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Pay .*73/ })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Pay ¥73' })).toBeVisible()
     // The USD list price is still what the balance path charges.
     expect(screen.getByText('$10.00')).toBeVisible()
   })
@@ -107,8 +107,32 @@ describe('SubscriptionPurchaseDialog Epay amount', () => {
     )
 
     const amountRow = screen.getByTestId('subscription-epay-amount')
-    expect(within(amountRow).getByText(/10/)).toBeVisible()
+    expect(within(amountRow).getByText('¥10')).toBeVisible()
     expect(within(amountRow).queryByText(/73/)).not.toBeInTheDocument()
+  })
+
+  test('with the USD display type the Epay amount is still shown in ¥', () => {
+    setDisplayCurrency('USD')
+
+    renderWithQueryClient(
+      <SubscriptionPurchaseDialog
+        open
+        onOpenChange={() => {}}
+        plan={{
+          plan: { ...planRecord.plan, price_amount: 27.94 },
+        }}
+        enableOnlineTopUp
+        epayMethods={[{ type: 'alipay', name: 'Alipay' }]}
+        priceRatio={7.3}
+        userQuota={0}
+      />
+    )
+
+    // 27.94 USD × 7.3 yuan per USD = 203.962 → charged as ¥203.96 by Epay.
+    const amountRow = screen.getByTestId('subscription-epay-amount')
+    expect(within(amountRow).getByText('¥203.96')).toBeVisible()
+    expect(within(amountRow).queryByText(/\$/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Pay ¥203.96' })).toBeVisible()
   })
 
   test('without Epay no online payment amount is rendered', () => {
