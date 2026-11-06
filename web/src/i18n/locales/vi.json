@@ -4366,6 +4366,7 @@
     "one keyword per line": "Mỗi dòng một từ khóa",
     "online": "trực tuyến",
     "Online": "Trực tuyến",
+    "Online payment amount": "Số tiền thanh toán trực tuyến",
     "Online payment is not enabled. Please contact the administrator.": "Thanh toán trực tuyến chưa được kích hoạt. Vui lòng liên hệ quản trị viên.",
     "Online top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}": "Nạp tiền trực tuyến thành công, số tiền đã nạp: {{quota}}, số tiền thanh toán: {{amount}}",
     "Online topup is not enabled. Please use redemption code or contact administrator.": "Tính năng nạp tiền trực tuyến chưa được bật. Vui lòng sử dụng mã quy đổi hoặc liên hệ quản trị viên.",

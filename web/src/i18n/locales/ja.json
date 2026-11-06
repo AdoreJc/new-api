@@ -4366,6 +4366,7 @@
     "one keyword per line": "1行に1つのキーワード",
     "online": "オンライン",
     "Online": "オンライン",
+    "Online payment amount": "オンライン決済金額",
     "Online payment is not enabled. Please contact the administrator.": "オンライン決済が有効になっていません。管理者にお問い合わせください。",
     "Online top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}": "オンラインチャージが完了しました。追加額：{{quota}}、支払額：{{amount}}",
     "Online topup is not enabled. Please use redemption code or contact administrator.": "オンラインチャージは有効になっていません。引き換えコードを使用するか、管理者に連絡してください。",

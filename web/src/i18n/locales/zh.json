@@ -4366,6 +4366,7 @@
     "one keyword per line": "每行一个关键词",
     "online": "在线",
     "Online": "在线",
+    "Online payment amount": "在线支付金额",
     "Online payment is not enabled. Please contact the administrator.": "管理员未开启在线支付功能，请联系管理员配置。",
     "Online top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}": "在线充值成功，充值额度: {{quota}}，支付金额: {{amount}}",
     "Online topup is not enabled. Please use redemption code or contact administrator.": "尚未启用在线充值。请使用兑换码或联系管理员。",

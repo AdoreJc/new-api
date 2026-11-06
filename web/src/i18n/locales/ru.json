@@ -4366,6 +4366,7 @@
     "one keyword per line": "одно ключевое слово на строку",
     "online": "онлайн",
     "Online": "Онлайн",
+    "Online payment amount": "Сумма онлайн-оплаты",
     "Online payment is not enabled. Please contact the administrator.": "Онлайн-оплата не включена. Пожалуйста, свяжитесь с администратором.",
     "Online top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}": "Онлайн-пополнение выполнено, зачислено: {{quota}}, сумма оплаты: {{amount}}",
     "Online topup is not enabled. Please use redemption code or contact administrator.": "Онлайн-пополнение не включено. Пожалуйста, используйте код активации или свяжитесь с администратором.",
