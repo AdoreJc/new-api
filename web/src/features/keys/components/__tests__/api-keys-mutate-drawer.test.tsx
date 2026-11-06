@@ -49,7 +49,21 @@ const originalGet = apiClient.get
 const originalPost = apiClient.post
 let renderedDrawer: RenderedDrawer | null = null
 
-function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
+type GroupsFixture = Record<
+  string,
+  { desc: string; ratio: number | string; subscription_bound?: boolean }
+>
+
+const defaultGroups: GroupsFixture = {
+  auto: { desc: 'Automatic routing', ratio: 'auto' },
+  default: { desc: 'Standard access', ratio: 1 },
+  vip: { desc: 'Priority access', ratio: 2 },
+}
+
+function installApiFixtures(
+  createdPayloads: Array<Record<string, unknown>>,
+  groups: GroupsFixture = defaultGroups
+) {
   apiClient.get = async (url) => {
     switch (url) {
       case '/api/status':
@@ -57,16 +71,7 @@ function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
       case '/api/user/models':
         return { data: { success: true, data: [] } }
       case '/api/user/self/groups':
-        return {
-          data: {
-            success: true,
-            data: {
-              auto: { desc: 'Automatic routing', ratio: 'auto' },
-              default: { desc: 'Standard access', ratio: 1 },
-              vip: { desc: 'Priority access', ratio: 2 },
-            },
-          },
-        }
+        return { data: { success: true, data: groups } }
       case '/api/token/auto-groups':
         return {
           data: {
@@ -86,7 +91,9 @@ function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
   }
 }
 
-async function renderCreateDrawer(): Promise<void> {
+async function renderCreateDrawer(
+  groups: GroupsFixture = defaultGroups
+): Promise<void> {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -103,14 +110,7 @@ async function renderCreateDrawer(): Promise<void> {
   )
   queryClient.setQueryData(
     ['user-groups'],
-    {
-      success: true,
-      data: {
-        auto: { desc: 'Automatic routing', ratio: 'auto' },
-        default: { desc: 'Standard access', ratio: 1 },
-        vip: { desc: 'Priority access', ratio: 2 },
-      },
-    },
+    { success: true, data: groups },
     { updatedAt: freshAt }
   )
   queryClient.setQueryData(
@@ -278,6 +278,59 @@ describe('API keys mutate drawer Auto group integration', () => {
     fireEvent.click(findButton('Save changes', true))
     await waitFor(() => expect(createdPayloads).toHaveLength(1))
     expect(createdPayloads[0]?.auto_groups).toEqual(['vip'])
+  })
+})
+
+describe('API keys mutate drawer subscription dedicated group', () => {
+  const subscriptionGroups: GroupsFixture = {
+    ...defaultGroups,
+    'claude-ch7': {
+      desc: 'Subscription account (bound channel models only)',
+      ratio: 1,
+      subscription_bound: true,
+    },
+  }
+  const boundModelsHint =
+    'This API key can only call models supported by your bound subscription account.'
+
+  test('keeps the dedicated group out of the Auto order options', async () => {
+    installApiFixtures([], subscriptionGroups)
+    await renderCreateDrawer(subscriptionGroups)
+
+    const addGroupTrigger = getControlByLabel(
+      'Auto group order'
+    ).querySelector<HTMLButtonElement>('button[role="combobox"]')
+    if (!addGroupTrigger) {
+      throw new Error('Expected Auto group order combobox')
+    }
+    fireEvent.click(addGroupTrigger)
+    const optionTexts = [
+      ...document.querySelectorAll<HTMLElement>('[data-slot="command-item"]'),
+    ].map((option) => option.textContent ?? '')
+
+    expect(optionTexts.some((text) => text.includes('Priority access'))).toBe(
+      true
+    )
+    expect(optionTexts.some((text) => text.includes('claude-ch7'))).toBe(false)
+  })
+
+  test('shows the bound-models hint when the dedicated group is selected and saves it', async () => {
+    const createdPayloads: Array<Record<string, unknown>> = []
+    installApiFixtures(createdPayloads, subscriptionGroups)
+    await renderCreateDrawer(subscriptionGroups)
+    expect(screen.queryByText(boundModelsHint)).toBe(null)
+
+    selectComboboxOption(
+      getControlByLabel('Group'),
+      'Subscription account (bound channel models only)'
+    )
+
+    expect(screen.getByText(boundModelsHint)).toBeVisible()
+    changeInput(getControlByLabel('Name'), 'dedicated')
+    fireEvent.click(findButton('Save changes', true))
+    await waitFor(() => expect(createdPayloads).toHaveLength(1))
+    expect(createdPayloads[0]?.group).toBe('claude-ch7')
+    expect(createdPayloads[0]?.cross_group_retry).toBe(false)
   })
 })
 

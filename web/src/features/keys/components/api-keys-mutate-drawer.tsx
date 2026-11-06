@@ -169,13 +169,21 @@ export function ApiKeysMutateDrawer({
         label: key,
         desc: info.desc ? translateServerText(t, info.desc) : key,
         ratio: info.ratio,
+        subscriptionBound: info.subscription_bound === true,
       })),
     [groupsData, t]
   )
   const backendHasAuto = groups.some((g) => g.value === 'auto')
-  const availableAutoGroupNames = useMemo(
-    () => groups.filter((group) => group.value !== 'auto').map((g) => g.value),
+  const autoGroupOptions = useMemo(
+    () => groups.filter((group) => !group.subscriptionBound),
     [groups]
+  )
+  const availableAutoGroupNames = useMemo(
+    () =>
+      autoGroupOptions
+        .filter((group) => group.value !== 'auto')
+        .map((g) => g.value),
+    [autoGroupOptions]
   )
   const globalAutoGroups = useMemo(() => {
     const available = new Set(availableAutoGroupNames)
@@ -184,12 +192,14 @@ export function ApiKeysMutateDrawer({
     )
   }, [autoGroupsData, availableAutoGroupNames])
   const globalAutoGroupOptions = useMemo(() => {
-    const groupsByValue = new Map(groups.map((group) => [group.value, group]))
+    const groupsByValue = new Map(
+      autoGroupOptions.map((group) => [group.value, group])
+    )
     return globalAutoGroups.flatMap((group) => {
       const option = groupsByValue.get(group)
       return option ? [option] : []
     })
-  }, [globalAutoGroups, groups])
+  }, [globalAutoGroups, autoGroupOptions])
   const maxAutoGroups =
     Number.isInteger(autoGroupsData?.data?.max_count) &&
     Number(autoGroupsData?.data?.max_count) > 0
@@ -268,6 +278,9 @@ export function ApiKeysMutateDrawer({
     isUpdate && currentRow ? `update:${currentRow.id}` : 'create'
   const isFormInitialized = initializedTarget === formTarget
   const selectedGroup = form.watch('group')
+  const selectedGroupIsSubscriptionBound = groups.some(
+    (group) => group.value === selectedGroup && group.subscriptionBound
+  )
 
   // Correct group after groups load: if the form value is not in available groups, fall back
   useEffect(() => {
@@ -439,6 +452,13 @@ export function ApiKeysMutateDrawer({
                         placeholder={t('Select a group')}
                       />
                     </FormControl>
+                    {selectedGroupIsSubscriptionBound && (
+                      <FormDescription>
+                        {t(
+                          'This API key can only call models supported by your bound subscription account.'
+                        )}
+                      </FormDescription>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}
@@ -460,7 +480,7 @@ export function ApiKeysMutateDrawer({
                         <AutoGroupOrderEditor
                           value={field.value}
                           mode={autoGroupsMode}
-                          options={groups}
+                          options={autoGroupOptions}
                           globalOptions={globalAutoGroupOptions}
                           maxCount={maxAutoGroups}
                           onChange={(value) => {

@@ -48,6 +48,9 @@ export type ApiKeyGroupOption = {
   label: string
   desc?: string
   ratio?: number | string
+  // The user's subscription dedicated group: it only serves the bound
+  // account's models and cannot join an Auto order.
+  subscriptionBound?: boolean
 }
 
 type ApiKeyGroupComboboxProps = {

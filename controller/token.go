@@ -89,6 +89,26 @@ func getTokenRequestUserGroup(c *gin.Context) (string, error) {
 	return model.GetUserGroup(c.GetInt("id"), false)
 }
 
+// validateTokenGroup checks a token's own group against the groups its owner
+// may use, including the dedicated group of the owner's active subscription
+// binding. Empty (follow the user group) and auto (checked through its Auto
+// list) are left to their own rules.
+func validateTokenGroup(c *gin.Context, group string) bool {
+	if group == "" || group == "auto" {
+		return true
+	}
+	userGroup, err := getTokenRequestUserGroup(c)
+	if err != nil {
+		common.ApiError(c, err)
+		return false
+	}
+	if _, ok := service.GetUserUsableGroupsForUser(c.GetInt("id"), userGroup)[group]; !ok {
+		common.ApiErrorT(c, "Group {{group}} is unavailable or unauthorized", map[string]any{"group": group})
+		return false
+	}
+	return true
+}
+
 func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) bool {
 	if len(groups) == 0 {
 		if err := token.SetAutoGroups(nil); err != nil {
@@ -333,6 +353,9 @@ func AddToken(c *gin.Context) {
 		common.ApiErrorT(c, "Maximum number of tokens reached ({{max}})", map[string]any{"max": maxTokens})
 		return
 	}
+	if !validateTokenGroup(c, token.Group) {
+		return
+	}
 	if token.Group == "auto" {
 		if !setTokenAutoGroups(c, &token, request.AutoGroups.Groups) {
 			return
@@ -458,6 +481,11 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.AllowIps = token.AllowIps
 		if request.AllowUserQuotaQuery != nil {
 			cleanToken.AllowUserQuotaQuery = *request.AllowUserQuotaQuery
+		}
+		// Only a changed group is checked, so a token whose group has since
+		// become unavailable can still be edited or moved to another group.
+		if token.Group != cleanToken.Group && !validateTokenGroup(c, token.Group) {
+			return
 		}
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry

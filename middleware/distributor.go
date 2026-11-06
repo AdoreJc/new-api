@@ -88,7 +88,7 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 					if playgroundRequest.Group != "" {
-						if !service.GroupInUserUsableGroups(usingGroup, playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
+						if _, ok := service.GetUserUsableGroupsForUser(c.GetInt("id"), usingGroup)[playgroundRequest.Group]; !ok && playgroundRequest.Group != usingGroup {
 							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
 							return
 						}
@@ -167,6 +167,9 @@ func noAvailableChannelMessage(c *gin.Context, group, modelName string) string {
 		}
 		logger.LogWarn(c, common.LogText("task_plugin subsystem=distribution event=no_available_channel group=%q model=%q plugins=%q reason=no_eligible_channel", group, modelName, strings.Join(keys, ",")))
 		return i18n.T(c, i18n.MsgDistributorNoAvailableChannelTaskPlugin, map[string]any{"Group": group, "Model": modelName})
+	}
+	if model.IsSubscriptionBoundGroup(group) {
+		return i18n.T(c, i18n.MsgDistributorSubscriptionGroupNoModel, map[string]any{"Group": group, "Model": modelName})
 	}
 	return i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": group, "Model": modelName})
 }

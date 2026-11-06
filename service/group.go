@@ -41,6 +41,34 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 	return groupsCopy
 }
 
+// SubscriptionBoundGroupDescription describes a user's subscription dedicated
+// group in their usable groups. English source text, translated by the web
+// console.
+const SubscriptionBoundGroupDescription = "Subscription account (bound channel models only)"
+
+// GetUserSubscriptionGroup returns the dedicated group of the user's active
+// subscription channel binding (claude-ch<id>, codex-ch<id> or the legacy
+// oauth-ch<id>), read through the binding cache.
+func GetUserSubscriptionGroup(userId int) (string, bool) {
+	binding, ok := model.GetUserSubscriptionRouteBinding(userId, common.GetTimestamp())
+	if !ok {
+		return "", false
+	}
+	return binding.Group, true
+}
+
+// GetUserUsableGroupsForUser is GetUserUsableGroups plus the dedicated group of
+// the user's active subscription binding. That group is never part of the
+// shared UserUsableGroups setting, so only its owner sees or selects it, and
+// only while the binding is active.
+func GetUserUsableGroupsForUser(userId int, userGroup string) map[string]string {
+	groups := GetUserUsableGroups(userGroup)
+	if group, ok := GetUserSubscriptionGroup(userId); ok {
+		groups[group] = SubscriptionBoundGroupDescription
+	}
+	return groups
+}
+
 func GroupInUserUsableGroups(userGroup, groupName string) bool {
 	_, ok := GetUserUsableGroups(userGroup)[groupName]
 	return ok
