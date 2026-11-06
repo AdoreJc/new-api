@@ -140,6 +140,7 @@ export function SubscriptionUsageDialog(props: SubscriptionUsageDialogProps) {
       <div className='grid grid-cols-1 gap-3 md:grid-cols-2'>
         {windows.map((window) => {
           const view = isSubscriptionUsageWindow(window) ? window : null
+          const passive = view?.source === 'passive'
           const details = [
             {
               label: t('Reset at:'),
@@ -150,10 +151,25 @@ export function SubscriptionUsageDialog(props: SubscriptionUsageDialogProps) {
               value: view ? formatUsageTimeLeftUntil(view.resetsAt, t) : '-',
             },
           ]
+          if (passive) {
+            details.push({
+              label: t('Sampled at:'),
+              value: formatUsageIsoTimestamp(view?.sampledAt),
+            })
+          }
           return (
             <UsageWindowCard
               key={window.key}
               title={t(window.labelKey)}
+              badge={
+                passive ? (
+                  <StatusBadge
+                    label={t('From response headers')}
+                    variant='neutral'
+                    copyable={false}
+                  />
+                ) : undefined
+              }
               subtitle={
                 view?.windowSeconds
                   ? formatUsageDurationSeconds(view.windowSeconds, t)

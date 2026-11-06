@@ -101,6 +101,9 @@ export interface SubscriptionUsageWindow {
   utilization: number
   resets_at?: string
   window_seconds?: number
+  /** 'passive' when filled from sampled rate-limit headers */
+  source?: string
+  sampled_at?: string
 }
 
 export interface SubscriptionUsageData {

@@ -960,3 +960,192 @@ func TestClaudeOAuthAdaptorDoRequestUsesBearerTokenAndBetaPath(t *testing.T) {
 	assert.Contains(t, upstreamHeaders.Get("anthropic-beta"), "oauth-2025-04-20")
 	assert.Equal(t, "cli", upstreamHeaders.Get("x-app"))
 }
+
+func passiveUsageHeaders(values map[string]string) http.Header {
+	headers := http.Header{}
+	for key, value := range values {
+		headers.Set("anthropic-ratelimit-unified-"+key, value)
+	}
+	return headers
+}
+
+func TestParseClaudePassiveUsageHeadersReadsKnownWindowsAndIgnoresMalformedValues(t *testing.T) {
+	now := time.Unix(1_762_300_000, 0)
+	tests := []struct {
+		name    string
+		headers map[string]string
+		want    map[string]service.ClaudePassiveUsageWindow
+	}{
+		{
+			name: "all three windows with second and millisecond resets",
+			headers: map[string]string{
+				"5h-utilization": "0.125", "5h-reset": "1762303600",
+				"7d-utilization": "1", "7d-reset": "1762819200000",
+				"7d_oi-utilization": "0.375", "7d_oi-reset": "1762905600",
+			},
+			want: map[string]service.ClaudePassiveUsageWindow{
+				"five_hour":                  {Utilization: 12.5, ResetsAt: 1762303600, SampledAt: now.Unix()},
+				"seven_day":                  {Utilization: 100, ResetsAt: 1762819200, SampledAt: now.Unix()},
+				"seven_day_overage_included": {Utilization: 37.5, ResetsAt: 1762905600, SampledAt: now.Unix()},
+			},
+		},
+		{
+			name:    "only the fable window, without a reset header",
+			headers: map[string]string{"7d_oi-utilization": " 0.5 "},
+			want:    map[string]service.ClaudePassiveUsageWindow{"seven_day_overage_included": {Utilization: 50, SampledAt: now.Unix()}},
+		},
+		{
+			name: "malformed utilization, negative value and reset without utilization are skipped",
+			headers: map[string]string{
+				"5h-utilization": "n/a", "5h-reset": "1762303600",
+				"7d-utilization": "-0.1",
+				"7d_oi-reset":    "1762905600",
+			},
+			want: map[string]service.ClaudePassiveUsageWindow{},
+		},
+		{
+			name:    "malformed reset keeps the utilization",
+			headers: map[string]string{"7d-utilization": "0.2", "7d-reset": "soon"},
+			want:    map[string]service.ClaudePassiveUsageWindow{"seven_day": {Utilization: 20, SampledAt: now.Unix()}},
+		},
+		{name: "no headers", headers: map[string]string{}, want: map[string]service.ClaudePassiveUsageWindow{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, service.ParseClaudePassiveUsageHeaders(passiveUsageHeaders(tt.headers), now))
+		})
+	}
+}
+
+func TestClaudePassiveUsageSamplerThrottlesWritesPerChannel(t *testing.T) {
+	sampler := service.NewClaudePassiveUsageSampler(30 * time.Second)
+	start := time.Unix(1_762_300_000, 0)
+	headers := passiveUsageHeaders(map[string]string{"7d_oi-utilization": "0.3"})
+
+	windows, due := sampler.Sample(7, headers, start)
+	require.True(t, due, "first sample is written")
+	assert.Equal(t, 30.0, windows["seven_day_overage_included"].Utilization)
+
+	_, due = sampler.Sample(7, headers, start.Add(29*time.Second))
+	assert.False(t, due, "a second sample inside the interval is dropped")
+
+	_, due = sampler.Sample(8, headers, start.Add(time.Second))
+	assert.True(t, due, "other channels are throttled independently")
+
+	_, due = sampler.Sample(7, passiveUsageHeaders(map[string]string{"7d_oi-utilization": "bad"}), start.Add(31*time.Second))
+	assert.False(t, due, "a response without usable headers is never written")
+
+	_, due = sampler.Sample(7, headers, start.Add(31*time.Second))
+	assert.True(t, due, "the slot is free again after the interval")
+}
+
+func TestBackfillClaudeUsageWindowsPrefersApiValuesAndDropsStaleSamples(t *testing.T) {
+	now := time.Unix(1_762_300_000, 0)
+	doc := map[string]any{
+		"five_hour":        map[string]any{"utilization": 42.5, "resets_at": "2026-11-05T03:00:00Z"},
+		"seven_day_sonnet": nil,
+	}
+	passive := map[string]service.ClaudePassiveUsageWindow{
+		// API already has this window: must not be overwritten.
+		"five_hour": {Utilization: 99, ResetsAt: now.Add(time.Hour).Unix(), SampledAt: now.Unix()},
+		// Reset time already passed: expired.
+		"seven_day": {Utilization: 10, ResetsAt: now.Add(-time.Minute).Unix(), SampledAt: now.Add(-time.Hour).Unix()},
+		// Fresh sample without a reset header: used.
+		"seven_day_overage_included": {Utilization: 37.5, SampledAt: now.Add(-5 * time.Minute).Unix()},
+		// Sampled more than 24h ago: too old even though its reset is ahead.
+		"seven_day_sonnet": {Utilization: 5, ResetsAt: now.Add(48 * time.Hour).Unix(), SampledAt: now.Add(-25 * time.Hour).Unix()},
+	}
+
+	service.BackfillClaudeUsageWindows(doc, passive, now)
+
+	assert.Equal(t, map[string]any{"utilization": 42.5, "resets_at": "2026-11-05T03:00:00Z"}, doc["five_hour"])
+	assert.NotContains(t, doc, "seven_day")
+	assert.Nil(t, doc["seven_day_sonnet"])
+	assert.Equal(t, map[string]any{
+		"utilization": 37.5,
+		"source":      "passive",
+		"sampled_at":  now.Add(-5 * time.Minute).UTC().Format(time.RFC3339),
+	}, doc["seven_day_overage_included"])
+
+	withReset := map[string]any{}
+	service.BackfillClaudeUsageWindows(withReset, map[string]service.ClaudePassiveUsageWindow{
+		"seven_day_overage_included": {Utilization: 37.5, ResetsAt: now.Add(time.Hour).Unix(), SampledAt: now.Unix()},
+	}, now)
+	assert.Equal(t, now.Add(time.Hour).UTC().Format(time.RFC3339), withReset["seven_day_overage_included"].(map[string]any)["resets_at"])
+}
+
+func TestClaudeOAuthAdaptorDoRequestSamplesRateLimitHeadersIntoChannelOtherInfo(t *testing.T) {
+	setupClaudeOAuthChannelDB(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("anthropic-ratelimit-unified-5h-utilization", "0.125")
+		w.Header().Set("anthropic-ratelimit-unified-5h-reset", "1762303600")
+		w.Header().Set("anthropic-ratelimit-unified-7d_oi-utilization", "0.375")
+		w.Header().Set("anthropic-ratelimit-unified-7d_oi-reset", "1762905600")
+		_, _ = w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+	}))
+	defer server.Close()
+
+	encoded, err := common.Marshal(service.ClaudeOAuthKey{AccessToken: "at-1", ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339)})
+	require.NoError(t, err)
+	channel := &model.Channel{Id: 4242, Type: constant.ChannelTypeClaudeOAuth, Key: string(encoded), Name: "claude-oauth-sampled", Status: common.ChannelStatusEnabled}
+	require.NoError(t, model.DB.Create(channel).Error)
+
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{}`))
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id, ApiKey: string(encoded), ChannelBaseUrl: server.URL}, IsStream: true}
+	resp, err := (&claude_oauth.Adaptor{}).DoRequest(c, info, strings.NewReader(`{"model":"claude-fable-5-1","max_tokens":1,"stream":true,"messages":[]}`))
+	require.NoError(t, err)
+	httpResp, ok := resp.(*http.Response)
+	require.True(t, ok)
+	defer httpResp.Body.Close()
+
+	require.Eventually(t, func() bool {
+		stored, err := model.GetChannelById(channel.Id, true)
+		return err == nil && len(service.LoadClaudePassiveUsage(stored)) == 2
+	}, 5*time.Second, 20*time.Millisecond, "the sampled headers are persisted asynchronously")
+	stored, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	windows := service.LoadClaudePassiveUsage(stored)
+	assert.Equal(t, 12.5, windows["five_hour"].Utilization)
+	assert.EqualValues(t, 1762303600, windows["five_hour"].ResetsAt)
+	assert.Equal(t, 37.5, windows["seven_day_overage_included"].Utilization)
+	assert.EqualValues(t, 1762905600, windows["seven_day_overage_included"].ResetsAt)
+	assert.InDelta(t, time.Now().Unix(), windows["seven_day_overage_included"].SampledAt, 5)
+}
+
+func TestGetClaudeChannelUsageBackfillsFableWindowFromSampledHeaders(t *testing.T) {
+	setupClaudeOAuthChannelDB(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/oauth/usage", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"five_hour":{"utilization":42.5,"resets_at":"2026-11-05T03:00:00Z"},"seven_day":{"utilization":10,"resets_at":"2026-11-10T00:00:00Z"},"seven_day_sonnet":null}`))
+	}))
+	defer server.Close()
+	channel := newClaudeOAuthTestChannel(t, server.URL, service.ClaudeOAuthKey{AccessToken: "at", Scope: "user:profile"})
+	now := time.Now()
+	info := channel.GetOtherInfo()
+	info[service.ClaudePassiveUsageKey] = map[string]service.ClaudePassiveUsageWindow{
+		"seven_day":                  {Utilization: 95, ResetsAt: now.Add(time.Hour).Unix(), SampledAt: now.Unix()},
+		"seven_day_overage_included": {Utilization: 37.5, ResetsAt: now.Add(2 * time.Hour).Unix(), SampledAt: now.Add(-time.Minute).Unix()},
+	}
+	channel.SetOtherInfo(info)
+	require.NoError(t, model.DB.Model(channel).Update("other_info", channel.OtherInfo).Error)
+
+	envelope := getJSON(t, GetClaudeChannelUsage, "/api/channel/1/claude/usage", channelParams(channel.Id))
+	require.True(t, envelope.Success, envelope.Message)
+
+	sevenDay, ok := envelope.Data["seven_day"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, 10.0, sevenDay["utilization"], "the usage API value wins over the sample")
+	assert.NotContains(t, sevenDay, "source")
+
+	fable, ok := envelope.Data["seven_day_overage_included"].(map[string]any)
+	require.True(t, ok, "the missing window is filled from the sample")
+	assert.Equal(t, 37.5, fable["utilization"])
+	assert.Equal(t, "passive", fable["source"])
+	assert.Equal(t, now.Add(2*time.Hour).UTC().Format(time.RFC3339), fable["resets_at"])
+	assert.Equal(t, now.Add(-time.Minute).UTC().Format(time.RFC3339), fable["sampled_at"])
+	assert.Nil(t, envelope.Data["seven_day_sonnet"], "a null window stays as upstream sent it")
+}

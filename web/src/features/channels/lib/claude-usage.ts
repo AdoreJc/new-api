@@ -37,6 +37,13 @@ export type ClaudeUsageWindow = {
   utilization: number
   /** ISO timestamp or null when upstream omitted it */
   resetsAt: string | null
+  /**
+   * 'passive' when the server filled the window from the rate-limit headers
+   * of the last relayed request because the usage API omitted it
+   */
+  source: 'api' | 'passive'
+  /** ISO timestamp of the sampled response, only with source 'passive' */
+  sampledAt: string | null
 }
 
 const WINDOW_DEFINITIONS: {
@@ -47,9 +54,11 @@ const WINDOW_DEFINITIONS: {
   { key: 'five_hour', labelKey: '5-Hour Window', optional: false },
   { key: 'seven_day', labelKey: '7-Day Window', optional: false },
   { key: 'seven_day_sonnet', labelKey: '7-Day Sonnet Window', optional: true },
+  // Anthropic's seven_day_overage_included claim (rate-limit header window
+  // 7d_oi) is the 7-day window that counts Fable models only.
   {
     key: 'seven_day_overage_included',
-    labelKey: '7-Day Overage Window',
+    labelKey: '7-Day Fable Window',
     optional: true,
   },
 ]
@@ -62,20 +71,36 @@ export function clampUtilization(value: unknown): number {
 
 function readWindow(
   raw: unknown
-): { utilization: number; resetsAt: string | null } | null {
+): Pick<
+  ClaudeUsageWindow,
+  'utilization' | 'resetsAt' | 'source' | 'sampledAt'
+> | null {
   if (!raw || typeof raw !== 'object') return null
   const block = raw as Record<string, unknown>
   const resetsAt =
     typeof block.resets_at === 'string' && block.resets_at.trim() !== ''
       ? block.resets_at
       : null
-  return { utilization: clampUtilization(block.utilization), resetsAt }
+  const passive = block.source === 'passive'
+  const sampledAt =
+    passive &&
+    typeof block.sampled_at === 'string' &&
+    block.sampled_at.trim() !== ''
+      ? block.sampled_at
+      : null
+  return {
+    utilization: clampUtilization(block.utilization),
+    resetsAt,
+    source: passive ? 'passive' : 'api',
+    sampledAt,
+  }
 }
 
 /**
  * Returns the windows to display, in a fixed order. The two base windows are
  * always present (empty when upstream omitted them); the optional Sonnet and
- * overage windows appear only when upstream returned them.
+ * Fable windows appear only when upstream returned them or the server filled
+ * them from sampled headers.
  */
 export function parseClaudeUsageWindows(
   payload: unknown

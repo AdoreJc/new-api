@@ -51,7 +51,45 @@ describe('parseClaudeUsageWindows', () => {
       resetsAt: '2026-11-05T03:00:00Z',
     })
     expect(sevenDay).toMatchObject({ utilization: 0, resetsAt: null })
-    expect(overage).toMatchObject({ utilization: 12.5, resetsAt: null })
+    expect(overage).toMatchObject({
+      labelKey: '7-Day Fable Window',
+      utilization: 12.5,
+      resetsAt: null,
+      source: 'api',
+      sampledAt: null,
+    })
+  })
+
+  test('marks a window the server filled from sampled headers as passive with its sample time', () => {
+    const windows = parseClaudeUsageWindows({
+      five_hour: { utilization: 12, resets_at: '2026-11-06T03:00:00Z' },
+      seven_day: { utilization: 40, source: 'api' },
+      seven_day_overage_included: {
+        utilization: 37.5,
+        resets_at: '2026-11-09T00:00:00Z',
+        source: 'passive',
+        sampled_at: '2026-11-05T12:00:00Z',
+      },
+    })
+
+    const [fiveHour, sevenDay, fable] = windows
+    expect(fiveHour).toMatchObject({ source: 'api', sampledAt: null })
+    expect(sevenDay).toMatchObject({ source: 'api', sampledAt: null })
+    expect(fable).toMatchObject({
+      key: 'seven_day_overage_included',
+      utilization: 37.5,
+      resetsAt: '2026-11-09T00:00:00Z',
+      source: 'passive',
+      sampledAt: '2026-11-05T12:00:00Z',
+    })
+  })
+
+  test('ignores sampled_at unless the window is marked passive', () => {
+    const [fiveHour] = parseClaudeUsageWindows({
+      five_hour: { utilization: 12, sampled_at: '2026-11-05T12:00:00Z' },
+    })
+
+    expect(fiveHour).toMatchObject({ source: 'api', sampledAt: null })
   })
 
   test('ignores a non-object payload', () => {

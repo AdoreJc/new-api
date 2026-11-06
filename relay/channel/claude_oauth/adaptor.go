@@ -60,8 +60,16 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 // DoRequest must be redeclared here: the embedded Claude adaptor passes its
 // own receiver to channel.DoApiRequest, which would use the API-key headers
 // and URL instead of the overrides above.
+//
+// Every upstream answer, streamed or not and whatever its status, carries the
+// account's rate-limit headers; they are sampled here so the usage dialog can
+// show windows the usage API leaves out.
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
-	return channel.DoApiRequest(a, c, info, requestBody)
+	resp, err := channel.DoApiRequest(a, c, info, requestBody)
+	if err == nil && resp != nil && info != nil {
+		service.RecordClaudePassiveUsage(info.ChannelId, resp.Header)
+	}
+	return resp, err
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {

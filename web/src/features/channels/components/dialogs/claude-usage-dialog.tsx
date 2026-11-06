@@ -100,7 +100,7 @@ const WINDOW_NAME_KEYS: Record<string, string> = {
   five_hour: '5-Hour Window',
   seven_day: '7-Day Window',
   seven_day_sonnet: '7-Day Sonnet Window',
-  seven_day_overage_included: '7-Day Overage Window',
+  seven_day_overage_included: '7-Day Fable Window',
 }
 
 const RESET_OUTCOME_KEYS: Record<string, string> = {
@@ -146,27 +146,42 @@ function ClaudeUsageWindowGrid(props: {
     <div className='grid grid-cols-1 gap-3 md:grid-cols-2'>
       {props.windows.map((window) => {
         const measured = isClaudeUsageWindow(window) ? window : null
+        const passive = measured?.source === 'passive'
+        const details = [
+          {
+            label: t('Reset at:'),
+            value: measured ? formatUsageIsoTimestamp(measured.resetsAt) : '-',
+          },
+          {
+            label: t('Resets in:'),
+            value: measured
+              ? formatUsageTimeLeftUntil(measured.resetsAt, t)
+              : '-',
+          },
+        ]
+        if (passive) {
+          details.push({
+            label: t('Sampled at:'),
+            value: formatUsageIsoTimestamp(measured?.sampledAt),
+          })
+        }
         return (
           <UsageWindowCard
             key={window.key}
             title={t(window.labelKey)}
+            badge={
+              passive ? (
+                <StatusBadge
+                  label={t('From response headers')}
+                  variant='neutral'
+                  copyable={false}
+                />
+              ) : undefined
+            }
             percent={
               measured ? Math.round(measured.utilization * 10) / 10 : null
             }
-            details={[
-              {
-                label: t('Reset at:'),
-                value: measured
-                  ? formatUsageIsoTimestamp(measured.resetsAt)
-                  : '-',
-              },
-              {
-                label: t('Resets in:'),
-                value: measured
-                  ? formatUsageTimeLeftUntil(measured.resetsAt, t)
-                  : '-',
-              },
-            ]}
+            details={details}
           />
         )
       })}
@@ -691,9 +706,11 @@ export function ClaudeUsageDialog(props: ClaudeUsageDialogProps) {
         <div className='flex flex-col gap-3'>
           <UsageSectionHeading
             title={t('Usage Windows')}
-            description={t(
+            description={`${t(
               'Utilization of the 5-hour and 7-day windows reported by the Claude subscription.'
-            )}
+            )} ${t(
+              'The 7-Day Fable Window counts requests to Fable models only; a window marked "From response headers" was sampled from the latest relayed request because the usage API did not return it.'
+            )}`}
           >
             {statusBadge}
           </UsageSectionHeading>
