@@ -992,6 +992,7 @@ func AdminInvalidateUserSubscription(userSubscriptionId int) (*common.Message, e
 	if channelReleased {
 		InitChannelCache()
 	}
+	InvalidateSubscriptionRouteBindingCache(userId)
 	if cacheGroup != "" && userId > 0 {
 		refreshSubscriptionUserGroupCache(userId, common.LogText("admin subscription update"))
 	}
@@ -1042,6 +1043,7 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (*common.Message, error
 	if channelReleased {
 		InitChannelCache()
 	}
+	InvalidateSubscriptionRouteBindingCache(userId)
 	if cacheGroup != "" && userId > 0 {
 		refreshSubscriptionUserGroupCache(userId, common.LogText("admin subscription deletion"))
 	}
@@ -1269,6 +1271,7 @@ func ExpireDueSubscriptions(limit int) (int, error) {
 		if err != nil {
 			return expiredCount, err
 		}
+		InvalidateSubscriptionRouteBindingCache(userId)
 		if cacheGroup != "" {
 			refreshSubscriptionUserGroupCache(userId, common.LogText("subscription expiration"))
 		}

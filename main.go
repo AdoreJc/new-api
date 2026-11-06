@@ -344,6 +344,13 @@ func InitResources() error {
 		return err
 	}
 
+	// Users an earlier release moved into a subscription binding's dedicated
+	// group go back to their own group; runs after Redis so their cached
+	// group is refreshed. Idempotent.
+	if err := model.MigrateSubscriptionBoundUserGroups(); err != nil {
+		common.SysError(common.LogText("failed to migrate subscription binding user groups: %s", err.Error()))
+	}
+
 	perfmetrics.Init()
 
 	// 启动系统监控

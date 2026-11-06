@@ -26,6 +26,7 @@ var channelSyncLock sync.RWMutex
 
 func InitChannelCache() {
 	if !common.MemoryCacheEnabled {
+		clearSubscriptionRouteModelCache()
 		InvalidatePricingCache()
 		rebuildTaskAliasView()
 		return

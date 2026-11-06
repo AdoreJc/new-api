@@ -120,11 +120,11 @@ type SubscriptionBindableChannel struct {
 // SubscriptionChannelBindingChange reports what a bind/unbind changed so the
 // caller can refresh caches after the transaction commits.
 type SubscriptionChannelBindingChange struct {
-	UserId           int
-	UserGroupChanged bool
-	UserGroup        string
-	ChannelChanged   bool
-	Group            string
+	UserId         int
+	ChannelChanged bool
+	// Group is the dedicated group of the binding after a bind, "" after an
+	// unbind.
+	Group string
 }
 
 func isUserSubscriptionActive(sub *UserSubscription, now int64) bool {
@@ -252,11 +252,10 @@ func clearSubscriptionChannelBindingTx(tx *gorm.DB, sub *UserSubscription) (bool
 }
 
 // bindSubscriptionChannelTx binds channel channelId to the locked, active
-// subscription sub: the channel moves into its dedicated group, the user is
-// switched to that group, and the subscription's UpgradeGroup becomes the
-// dedicated group so expiry/invalidate restore the user through the existing
-// downgrade logic. A previous binding of the same subscription is released
-// first.
+// subscription sub: the channel moves into its dedicated group, which only the
+// distributor's request-scoped routing uses (see ResolveSubscriptionRouteGroup).
+// The user's group, UpgradeGroup and PrevUserGroup are left alone. A previous
+// binding of the same subscription is released first.
 func bindSubscriptionChannelTx(tx *gorm.DB, sub *UserSubscription, channelId int, now int64) (*SubscriptionChannelBindingChange, error) {
 	if tx == nil || sub == nil {
 		return nil, errors.New("invalid bind args")
@@ -295,8 +294,6 @@ func bindSubscriptionChannelTx(tx *gorm.DB, sub *UserSubscription, channelId int
 		if _, err := releaseBoundChannelTx(tx, sub); err != nil {
 			return nil, err
 		}
-	} else {
-		sub.BoundPrevUpgradeGroup = sub.UpgradeGroup
 	}
 
 	// Where the channel goes back to when released. A channel still parked in
@@ -335,38 +332,19 @@ func bindSubscriptionChannelTx(tx *gorm.DB, sub *UserSubscription, channelId int
 	change.ChannelChanged = true
 	change.Group = dedicated
 
-	currentGroup, err := getUserGroupByIdTx(tx, sub.UserId)
-	if err != nil {
-		return nil, err
-	}
-	if sub.PrevUserGroup == "" {
-		if currentGroup != "" && !IsSubscriptionBoundGroup(currentGroup) {
-			sub.PrevUserGroup = currentGroup
-		} else {
-			sub.PrevUserGroup = "default"
-		}
-	}
-	if currentGroup != dedicated {
-		if err := tx.Model(&User{}).Where("id = ?", sub.UserId).Update("group", dedicated).Error; err != nil {
-			return nil, err
-		}
-		change.UserGroupChanged = true
-		change.UserGroup = dedicated
-	}
-	sub.UpgradeGroup = dedicated
 	sub.BoundChannelId = channel.Id
 	sub.BoundGroup = dedicated
 	sub.BoundChannelPrevGroup = prevChannelGroup
+	sub.BoundPrevUpgradeGroup = ""
 	if err := tx.Save(sub).Error; err != nil {
 		return nil, err
 	}
 	return change, nil
 }
 
-// unbindSubscriptionChannelTx releases the channel and, while the subscription
-// is still active, moves the user back to the plan's upgrade group or the
-// group held before the subscription.
-func unbindSubscriptionChannelTx(tx *gorm.DB, sub *UserSubscription, now int64) (*SubscriptionChannelBindingChange, error) {
+// unbindSubscriptionChannelTx releases the channel and clears the binding.
+// The user's group is not touched: routing was request-scoped.
+func unbindSubscriptionChannelTx(tx *gorm.DB, sub *UserSubscription) (*SubscriptionChannelBindingChange, error) {
 	if tx == nil || sub == nil {
 		return nil, errors.New("invalid unbind args")
 	}
@@ -380,31 +358,7 @@ func unbindSubscriptionChannelTx(tx *gorm.DB, sub *UserSubscription, now int64) 
 	}
 	change.ChannelChanged = released
 
-	restoredUpgradeGroup := strings.TrimSpace(sub.BoundPrevUpgradeGroup)
-	if isUserSubscriptionActive(sub, now) {
-		currentGroup, err := getUserGroupByIdTx(tx, sub.UserId)
-		if err != nil {
-			return nil, err
-		}
-		target := restoredUpgradeGroup
-		if target == "" {
-			target = strings.TrimSpace(sub.PrevUserGroup)
-		}
-		if isSubscriptionBoundGroupOf(sub, currentGroup) && target != "" && target != currentGroup {
-			if err := tx.Model(&User{}).Where("id = ?", sub.UserId).Update("group", target).Error; err != nil {
-				return nil, err
-			}
-			change.UserGroupChanged = true
-			change.UserGroup = target
-		}
-	}
-	sub.UpgradeGroup = restoredUpgradeGroup
-	if restoredUpgradeGroup == "" {
-		// The subscription no longer elevates the user; mirror the state
-		// CreateUserSubscriptionFromPlanTx leaves for plans without an
-		// upgrade group.
-		sub.PrevUserGroup = ""
-	}
+	restoreSubscriptionUpgradeGroupFromBinding(sub)
 	sub.BoundChannelId = 0
 	sub.BoundGroup = ""
 	sub.BoundChannelPrevGroup = ""
@@ -440,23 +394,114 @@ func ensureSubscriptionBoundGroupRatio(group string, sourceGroup string) error {
 	return UpdateOption("GroupRatio", string(encoded))
 }
 
-func applySubscriptionChannelBindingChange(change *SubscriptionChannelBindingChange, operation string) {
+func applySubscriptionChannelBindingChange(change *SubscriptionChannelBindingChange) {
 	if change == nil {
 		return
 	}
 	if change.ChannelChanged {
 		InitChannelCache()
 	}
-	if change.UserGroupChanged && change.UserId > 0 {
-		refreshSubscriptionUserGroupCache(change.UserId, operation)
-	}
+	InvalidateSubscriptionRouteBindingCache(change.UserId)
 }
 
 func subscriptionBindingNotice(change *SubscriptionChannelBindingChange) *common.Message {
-	if change == nil || !change.UserGroupChanged {
+	if change == nil || change.Group == "" {
 		return nil
 	}
-	return common.NewMessage("User group will be switched to {{group}}", map[string]any{"group": change.UserGroup})
+	return common.NewMessage("Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected", map[string]any{"group": change.Group})
+}
+
+// restoreSubscriptionUpgradeGroupFromBinding undoes what a bind made before
+// routing became request-scoped did to the subscription: UpgradeGroup held
+// the dedicated group so the downgrade paths would move the user back. The
+// plan's upgrade group snapshot returns, and a subscription that never
+// elevated the user loses the PrevUserGroup the bind had filled in.
+func restoreSubscriptionUpgradeGroupFromBinding(sub *UserSubscription) bool {
+	if sub == nil || !isSubscriptionBoundGroupOf(sub, strings.TrimSpace(sub.UpgradeGroup)) {
+		return false
+	}
+	sub.UpgradeGroup = strings.TrimSpace(sub.BoundPrevUpgradeGroup)
+	if sub.UpgradeGroup == "" {
+		sub.PrevUserGroup = ""
+	}
+	return true
+}
+
+// MigrateSubscriptionBoundUserGroups restores users whom an earlier release
+// moved into their binding's dedicated group (claude-ch<id>, codex-ch<id> or
+// the legacy oauth-ch<id>): routing is request-scoped now, so a user still
+// parked there could not use the default group, Auto or any other model. For
+// every subscription with a bound channel it puts the plan's upgrade group
+// back into UpgradeGroup and, when the user's group is the binding's group,
+// moves the user to the plan's upgrade group (active subscriptions only),
+// else the group held before the subscription, else default. Running it again
+// changes nothing.
+func MigrateSubscriptionBoundUserGroups() error {
+	var subs []UserSubscription
+	if err := DB.Select("id").Where("bound_channel_id > 0").Order("id asc").Find(&subs).Error; err != nil {
+		return err
+	}
+	if len(subs) == 0 {
+		return nil
+	}
+	now := GetDBTimestamp()
+	restoredUsers := make(map[int]string)
+	restoredSubscriptions := 0
+	for _, row := range subs {
+		err := DB.Transaction(func(tx *gorm.DB) error {
+			var sub UserSubscription
+			if err := lockForUpdate(tx).Where("id = ?", row.Id).First(&sub).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil
+				}
+				return err
+			}
+			if sub.BoundChannelId <= 0 {
+				return nil
+			}
+			currentGroup, err := getUserGroupByIdTx(tx, sub.UserId)
+			if err != nil {
+				return err
+			}
+			if isSubscriptionBoundGroupOf(&sub, currentGroup) {
+				target := ""
+				if isUserSubscriptionActive(&sub, now) {
+					target = strings.TrimSpace(sub.BoundPrevUpgradeGroup)
+				}
+				if target == "" {
+					target = strings.TrimSpace(sub.PrevUserGroup)
+				}
+				if target == "" || isSubscriptionBoundGroupOf(&sub, target) {
+					target = "default"
+				}
+				if err := tx.Model(&User{}).Where("id = ?", sub.UserId).Update("group", target).Error; err != nil {
+					return err
+				}
+				restoredUsers[sub.UserId] = target
+			}
+			if !restoreSubscriptionUpgradeGroupFromBinding(&sub) {
+				return nil
+			}
+			restoredSubscriptions++
+			return tx.Model(&UserSubscription{}).Where("id = ?", sub.Id).Updates(map[string]any{
+				"upgrade_group":   sub.UpgradeGroup,
+				"prev_user_group": sub.PrevUserGroup,
+				"updated_at":      common.GetTimestamp(),
+			}).Error
+		})
+		if err != nil {
+			return err
+		}
+	}
+	for userId, group := range restoredUsers {
+		refreshSubscriptionUserGroupCache(userId, common.LogText("subscription binding migration"))
+		InvalidateSubscriptionRouteBindingCache(userId)
+		common.SysLog(common.LogText("subscription binding migration: user %d moved out of the dedicated group back to %s", userId, group))
+	}
+	if restoredSubscriptions > 0 || len(restoredUsers) > 0 {
+		common.SysLog(common.LogText("subscription binding migration: restored %d subscription upgrade groups and %d user groups", restoredSubscriptions, len(restoredUsers)))
+	}
+	return nil
 }
 
 // AdminBindSubscriptionChannel binds an OAuth channel to a user subscription.
@@ -497,7 +542,7 @@ func AdminBindSubscriptionChannel(userSubscriptionId int, channelId int) (*commo
 	if err != nil {
 		return nil, err
 	}
-	applySubscriptionChannelBindingChange(change, common.LogText("subscription channel binding"))
+	applySubscriptionChannelBindingChange(change)
 	return subscriptionBindingNotice(change), nil
 }
 
@@ -506,7 +551,6 @@ func AdminUnbindSubscriptionChannel(userSubscriptionId int) (*common.Message, er
 	if userSubscriptionId <= 0 {
 		return nil, errors.New("invalid userSubscriptionId")
 	}
-	now := GetDBTimestamp()
 	var change *SubscriptionChannelBindingChange
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var locked UserSubscription
@@ -518,16 +562,13 @@ func AdminUnbindSubscriptionChannel(userSubscriptionId int) (*common.Message, er
 			return err
 		}
 		var err error
-		change, err = unbindSubscriptionChannelTx(tx, &locked, now)
+		change, err = unbindSubscriptionChannelTx(tx, &locked)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	applySubscriptionChannelBindingChange(change, common.LogText("subscription channel unbinding"))
-	if change != nil && change.UserGroupChanged {
-		return common.NewMessage("User group will be reverted to {{group}}", map[string]any{"group": change.UserGroup}), nil
-	}
+	applySubscriptionChannelBindingChange(change)
 	return nil, nil
 }
 
@@ -564,7 +605,7 @@ func AdminCreateUserSubscriptionWithChannel(userId int, planId int, channelId in
 	if err != nil {
 		return nil, err
 	}
-	applySubscriptionChannelBindingChange(change, common.LogText("admin subscription creation with channel"))
+	applySubscriptionChannelBindingChange(change)
 	return subscriptionBindingNotice(change), nil
 }
 

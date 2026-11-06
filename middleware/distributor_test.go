@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -14,10 +15,14 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestChannelMatchesExpectedTaskPluginUsesGenericChannelSetting(t *testing.T) {
@@ -399,4 +404,151 @@ func TestSharedEndpointRebindsToBoundNewAPIExtension(t *testing.T) {
 	require.Nil(t, SetupContextForSelectedChannel(c, channel, "task-model"))
 	assert.Equal(t, "alpha", c.GetString("task_plugin_key"), "the first bound candidate executes regardless of the earlier pin")
 	assert.Equal(t, "alpha", c.MustGet(jsplugin.ContextKeyPinnedEndpoint).(jsplugin.PinnedEndpoint).Plugin.Meta.Key)
+}
+
+// setupSubscriptionRouteDistributeTest backs the distributor with an in-memory
+// database and channel cache: channel 1 is the bound OAuth account in its
+// dedicated group, channels 2-4 are shared pools.
+func setupSubscriptionRouteDistributeTest(t *testing.T) {
+	t.Helper()
+	require.NoError(t, i18n.Init())
+	previousDB := model.DB
+	previousCacheEnabled := common.MemoryCacheEnabled
+	previousRedis := common.RedisEnabled
+	previousType := common.MainDatabaseType()
+	previousAutoGroups := setting.AutoGroups2JsonString()
+	previousUsableGroups := setting.UserUsableGroups2JSONString()
+	previousRatios := ratio_setting.GroupRatio2JSONString()
+
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.UserSubscription{}))
+	model.DB = db
+	common.MemoryCacheEnabled = true
+	common.RedisEnabled = false
+	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["default","vip"]`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":2,"claude-ch1":1}`))
+	t.Cleanup(func() {
+		for _, userId := range []int{10, 11, 12, 13} {
+			model.InvalidateSubscriptionRouteBindingCache(userId)
+		}
+		model.DB = previousDB
+		common.MemoryCacheEnabled = previousCacheEnabled
+		common.RedisEnabled = previousRedis
+		common.SetMainDatabaseType(previousType)
+		require.NoError(t, setting.UpdateAutoGroupsByJsonString(previousAutoGroups))
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(previousUsableGroups))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(previousRatios))
+		if previousCacheEnabled && previousDB != nil && previousDB.Migrator().HasTable(&model.Channel{}) && previousDB.Migrator().HasTable(&model.Ability{}) {
+			model.InitChannelCache()
+		}
+		sqlDB, err := db.DB()
+		if err == nil {
+			require.NoError(t, sqlDB.Close())
+		}
+	})
+
+	channels := []struct {
+		id          int
+		channelType int
+		group       string
+		models      string
+	}{
+		{1, constant.ChannelTypeClaudeOAuth, "claude-ch1", "claude-x"},
+		{2, constant.ChannelTypeOpenAI, "default", "gpt-x"},
+		{3, constant.ChannelTypeAnthropic, "vip", "claude-x"},
+		{4, constant.ChannelTypeAnthropic, "default", "claude-x"},
+	}
+	for _, ch := range channels {
+		priority := int64(0)
+		weight := uint(100)
+		require.NoError(t, db.Create(&model.Channel{
+			Id: ch.id, Type: ch.channelType, Key: fmt.Sprintf("key-%d", ch.id), Status: common.ChannelStatusEnabled,
+			Name: fmt.Sprintf("channel-%d", ch.id), Weight: &weight, Models: ch.models, Group: ch.group, Priority: &priority,
+		}).Error)
+		require.NoError(t, db.Create(&model.Ability{Group: ch.group, Model: ch.models, ChannelId: ch.id, Enabled: true, Priority: &priority, Weight: weight}).Error)
+	}
+	now := time.Now().Unix()
+	subscriptions := []model.UserSubscription{
+		{UserId: 10, PlanId: 1, Status: "active", StartTime: now - 60, EndTime: now + 3600, BoundChannelId: 1, BoundGroup: "claude-ch1"},
+		{UserId: 12, PlanId: 1, Status: "active", StartTime: now - 7200, EndTime: now - 60, BoundChannelId: 1, BoundGroup: "claude-ch1"},
+		{UserId: 13, PlanId: 1, Status: "cancelled", StartTime: now - 60, EndTime: now + 3600, BoundChannelId: 1, BoundGroup: "claude-ch1"},
+	}
+	for i := range subscriptions {
+		require.NoError(t, db.Create(&subscriptions[i]).Error)
+		model.InvalidateSubscriptionRouteBindingCache(subscriptions[i].UserId)
+	}
+	model.InvalidateSubscriptionRouteBindingCache(11)
+	model.InitChannelCache()
+}
+
+func serveSubscriptionRouteRequest(t *testing.T, userId int, tokenGroup string, modelName string) (string, int) {
+	t.Helper()
+	var gotGroup string
+	var gotChannel int
+	router := gin.New()
+	router.POST("/v1/chat/completions", RequestId(), func(c *gin.Context) {
+		c.Set("id", userId)
+		common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, tokenGroup)
+	}, Distribute(), func(c *gin.Context) {
+		gotGroup = common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+		gotChannel = common.GetContextKeyInt(c, constant.ContextKeyChannelId)
+		c.Status(http.StatusNoContent)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(fmt.Sprintf(`{"model":%q}`, modelName)))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusNoContent, recorder.Code, recorder.Body.String())
+	return gotGroup, gotChannel
+}
+
+func TestDistributeRoutesBoundUsersModelsToTheDedicatedGroup(t *testing.T) {
+	setupSubscriptionRouteDistributeTest(t)
+
+	cases := []struct {
+		name        string
+		userId      int
+		tokenGroup  string
+		modelName   string
+		wantGroup   string
+		wantChannel int
+	}{
+		{"bound user, model on the bound channel", 10, "default", "claude-x", "claude-ch1", 1},
+		{"bound user, model not on the bound channel", 10, "default", "gpt-x", "default", 2},
+		{"binding wins over a token pinned to another group", 10, "vip", "claude-x", "claude-ch1", 1},
+		{"binding wins over Auto", 10, "auto", "claude-x", "claude-ch1", 1},
+		{"Auto still serves the other models", 10, "auto", "gpt-x", "auto", 2},
+		{"user without a binding", 11, "default", "claude-x", "default", 4},
+		{"expired binding", 12, "default", "claude-x", "default", 4},
+		{"cancelled binding", 13, "default", "claude-x", "default", 4},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotGroup, gotChannel := serveSubscriptionRouteRequest(t, tc.userId, tc.tokenGroup, tc.modelName)
+			assert.Equal(t, tc.wantGroup, gotGroup)
+			assert.Equal(t, tc.wantChannel, gotChannel)
+		})
+	}
+}
+
+func TestDistributeStopsRoutingOnceTheBindingCacheIsInvalidated(t *testing.T) {
+	setupSubscriptionRouteDistributeTest(t)
+
+	group, channel := serveSubscriptionRouteRequest(t, 10, "default", "claude-x")
+	assert.Equal(t, "claude-ch1", group)
+	assert.Equal(t, 1, channel)
+
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("user_id = ?", 10).Update("bound_channel_id", 0).Error)
+	group, channel = serveSubscriptionRouteRequest(t, 10, "default", "claude-x")
+	assert.Equal(t, "claude-ch1", group, "the cached binding still routes")
+	assert.Equal(t, 1, channel)
+
+	model.InvalidateSubscriptionRouteBindingCache(10)
+	group, channel = serveSubscriptionRouteRequest(t, 10, "default", "claude-x")
+	assert.Equal(t, "default", group)
+	assert.Equal(t, 4, channel)
 }
