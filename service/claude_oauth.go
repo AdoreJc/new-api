@@ -14,11 +14,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/logger"
 )
 
 // Claude subscription OAuth (the Claude Code CLI client) constants. The
@@ -126,13 +129,72 @@ func (k *ClaudeOAuthKey) HasScope(scope string) bool {
 	return false
 }
 
+// claudeCodeDefaultClientVersion is the Claude Code CLI version announced when
+// CLAUDE_CODE_CLIENT_VERSION is unset. Anthropic gates new models on a minimum
+// client version and rejects older ones with 400 "Claude Code X does not
+// support this model; version Y or newer is required" (claude-opus-5-5 needs
+// 2.1.280 or newer). When raising it, take the latest release from
+// `npm view @anthropic-ai/claude-code version`.
+const claudeCodeDefaultClientVersion = "2.1.318"
+
+// claudeCodeClientVersion is resolved once: every request of a process must
+// announce the same client version.
+var claudeCodeClientVersion = sync.OnceValue(func() string {
+	return resolveClaudeCodeClientVersion(os.Getenv("CLAUDE_CODE_CLIENT_VERSION"))
+})
+
 // ClaudeCodeClientVersion is the Claude Code CLI version announced in
-// User-Agent headers. CLAUDE_CODE_CLIENT_VERSION overrides the built-in value.
+// User-Agent headers. CLAUDE_CODE_CLIENT_VERSION still overrides the built-in
+// value, read once per process.
 func ClaudeCodeClientVersion() string {
-	if v := strings.TrimSpace(os.Getenv("CLAUDE_CODE_CLIENT_VERSION")); v != "" {
-		return v
+	return claudeCodeClientVersion()
+}
+
+// resolveClaudeCodeClientVersion accepts an override only when it is a plain
+// x.y.z release not older than the built-in version. A -dev/+build suffix or a
+// version below the built-in one makes Anthropic treat the client as not a
+// genuine Claude Code release, so such a value is logged and ignored.
+func resolveClaudeCodeClientVersion(env string) string {
+	version := strings.TrimSpace(env)
+	if version == "" {
+		return claudeCodeDefaultClientVersion
 	}
-	return "2.1.258"
+	override, ok := parseClaudeCodeReleaseVersion(version)
+	builtin, _ := parseClaudeCodeReleaseVersion(claudeCodeDefaultClientVersion)
+	if !ok || slices.Compare(override[:], builtin[:]) < 0 {
+		logger.LogWarn(context.Background(), common.LogText(
+			"ignoring CLAUDE_CODE_CLIENT_VERSION=%q: it must be a plain x.y.z release not older than %s; using %s",
+			version, claudeCodeDefaultClientVersion, claudeCodeDefaultClientVersion))
+		return claudeCodeDefaultClientVersion
+	}
+	return version
+}
+
+// parseClaudeCodeReleaseVersion parses a strict three-part numeric release
+// version such as "2.1.318": no "v" prefix, pre-release or build suffix, sign,
+// or leading zeros.
+func parseClaudeCodeReleaseVersion(version string) ([3]int, bool) {
+	var parts [3]int
+	fields := strings.Split(version, ".")
+	if len(fields) != len(parts) {
+		return parts, false
+	}
+	for i, field := range fields {
+		if field == "" || (len(field) > 1 && field[0] == '0') {
+			return parts, false
+		}
+		for _, r := range field {
+			if r < '0' || r > '9' {
+				return parts, false
+			}
+		}
+		n, err := strconv.Atoi(field)
+		if err != nil {
+			return parts, false
+		}
+		parts[i] = n
+	}
+	return parts, true
 }
 
 func ClaudeCLIUserAgent() string {

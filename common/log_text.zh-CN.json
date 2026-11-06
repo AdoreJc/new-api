@@ -619,6 +619,7 @@
   "http transport select: host=%s protocol=%s shards=%d policy=%s": "HTTP 连接选择: host=%s protocol=%s shards=%d policy=%s",
   "http transport: host=%s protocol=%s shard=%d/%d policy=%s negotiated=%s": "HTTP 连接: host=%s protocol=%s shard=%d/%d policy=%s negotiated=%s",
   "i18n initialized with languages: %s": "i18n 已初始化，语言: %s",
+  "ignoring CLAUDE_CODE_CLIENT_VERSION=%q: it must be a plain x.y.z release not older than %s; using %s": "忽略 CLAUDE_CODE_CLIENT_VERSION=%q：必须是不低于 %s 的纯数字 x.y.z 版本，已使用 %s",
   "image request body: %s": "图片请求体: %s",
   "image token input: format=%s, width=%d, height=%d": "计算图片 token: format=%s, width=%d, height=%d",
   "increaseQuotaData error: %s": "increaseQuotaData 出错: %s",
