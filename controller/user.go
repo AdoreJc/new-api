@@ -635,7 +635,7 @@ func GetUserModels(c *gin.Context) {
 		}
 	case group == "auto":
 		if _, ok := groups[group]; ok {
-			groupsToQuery = service.GetUserAutoGroup(user.Group)
+			groupsToQuery = service.GetUserAutoGroupForUser(id, user.Group)
 		}
 	default:
 		if _, ok := groups[group]; ok {

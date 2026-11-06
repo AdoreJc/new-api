@@ -2,6 +2,7 @@ package controller
 
 import (
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -110,6 +111,11 @@ func validateTokenGroup(c *gin.Context, group string) bool {
 }
 
 func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) bool {
+	// The owner's subscription dedicated group is always first in Auto at
+	// request time, so it is never part of the stored snapshot or its limit.
+	if subscriptionGroup, ok := service.GetUserSubscriptionGroup(c.GetInt("id")); ok {
+		groups = slices.DeleteFunc(slices.Clone(groups), func(group string) bool { return group == subscriptionGroup })
+	}
 	if len(groups) == 0 {
 		if err := token.SetAutoGroups(nil); err != nil {
 			common.ApiError(c, err)
@@ -202,7 +208,7 @@ func GetTokenAutoGroups(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, gin.H{
-		"groups":    service.GetUserAutoGroup(userGroup),
+		"groups":    service.GetUserAutoGroupForUser(c.GetInt("id"), userGroup),
 		"max_count": setting.GetMaxTokenAutoGroups(),
 	})
 }

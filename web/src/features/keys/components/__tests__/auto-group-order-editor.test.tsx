@@ -139,6 +139,38 @@ function CustomEmptyHarness() {
   )
 }
 
+const subscriptionOption = {
+  value: 'claude-ch7',
+  label: 'claude-ch7',
+  desc: 'Subscription account (bound channel models only)',
+  ratio: 1,
+  subscriptionBound: true,
+}
+
+function PinnedHarness(props: { mode: 'inherit' | 'custom' }) {
+  const [groups, setGroups] = useState<string[]>(
+    props.mode === 'custom' ? ['default', 'vip'] : []
+  )
+  const [mode, setMode] = useState<'inherit' | 'custom'>(props.mode)
+  return (
+    <I18nextProvider i18n={i18n}>
+      <AutoGroupOrderEditor
+        value={groups}
+        mode={mode}
+        options={[{ value: 'auto', label: 'auto' }, ...globalOptions]}
+        globalOptions={globalOptions}
+        pinnedOption={subscriptionOption}
+        maxCount={2}
+        onChange={(value) => {
+          setGroups(value.groups)
+          setMode(value.mode)
+        }}
+      />
+      <output data-testid='order'>{groups.join(',')}</output>
+    </I18nextProvider>
+  )
+}
+
 function findButton(container: HTMLElement, label: string): HTMLButtonElement {
   return within(container).getByRole('button', { name: label })
 }
@@ -152,6 +184,46 @@ function getCommandItem(label: string): HTMLElement {
   }
   return item
 }
+
+describe('Auto group order editor subscription dedicated group', () => {
+  test('keeps the pinned group locked first and outside the custom limit', () => {
+    const { container } = render(<PinnedHarness mode='custom' />)
+
+    const pinned = container.querySelector('[data-slot="auto-group-pinned"]')
+    expect(pinned).toHaveTextContent('claude-ch7')
+    expect(pinned).toHaveTextContent('Subscription account · Auto first')
+    expect(
+      within(container).queryByRole('button', { name: 'Remove claude-ch7' })
+    ).toBe(null)
+    expect(
+      within(container).queryByRole('button', {
+        name: 'Drag claude-ch7 to reorder',
+      })
+    ).toBe(null)
+    expect(container).toHaveTextContent('2 / 2 groups selected')
+
+    fireEvent.click(findButton(container, 'Remove vip'))
+    expect(within(container).getByTestId('order')).toHaveTextContent('default')
+    expect(
+      container.querySelector('[data-slot="auto-group-pinned"]')
+    ).toHaveTextContent('claude-ch7')
+  })
+
+  test('numbers the inherited groups after the pinned group', () => {
+    const { container } = render(<PinnedHarness mode='inherit' />)
+
+    expect(
+      container.querySelector('[data-slot="auto-group-pinned"]')
+    ).toHaveTextContent('claude-ch7')
+    expect(
+      [
+        ...container.querySelectorAll(
+          '[data-slot="global-auto-order-index"]'
+        ),
+      ].map((item) => item.textContent)
+    ).toEqual(['2', '3', '4'])
+  })
+})
 
 describe('Auto group order editor', () => {
   test('enforces the limit and exposes accessible reorder controls', () => {

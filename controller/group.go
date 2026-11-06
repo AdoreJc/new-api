@@ -38,7 +38,8 @@ func GetUserGroups(c *gin.Context) {
 				"desc":  desc,
 			}
 			// The subscription dedicated group only serves the bound
-			// account's models and cannot join an Auto list.
+			// account's models and is always first in Auto, never stored in
+			// a token's Auto list.
 			if groupName == subscriptionGroup {
 				info["subscription_bound"] = true
 			}

@@ -178,6 +178,12 @@ export function ApiKeysMutateDrawer({
     () => groups.filter((group) => !group.subscriptionBound),
     [groups]
   )
+  // The backend always tries the subscription dedicated group first in Auto;
+  // it is shown locked and never sent in auto_groups.
+  const subscriptionAutoGroup = useMemo(
+    () => groups.find((group) => group.subscriptionBound),
+    [groups]
+  )
   const availableAutoGroupNames = useMemo(
     () =>
       autoGroupOptions
@@ -481,6 +487,7 @@ export function ApiKeysMutateDrawer({
                           value={field.value}
                           mode={autoGroupsMode}
                           options={autoGroupOptions}
+                          pinnedOption={subscriptionAutoGroup}
                           globalOptions={globalAutoGroupOptions}
                           maxCount={maxAutoGroups}
                           onChange={(value) => {

@@ -58,7 +58,7 @@ func setupSubscriptionGroupTokenTest(t *testing.T, tokenGroups ...string) {
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.UserSubscription{}))
 	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["default","vip"]`))
-	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP"}`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP","auto":"Auto"}`))
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":2,"claude-ch1":1,"oauth-ch5":1}`))
 	t.Cleanup(func() {
 		for _, userId := range users {
@@ -129,12 +129,29 @@ func subscriptionGroupTokenKey(userId int, group string) string {
 // with the group and channel the request ended up on.
 func serveSubscriptionGroupTokenRequest(t *testing.T, userId int, tokenGroup string, modelName string) (*httptest.ResponseRecorder, string, int) {
 	t.Helper()
-	var gotGroup string
-	var gotChannel int
+	result := serveSubscriptionGroupAutoRequest(t, userId, tokenGroup, modelName)
+	return result.recorder, result.group, result.channel
+}
+
+type subscriptionGroupAutoResult struct {
+	recorder       *httptest.ResponseRecorder
+	group          string
+	autoGroup      string
+	autoGroupIndex int
+	channel        int
+}
+
+// serveSubscriptionGroupAutoRequest is serveSubscriptionGroupTokenRequest that
+// also reports where in its Auto list an Auto token's request was served.
+func serveSubscriptionGroupAutoRequest(t *testing.T, userId int, tokenGroup string, modelName string) subscriptionGroupAutoResult {
+	t.Helper()
+	var result subscriptionGroupAutoResult
 	router := gin.New()
 	router.POST("/v1/chat/completions", RequestId(), TokenAuth(), Distribute(), func(c *gin.Context) {
-		gotGroup = common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-		gotChannel = common.GetContextKeyInt(c, constant.ContextKeyChannelId)
+		result.group = common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+		result.autoGroup = common.GetContextKeyString(c, constant.ContextKeyAutoGroup)
+		result.autoGroupIndex = common.GetContextKeyInt(c, constant.ContextKeyAutoGroupIndex)
+		result.channel = common.GetContextKeyInt(c, constant.ContextKeyChannelId)
 		c.Status(http.StatusNoContent)
 	})
 	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(fmt.Sprintf(`{"model":%q}`, modelName)))
@@ -143,13 +160,14 @@ func serveSubscriptionGroupTokenRequest(t *testing.T, userId int, tokenGroup str
 	request.Header.Set("Authorization", "Bearer sk-"+subscriptionGroupTokenKey(userId, tokenGroup))
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
-	return recorder, gotGroup, gotChannel
+	result.recorder = recorder
+	return result
 }
 
 func TestGetUserUsableGroupsForUserAddsOnlyTheOwnersActiveBindingGroup(t *testing.T) {
 	setupSubscriptionGroupTokenTest(t)
 
-	shared := map[string]string{"default": "Default", "vip": "VIP"}
+	shared := map[string]string{"default": "Default", "vip": "VIP", "auto": "Auto"}
 	withGroup := func(group string) map[string]string {
 		groups := map[string]string{group: service.SubscriptionBoundGroupDescription}
 		for name, desc := range shared {
@@ -173,7 +191,63 @@ func TestGetUserUsableGroupsForUserAddsOnlyTheOwnersActiveBindingGroup(t *testin
 			assert.Equal(t, tc.want, service.GetUserUsableGroupsForUser(tc.userId, "default"))
 		})
 	}
-	assert.Equal(t, []string{"default", "vip"}, service.GetUserAutoGroup("default"), "the dedicated group never joins the Auto list")
+}
+
+func TestSubscriptionGroupLeadsTheOwnersAutoGroups(t *testing.T) {
+	setupSubscriptionGroupTokenTest(t)
+
+	cases := []struct {
+		name   string
+		userId int
+		want   []string
+	}{
+		{"active binding", subscriptionGroupBoundUser, []string{"claude-ch1", "default", "vip"}},
+		{"legacy oauth-ch binding", subscriptionGroupLegacyUser, []string{"oauth-ch5", "default", "vip"}},
+		{"no binding", subscriptionGroupPlainUser, []string{"default", "vip"}},
+		{"expired binding", subscriptionGroupExpiredUser, []string{"default", "vip"}},
+		{"cancelled binding", subscriptionGroupCancelledUser, []string{"default", "vip"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, service.GetUserAutoGroupForUser(tc.userId, "default"))
+
+			inherit := newTokenAutoGroupsContext()
+			inherit.Set("id", tc.userId)
+			assert.Equal(t, tc.want, service.GetRequestAutoGroups(inherit, "default"), "global Auto list")
+		})
+	}
+
+	snapshot := newTokenAutoGroupsContext()
+	snapshot.Set("id", subscriptionGroupBoundUser)
+	common.SetContextKey(snapshot, constant.ContextKeyTokenAutoGroups, []string{"vip", "default"})
+	assert.Equal(t, []string{"claude-ch1", "vip", "default"}, service.GetRequestAutoGroups(snapshot, "default"), "token snapshot")
+}
+
+func TestAutoTokenTriesTheSubscriptionGroupFirstAndSkipsItForOtherModels(t *testing.T) {
+	setupSubscriptionGroupTokenTest(t, "auto")
+
+	bound := serveSubscriptionGroupAutoRequest(t, subscriptionGroupBoundUser, "auto", "claude-x")
+	require.Equal(t, http.StatusNoContent, bound.recorder.Code, bound.recorder.Body.String())
+	assert.Equal(t, "claude-ch1", bound.group, "a bound model is served from the dedicated group")
+	assert.Equal(t, 1, bound.channel)
+
+	other := serveSubscriptionGroupAutoRequest(t, subscriptionGroupBoundUser, "auto", "gpt-x")
+	require.Equal(t, http.StatusNoContent, other.recorder.Code, other.recorder.Body.String())
+	assert.Equal(t, "auto", other.group)
+	assert.Equal(t, "default", other.autoGroup, "the dedicated group has no channel for the model, so Auto moves on")
+	assert.Equal(t, 1, other.autoGroupIndex, "Auto tried the dedicated group at index 0 first")
+	assert.Equal(t, 2, other.channel)
+
+	// Once the binding ends the dedicated group leaves the Auto list.
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("user_id = ?", subscriptionGroupBoundUser).
+		Updates(map[string]any{"bound_channel_id": 0, "bound_group": ""}).Error)
+	model.InvalidateSubscriptionRouteBindingCache(subscriptionGroupBoundUser)
+	assert.Equal(t, []string{"default", "vip"}, service.GetUserAutoGroupForUser(subscriptionGroupBoundUser, "default"))
+	unbound := serveSubscriptionGroupAutoRequest(t, subscriptionGroupBoundUser, "auto", "gpt-x")
+	require.Equal(t, http.StatusNoContent, unbound.recorder.Code, unbound.recorder.Body.String())
+	assert.Equal(t, "default", unbound.autoGroup)
+	assert.Equal(t, 0, unbound.autoGroupIndex)
+	assert.Equal(t, 2, unbound.channel)
 }
 
 func TestTokenAuthAcceptsTokensInTheOwnersSubscriptionGroup(t *testing.T) {

@@ -293,9 +293,14 @@ describe('API keys mutate drawer subscription dedicated group', () => {
   const boundModelsHint =
     'This API key can only call models supported by your bound subscription account.'
 
-  test('keeps the dedicated group out of the Auto order options', async () => {
-    installApiFixtures([], subscriptionGroups)
+  test('pins the dedicated group first in Auto and never saves it in auto_groups', async () => {
+    const createdPayloads: Array<Record<string, unknown>> = []
+    installApiFixtures(createdPayloads, subscriptionGroups)
     await renderCreateDrawer(subscriptionGroups)
+
+    expect(
+      document.querySelector('[data-slot="auto-group-pinned"]')
+    ).toHaveTextContent('claude-ch7')
 
     const addGroupTrigger = getControlByLabel(
       'Auto group order'
@@ -312,6 +317,19 @@ describe('API keys mutate drawer subscription dedicated group', () => {
       true
     )
     expect(optionTexts.some((text) => text.includes('claude-ch7'))).toBe(false)
+
+    const vipOption = [
+      ...document.querySelectorAll<HTMLElement>('[data-slot="command-item"]'),
+    ].find((option) => option.textContent?.includes('Priority access'))
+    if (!vipOption) {
+      throw new Error('Expected the vip Auto group option')
+    }
+    fireEvent.click(vipOption)
+    changeInput(getControlByLabel('Name'), 'auto-pinned')
+    fireEvent.click(findButton('Save changes', true))
+    await waitFor(() => expect(createdPayloads).toHaveLength(1))
+    expect(createdPayloads[0]?.group).toBe('auto')
+    expect(createdPayloads[0]?.auto_groups).toEqual(['vip'])
   })
 
   test('shows the bound-models hint when the dedicated group is selected and saves it', async () => {

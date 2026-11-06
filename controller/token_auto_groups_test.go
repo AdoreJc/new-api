@@ -234,7 +234,7 @@ func TestGetTokenAutoGroupsReturnsFullFilteredGlobalOrderAndLimit(t *testing.T) 
 }
 
 func TestSubscriptionBoundGroupIsUsableOnlyByItsOwner(t *testing.T) {
-	configureTokenAutoGroupsTest(t, "5", `["default","vip"]`)
+	configureTokenAutoGroupsTest(t, "1", `["default","vip"]`)
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":1,"claude-ch7":1}`))
 	owner := setupTokenAutoGroupsControllerTest(t)
 	require.NoError(t, model.DB.AutoMigrate(&model.UserSubscription{}))
@@ -292,10 +292,32 @@ func TestSubscriptionBoundGroupIsUsableOnlyByItsOwner(t *testing.T) {
 		assert.False(t, response.Success)
 		assert.Contains(t, response.Message, "claude-ch7")
 	})
-	t.Run("the Auto list does not accept it", func(t *testing.T) {
+	t.Run("the owner's Auto groups start with it", func(t *testing.T) {
+		ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodGet, "/api/token/auto-groups", nil, owner.Id)
+		GetTokenAutoGroups(ctx)
+		response := decodeAPIResponse(t, recorder)
+		require.True(t, response.Success, response.Message)
+		var data struct {
+			Groups   []string `json:"groups"`
+			MaxCount int      `json:"max_count"`
+		}
+		require.NoError(t, common.Unmarshal(response.Data, &data))
+		assert.Equal(t, []string{"claude-ch7", "default", "vip"}, data.Groups)
+		assert.Equal(t, 1, data.MaxCount)
+	})
+	t.Run("a saved Auto list drops it silently and does not count it", func(t *testing.T) {
 		request := baseAutoTokenRequest("auto-dedicated")
-		request["auto_groups"] = []string{"claude-ch7", "default"}
+		request["auto_groups"] = []string{"claude-ch7", "vip"}
 		response := addToken(t, owner.Id, request)
+		require.True(t, response.Success, response.Message)
+		var token model.Token
+		require.NoError(t, model.DB.Where("name = ?", "auto-dedicated").First(&token).Error)
+		assert.JSONEq(t, `["vip"]`, token.AutoGroups)
+	})
+	t.Run("another user's Auto list still rejects it", func(t *testing.T) {
+		request := baseAutoTokenRequest("other-auto-dedicated")
+		request["auto_groups"] = []string{"claude-ch7"}
+		response := addToken(t, other.Id, request)
 		assert.False(t, response.Success)
 		assert.Contains(t, response.Message, "Auto group claude-ch7")
 	})
