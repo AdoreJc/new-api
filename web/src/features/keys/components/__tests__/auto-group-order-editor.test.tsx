@@ -217,9 +217,7 @@ describe('Auto group order editor subscription dedicated group', () => {
     ).toHaveTextContent('claude-ch7')
     expect(
       [
-        ...container.querySelectorAll(
-          '[data-slot="global-auto-order-index"]'
-        ),
+        ...container.querySelectorAll('[data-slot="global-auto-order-index"]'),
       ].map((item) => item.textContent)
     ).toEqual(['2', '3', '4'])
   })
