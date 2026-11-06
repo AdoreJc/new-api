@@ -178,6 +178,9 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 	if req.Plan.AllowWalletOverflow == nil {
 		req.Plan.AllowWalletOverflow = common.GetPointer(true)
 	}
+	if req.Plan.FallbackToSharedPoolOnLimit == nil {
+		req.Plan.FallbackToSharedPoolOnLimit = common.GetPointer(false)
+	}
 	if req.Plan.DurationUnit == "" {
 		req.Plan.DurationUnit = model.SubscriptionDurationMonth
 	}
@@ -314,6 +317,9 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 		}
 		if req.Plan.AllowWalletOverflow != nil {
 			updateMap["allow_wallet_overflow"] = *req.Plan.AllowWalletOverflow
+		}
+		if req.Plan.FallbackToSharedPoolOnLimit != nil {
+			updateMap["fallback_to_shared_pool_on_limit"] = *req.Plan.FallbackToSharedPoolOnLimit
 		}
 		if err := tx.Model(&model.SubscriptionPlan{}).Where("id = ?", id).Updates(updateMap).Error; err != nil {
 			return err

@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/model_setting"
@@ -484,10 +485,13 @@ func setupSubscriptionRouteDistributeTest(t *testing.T) {
 	model.InitChannelCache()
 }
 
-func serveSubscriptionRouteRequest(t *testing.T, userId int, tokenGroup string, modelName string) (string, int) {
+// serveSubscriptionRouteRequest returns the group and channel the distributor
+// chose and the route it recorded for billing (nil when not steered).
+func serveSubscriptionRouteRequest(t *testing.T, userId int, tokenGroup string, modelName string) (string, int, *relaycommon.SubscriptionRoute) {
 	t.Helper()
 	var gotGroup string
 	var gotChannel int
+	var gotRoute *relaycommon.SubscriptionRoute
 	router := gin.New()
 	router.POST("/v1/chat/completions", RequestId(), func(c *gin.Context) {
 		c.Set("id", userId)
@@ -496,6 +500,7 @@ func serveSubscriptionRouteRequest(t *testing.T, userId int, tokenGroup string, 
 	}, Distribute(), func(c *gin.Context) {
 		gotGroup = common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 		gotChannel = common.GetContextKeyInt(c, constant.ContextKeyChannelId)
+		gotRoute, _ = common.GetContextKeyType[*relaycommon.SubscriptionRoute](c, constant.ContextKeySubscriptionRoute)
 		c.Status(http.StatusNoContent)
 	})
 	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(fmt.Sprintf(`{"model":%q}`, modelName)))
@@ -503,7 +508,7 @@ func serveSubscriptionRouteRequest(t *testing.T, userId int, tokenGroup string, 
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusNoContent, recorder.Code, recorder.Body.String())
-	return gotGroup, gotChannel
+	return gotGroup, gotChannel, gotRoute
 }
 
 func TestDistributeRoutesBoundUsersModelsToTheDedicatedGroup(t *testing.T) {
@@ -516,21 +521,34 @@ func TestDistributeRoutesBoundUsersModelsToTheDedicatedGroup(t *testing.T) {
 		modelName   string
 		wantGroup   string
 		wantChannel int
+		// group recorded as the fallback target; "" when the request is not
+		// steered and so not billed to the bound subscription
+		wantOriginal string
 	}{
-		{"bound user, model on the bound channel", 10, "default", "claude-x", "claude-ch1", 1},
-		{"bound user, model not on the bound channel", 10, "default", "gpt-x", "default", 2},
-		{"binding wins over a token pinned to another group", 10, "vip", "claude-x", "claude-ch1", 1},
-		{"binding wins over Auto", 10, "auto", "claude-x", "claude-ch1", 1},
-		{"Auto still serves the other models", 10, "auto", "gpt-x", "auto", 2},
-		{"user without a binding", 11, "default", "claude-x", "default", 4},
-		{"expired binding", 12, "default", "claude-x", "default", 4},
-		{"cancelled binding", 13, "default", "claude-x", "default", 4},
+		{"bound user, model on the bound channel", 10, "default", "claude-x", "claude-ch1", 1, "default"},
+		{"bound user, model not on the bound channel", 10, "default", "gpt-x", "default", 2, ""},
+		{"binding wins over a token pinned to another group", 10, "vip", "claude-x", "claude-ch1", 1, "vip"},
+		{"binding wins over Auto", 10, "auto", "claude-x", "claude-ch1", 1, "auto"},
+		{"token already in the dedicated group is still billed to the binding", 10, "claude-ch1", "claude-x", "claude-ch1", 1, "claude-ch1"},
+		{"Auto still serves the other models", 10, "auto", "gpt-x", "auto", 2, ""},
+		{"user without a binding", 11, "default", "claude-x", "default", 4, ""},
+		{"expired binding", 12, "default", "claude-x", "default", 4, ""},
+		{"cancelled binding", 13, "default", "claude-x", "default", 4, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotGroup, gotChannel := serveSubscriptionRouteRequest(t, tc.userId, tc.tokenGroup, tc.modelName)
+			gotGroup, gotChannel, gotRoute := serveSubscriptionRouteRequest(t, tc.userId, tc.tokenGroup, tc.modelName)
 			assert.Equal(t, tc.wantGroup, gotGroup)
 			assert.Equal(t, tc.wantChannel, gotChannel)
+			if tc.wantOriginal == "" {
+				assert.Nil(t, gotRoute)
+				return
+			}
+			require.NotNil(t, gotRoute)
+			assert.Equal(t, tc.wantOriginal, gotRoute.OriginalGroup)
+			assert.Equal(t, "claude-ch1", gotRoute.Group)
+			assert.Equal(t, 1, gotRoute.ChannelId)
+			assert.Positive(t, gotRoute.SubscriptionId)
 		})
 	}
 }
@@ -538,17 +556,17 @@ func TestDistributeRoutesBoundUsersModelsToTheDedicatedGroup(t *testing.T) {
 func TestDistributeStopsRoutingOnceTheBindingCacheIsInvalidated(t *testing.T) {
 	setupSubscriptionRouteDistributeTest(t)
 
-	group, channel := serveSubscriptionRouteRequest(t, 10, "default", "claude-x")
+	group, channel, _ := serveSubscriptionRouteRequest(t, 10, "default", "claude-x")
 	assert.Equal(t, "claude-ch1", group)
 	assert.Equal(t, 1, channel)
 
 	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("user_id = ?", 10).Update("bound_channel_id", 0).Error)
-	group, channel = serveSubscriptionRouteRequest(t, 10, "default", "claude-x")
+	group, channel, _ = serveSubscriptionRouteRequest(t, 10, "default", "claude-x")
 	assert.Equal(t, "claude-ch1", group, "the cached binding still routes")
 	assert.Equal(t, 1, channel)
 
 	model.InvalidateSubscriptionRouteBindingCache(10)
-	group, channel = serveSubscriptionRouteRequest(t, 10, "default", "claude-x")
+	group, channel, _ = serveSubscriptionRouteRequest(t, 10, "default", "claude-x")
 	assert.Equal(t, "default", group)
 	assert.Equal(t, 4, channel)
 }

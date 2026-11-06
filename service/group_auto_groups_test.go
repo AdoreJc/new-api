@@ -77,7 +77,7 @@ func TestGetRequestAutoGroupsTreatsSubscriptionBindingGroupsLikeAnyOther(t *test
 	common.SetContextKey(ctx, constant.ContextKeyTokenAutoGroups, []string{"vip", "default"})
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":1,"svip":1,"claude-ch7":1,"oauth-ch8":1}`))
 
-	// Binding routing is request-scoped (ResolveSubscriptionRouteGroup), so a
+	// Binding routing is request-scoped (ResolveSubscriptionRoute), so a
 	// user whose group still carries a binding name is not pinned to it.
 	assert.Equal(t, []string{"vip", "default"}, GetRequestAutoGroups(ctx, "claude-ch7"))
 	assert.Equal(t, []string{"vip", "default", "svip"}, GetRequestAutoGroups(newRequestAutoGroupsContext(), "oauth-ch8"))

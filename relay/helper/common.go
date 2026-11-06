@@ -84,6 +84,21 @@ func (writer *streamKeepAliveWriter) ping() error {
 	return PingData(writer.pingContext)
 }
 
+// ResponseContentStarted reports whether anything besides keep-alive pings has
+// reached the client, after which a request can no longer move to another
+// upstream with a different billing source.
+func ResponseContentStarted(c *gin.Context) bool {
+	if writer, ok := c.Writer.(*streamKeepAliveWriter); ok {
+		select {
+		case <-writer.done:
+		default:
+			// The keep-alive stops on the first business write.
+			return false
+		}
+	}
+	return c.Writer.Written()
+}
+
 // StartStreamKeepAlive 按 interval 发送心跳，覆盖请求准备和重试；业务写入开始后交给流处理器。
 // 内层请求复用外层的保活，内层清理不会提前结束它。
 func StartStreamKeepAlive(c *gin.Context, interval time.Duration) func() {

@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -97,12 +98,20 @@ func Distribute() func(c *gin.Context) {
 				}
 				// A user whose subscription is bound to an OAuth channel account
 				// has that channel's models served from the binding's dedicated
-				// group, whatever group the token or playground asked for; every
-				// other model keeps the group chosen above.
-				if group, ok := model.ResolveSubscriptionRouteGroup(c.GetInt("id"), modelRequest.Model, common.GetTimestamp()); ok {
-					if previous := common.GetContextKeyString(c, constant.ContextKeyUsingGroup); previous != group {
-						common.SetContextKey(c, constant.ContextKeyUsingGroup, group)
-						logger.LogDebug(c, "subscription binding routes model %s from group %s to the dedicated group %s", modelRequest.Model, previous, group)
+				// group, whatever group the token or playground asked for, and
+				// billed to that subscription only; every other model keeps the
+				// group chosen above.
+				if binding, ok := model.ResolveSubscriptionRoute(c.GetInt("id"), modelRequest.Model, common.GetTimestamp()); ok {
+					previous := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+					common.SetContextKey(c, constant.ContextKeySubscriptionRoute, &relaycommon.SubscriptionRoute{
+						SubscriptionId: binding.SubscriptionId,
+						ChannelId:      binding.ChannelId,
+						Group:          binding.Group,
+						OriginalGroup:  previous,
+					})
+					if previous != binding.Group {
+						common.SetContextKey(c, constant.ContextKeyUsingGroup, binding.Group)
+						logger.LogDebug(c, "subscription binding routes model %s from group %s to the dedicated group %s", modelRequest.Model, previous, binding.Group)
 					}
 				}
 			}

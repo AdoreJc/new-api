@@ -166,7 +166,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	retryParam := &service.RetryParam{
 		Ctx:         c,
-		TokenGroup:  relayInfo.TokenGroup,
+		TokenGroup:  service.RelayRetryGroup(relayInfo),
 		ModelName:   relayInfo.OriginModelName,
 		RequestPath: c.Request.URL.Path,
 		Retry:       common.GetPointer(0),
@@ -227,6 +227,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		service.RecordPolicyFailure(c, channel.Id, newAPIError, decision)
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, relayInfo)
 
+		routeErr, fellBack := service.HandleSubscriptionRouteFailure(c, relayInfo, retryParam, newAPIError, helper.ResponseContentStarted(c))
+		if fellBack {
+			continue
+		}
+		if routeErr != newAPIError {
+			newAPIError = routeErr
+			relayInfo.LastError = routeErr
+			break
+		}
 		if decision.Action != "retry" {
 			break
 		}
@@ -533,7 +542,7 @@ func executeTaskSubmissionWith(
 
 	retryParam := &service.RetryParam{
 		Ctx:         c,
-		TokenGroup:  relayInfo.TokenGroup,
+		TokenGroup:  service.RelayRetryGroup(relayInfo),
 		ModelName:   relayInfo.OriginModelName,
 		RequestPath: c.Request.URL.Path,
 		Retry:       common.GetPointer(0),

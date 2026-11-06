@@ -45,6 +45,14 @@ const (
 	// and for adaptors that build official endpoints themselves.
 	ContextKeyUpstreamRequestOrigin ContextKey = "upstream_request_origin"
 
+	// ContextKeySubscriptionRoute holds the *relaycommon.SubscriptionRoute the
+	// distributor records when it steers a request to a binding's dedicated
+	// group.
+	ContextKeySubscriptionRoute ContextKey = "subscription_route"
+	// ContextKeyUpstreamRateLimitHeaders holds the usage-limit headers of the
+	// last upstream answer of a subscription OAuth channel (http.Header).
+	ContextKeyUpstreamRateLimitHeaders ContextKey = "upstream_rate_limit_headers"
+
 	ContextKeyAutoGroup           ContextKey = "auto_group"
 	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"
 	ContextKeyAutoGroupRetryIndex ContextKey = "auto_group_retry_index"

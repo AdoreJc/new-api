@@ -80,6 +80,29 @@ type TokenCountMeta struct {
 	estimatePromptTokens int
 }
 
+// SubscriptionRoute records that a request was steered to the dedicated group
+// of the user's subscription binding. While it is not FellBack, the request is
+// billed to that subscription only and every attempt stays in Group. When the
+// bound account hits its usage limit and the plan allows it, the request moves
+// back to OriginalGroup (the group it would have used without the binding),
+// FellBack is set and the wallet pays from then on.
+type SubscriptionRoute struct {
+	SubscriptionId int
+	ChannelId      int
+	Group          string
+	OriginalGroup  string
+	FellBack       bool
+	// LimitWindow is the usage window of the bound account that triggered the
+	// fallback ("5h", "7d", "7d_oi" or "" when unknown).
+	LimitWindow string
+}
+
+// Active reports whether the request is still served and billed by the
+// binding.
+func (r *SubscriptionRoute) Active() bool {
+	return r != nil && !r.FellBack
+}
+
 type RelayInfo struct {
 	TokenId           int
 	TokenKey          string
@@ -163,6 +186,10 @@ type RelayInfo struct {
 	RuntimeHeadersOverride                map[string]any
 	UseRuntimeHeadersOverride             bool
 	ParamOverrideAudit                    []string
+
+	// SubscriptionRoute is set when the distributor steered the request to the
+	// dedicated group of the user's subscription binding; nil otherwise.
+	SubscriptionRoute *SubscriptionRoute
 
 	PriceData hosttypes.PriceData
 
@@ -615,6 +642,7 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 	}
 	reasoningEffort := reasoningEffortFromRequest(request)
 	originModelName := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
+	subscriptionRoute, _ := common.GetContextKeyType[*SubscriptionRoute](c, constant.ContextKeySubscriptionRoute)
 	info := &RelayInfo{
 		Request:         request,
 		ReasoningEffort: reasoningEffort,
@@ -632,6 +660,8 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		TokenKey:       common.GetContextKeyString(c, constant.ContextKeyTokenKey),
 		TokenUnlimited: common.GetContextKeyBool(c, constant.ContextKeyTokenUnlimited),
 		TokenGroup:     tokenGroup,
+
+		SubscriptionRoute: subscriptionRoute,
 
 		isFirstResponse: true,
 		RelayMode:       relayconstant.Path2RelayMode(c.Request.URL.Path),

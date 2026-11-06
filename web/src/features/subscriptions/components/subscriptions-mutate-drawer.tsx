@@ -568,6 +568,33 @@ export function SubscriptionsMutateDrawer({
                     </FormItem>
                   )}
                 />
+
+                <FormField
+                  control={form.control}
+                  name='fallback_to_shared_pool_on_limit'
+                  render={({ field }) => (
+                    <FormItem className={sideDrawerSwitchItemClassName()}>
+                      <div className='flex flex-col gap-0.5'>
+                        <FormLabel className='!mt-0'>
+                          {t(
+                            'Fall back to the shared pool when the account is limited'
+                          )}
+                        </FormLabel>
+                        <FormDescription className='text-xs'>
+                          {t(
+                            'When the bound subscription account hits its usage limit, serve the request from the shared pool and charge the wallet balance. Off: the request fails with the reset time.'
+                          )}
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
               </div>
             </SideDrawerSection>
 

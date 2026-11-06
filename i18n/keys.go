@@ -53,6 +53,15 @@ const (
 	MsgRelayRetryGetChannelFailed        = "relay.retry_get_channel_failed"
 	MsgRelayRetryNoAvailableChannel      = "relay.retry_no_available_channel"
 	MsgRelayAccessTokenUnsupported       = "relay.access_token_unsupported"
+
+	MsgQuotaBoundSubscriptionInsufficient          = "quota.bound_subscription_insufficient"
+	MsgRelaySubscriptionAccountLimited             = "relay.subscription_account_limited"
+	MsgRelaySubscriptionAccountLimitedNoReset      = "relay.subscription_account_limited_no_reset"
+	MsgRelaySubscriptionAccountLimitedGenericReset = "relay.subscription_account_limited_generic_reset"
+	MsgRelaySubscriptionAccountLimitedGeneric      = "relay.subscription_account_limited_generic"
+	MsgRelaySubscriptionWindow5h                   = "relay.subscription_window_5h"
+	MsgRelaySubscriptionWindow7d                   = "relay.subscription_window_7d"
+	MsgRelaySubscriptionWindow7dOi                 = "relay.subscription_window_7d_oi"
 )
 
 // Emails and the name of the token created at registration, in the
