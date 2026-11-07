@@ -19,10 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 import { describe, expect, test } from 'vitest'
 
 import {
+  CHANNEL_TYPE_CLAUDE_OAUTH,
   CHANNEL_TYPE_OPTIONS,
   CHANNEL_TYPE_TASK_PLUGIN,
   channelTypeOptionsForTaskPluginBind,
 } from '../../constants'
+import { getChannelTypeConfig } from '../channel-type-config'
+import { getChannelTypeIcon } from '../channel-utils'
 
 describe('channel type options for task plugin bind', () => {
   test('hides the task plugin type when the caller cannot bind', () => {
@@ -40,5 +43,23 @@ describe('channel type options for task plugin bind', () => {
     expect(
       options.some((option) => option.value === CHANNEL_TYPE_TASK_PLUGIN)
     ).toBe(true)
+  })
+})
+
+describe('Claude Subscription (OAuth) channel type icon', () => {
+  test('uses the Claude icon instead of the OpenAI fallback', () => {
+    expect(getChannelTypeIcon(CHANNEL_TYPE_CLAUDE_OAUTH)).toBe('Claude')
+    expect(getChannelTypeIcon(CHANNEL_TYPE_CLAUDE_OAUTH)).toBe(
+      getChannelTypeIcon(14)
+    )
+  })
+
+  test('shares the Anthropic channel config icon', () => {
+    expect(getChannelTypeConfig(CHANNEL_TYPE_CLAUDE_OAUTH).icon).toBe(
+      getChannelTypeConfig(14).icon
+    )
+    expect(getChannelTypeConfig(CHANNEL_TYPE_CLAUDE_OAUTH).name).toBe(
+      'Claude Subscription (OAuth)'
+    )
   })
 })

@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   CHANNEL_TYPES,
+  CHANNEL_TYPE_CLAUDE_OAUTH,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
 } from '../constants'
@@ -102,6 +103,11 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       key: 'Format: sk-ant-...',
       models: 'claude-3-opus,claude-3-sonnet,claude-3-haiku',
     },
+  },
+  [CHANNEL_TYPE_CLAUDE_OAUTH]: {
+    id: CHANNEL_TYPE_CLAUDE_OAUTH,
+    name: CHANNEL_TYPES[CHANNEL_TYPE_CLAUDE_OAUTH],
+    icon: 'anthropic',
   },
   24: {
     id: 24,
