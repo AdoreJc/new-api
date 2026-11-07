@@ -60,6 +60,7 @@ export function getChannelTypeIcon(type: number): string {
 
     // Anthropic
     14: 'Claude', // Anthropic
+    64: 'Claude', // Claude Subscription (OAuth)
 
     // Google family
     24: 'Gemini', // Gemini
