@@ -104,6 +104,14 @@ func runCodexCredentialAutoRefreshOnce() {
 			if err != nil {
 				continue
 			}
+			// A stashed key is written back by the refresh call below even
+			// when it is not near expiry.
+			stashed, hasStash := StashedOAuthChannelKey(ch.Id, oauthKey.RefreshToken)
+			if hasStash {
+				if renewed, err := parseCodexOAuthKey(stashed); err == nil {
+					oauthKey = renewed
+				}
+			}
 
 			refreshToken := strings.TrimSpace(oauthKey.RefreshToken)
 			if refreshToken == "" {
@@ -112,12 +120,12 @@ func runCodexCredentialAutoRefreshOnce() {
 
 			expiredAtRaw := strings.TrimSpace(oauthKey.Expired)
 			expiredAt, err := time.Parse(time.RFC3339, expiredAtRaw)
-			if err == nil && !expiredAt.IsZero() && expiredAt.Sub(now) > codexCredentialRefreshThreshold {
+			if !hasStash && err == nil && !expiredAt.IsZero() && expiredAt.Sub(now) > codexCredentialRefreshThreshold {
 				continue
 			}
 
 			refreshCtx, cancel := context.WithTimeout(ctx, codexCredentialRefreshTimeout)
-			newKey, _, err := RefreshCodexChannelCredential(refreshCtx, ch.Id, CodexCredentialRefreshOptions{ResetCaches: false})
+			newKey, _, err := RefreshCodexChannelCredential(refreshCtx, ch.Id, CodexCredentialRefreshOptions{Threshold: codexCredentialRefreshThreshold})
 			cancel()
 			if err != nil {
 				logger.LogWarn(ctx, common.LogText("codex credential auto-refresh: channel_id=%d name=%s refresh failed: %v", ch.Id, ch.Name, err))

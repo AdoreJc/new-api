@@ -36,7 +36,7 @@ func RefreshCodexOAuthTokenWithProxy(ctx context.Context, refreshToken string, p
 	if err != nil {
 		return nil, err
 	}
-	return refreshCodexOAuthToken(ctx, client, codexOAuthTokenURL, codexOAuthClientID, refreshToken)
+	return refreshCodexOAuthToken(ctx, client, CodexOAuthTokenURL, codexOAuthClientID, refreshToken)
 }
 
 func refreshCodexOAuthToken(
@@ -181,8 +181,8 @@ const (
 	codexOAuthOriginator   = "codex_cli_rs"
 )
 
-// CodexOAuthTokenURL is a variable so tests can point the code exchange at an
-// httptest server.
+// CodexOAuthTokenURL is a variable so tests can point the code exchange and
+// the token refresh at an httptest server.
 var CodexOAuthTokenURL = codexOAuthTokenURL
 
 type CodexOAuthAuthorizationFlow struct {
