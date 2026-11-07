@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -24,57 +23,51 @@ type ClaudeCredentialRefreshOptions struct {
 	Leeway time.Duration
 }
 
-// claudeRefreshLocks serialises refreshes per channel so concurrent relay
-// requests never send the same refresh token twice. Each entry is a one-slot
-// channel so waiting can honour the caller's context.
-var claudeRefreshLocks sync.Map
-
-func acquireClaudeRefreshLock(ctx context.Context, channelID int) (func(), error) {
-	entry, _ := claudeRefreshLocks.LoadOrStore(channelID, make(chan struct{}, 1))
-	slot := entry.(chan struct{})
-	select {
-	case slot <- struct{}{}:
-		return func() { <-slot }, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
-
-func loadClaudeOAuthChannel(channelID int) (*model.Channel, *ClaudeOAuthKey, error) {
-	ch, err := model.GetChannelById(channelID, true)
+// loadClaudeOAuthChannel reads the channel and its key. A stashed renewed key
+// replaces a stored key that still carries the rotated-out refresh token,
+// which fromStash reports.
+func loadClaudeOAuthChannel(channelID int) (ch *model.Channel, key *ClaudeOAuthKey, fromStash bool, err error) {
+	ch, err = model.GetChannelById(channelID, true)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	if ch == nil {
-		return nil, nil, fmt.Errorf("channel not found")
+		return nil, nil, false, fmt.Errorf("channel not found")
 	}
 	if ch.Type != constant.ChannelTypeClaudeOAuth {
-		return nil, nil, fmt.Errorf("channel type is not Claude Subscription (OAuth)")
+		return nil, nil, false, fmt.Errorf("channel type is not Claude Subscription (OAuth)")
 	}
 	if ch.ChannelInfo.IsMultiKey {
-		return nil, nil, fmt.Errorf("multi-key channel is not supported")
+		return nil, nil, false, fmt.Errorf("multi-key channel is not supported")
 	}
-	key, err := ParseClaudeOAuthKey(ch.Key)
+	key, err = ParseClaudeOAuthKey(ch.Key)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
-	return ch, key, nil
+	if stashed, ok := resolveStashedChannelKey(ch.Id, key.RefreshToken); ok {
+		if renewed, err := ParseClaudeOAuthKey(stashed); err == nil {
+			ch.Key = stashed
+			return ch, renewed, true, nil
+		}
+	}
+	return ch, key, false, nil
 }
 
 // RefreshClaudeChannelCredential renews the stored token set with the refresh
-// token and writes the new key back to the channel. The stored key is re-read
-// under the per-channel lock, so a caller that queued behind another refresh
-// gets the renewed key without a second token request unless opts.Force is
-// set. A permanent OAuth error (IsPermanentClaudeOAuthError) means the
+// token and writes the new key back to the channel, stashing it in memory
+// when the write keeps failing (see persistRenewedChannelKey). The stored key
+// is re-read under the per-channel lock, so a caller that queued behind
+// another refresh gets the renewed key without a second token request unless
+// opts.Force is set. A permanent OAuth error (IsPermanentClaudeOAuthError) means the
 // credential must be re-authorized.
 func RefreshClaudeChannelCredential(ctx context.Context, channelID int, opts ClaudeCredentialRefreshOptions) (*ClaudeOAuthKey, *model.Channel, error) {
-	release, err := acquireClaudeRefreshLock(ctx, channelID)
+	release, err := acquireChannelCredentialLock(ctx, channelID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("claude oauth channel: waiting for the credential lock: %w", err)
 	}
 	defer release()
 
-	ch, key, err := loadClaudeOAuthChannel(channelID)
+	ch, key, fromStash, err := loadClaudeOAuthChannel(channelID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -84,6 +77,9 @@ func RefreshClaudeChannelCredential(ctx context.Context, channelID int, opts Cla
 			leeway = claudeOAuthRequestLeeway
 		}
 		if !claudeOAuthKeyNeedsRefresh(key, time.Now(), leeway) {
+			if fromStash {
+				writeBackStashedChannelKey(ctx, ch.Id)
+			}
 			return key, ch, nil
 		}
 	}
@@ -128,9 +124,10 @@ func RefreshClaudeChannelCredential(ctx context.Context, channelID int, opts Cla
 	if err != nil {
 		return nil, ch, err
 	}
-	if err := model.DB.Model(&model.Channel{}).Where("id = ?", ch.Id).Update("key", string(encoded)).Error; err != nil {
-		return nil, ch, err
-	}
+	// The old refresh token is dead now, so a failed write must not drop the
+	// renewed key; it is stashed and still returned.
+	persistRenewedChannelKey(ctx, ch.Id, key.RefreshToken, refreshed.RefreshToken, string(encoded))
+	ch.Key = string(encoded)
 	if opts.ResetCaches {
 		model.InitChannelCache()
 	}
@@ -152,11 +149,18 @@ func claudeOAuthKeyNeedsRefresh(key *ClaudeOAuthKey, now time.Time, leeway time.
 
 // EnsureClaudeChannelAccessToken returns a key whose access token stays valid
 // for at least claudeOAuthRequestLeeway, refreshing and persisting it first
-// when needed. When the refresh fails but the current token is still valid,
-// the current key is returned so the request can proceed.
+// when needed. A key renewed earlier but not yet stored replaces a stale key
+// that carries the rotated-out refresh token. When the refresh fails but the
+// current token is still valid, the current key is returned so the request
+// can proceed.
 func EnsureClaudeChannelAccessToken(ctx context.Context, channelID int, key *ClaudeOAuthKey) (*ClaudeOAuthKey, error) {
 	if key == nil {
 		return nil, fmt.Errorf("claude oauth channel: empty oauth key")
+	}
+	if stashed, ok := StashedOAuthChannelKey(channelID, key.RefreshToken); ok {
+		if renewed, err := ParseClaudeOAuthKey(stashed); err == nil {
+			key = renewed
+		}
 	}
 	now := time.Now()
 	expiresAt := key.ExpiresAtTime()

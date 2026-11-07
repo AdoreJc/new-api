@@ -3,6 +3,8 @@ package controller
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/claude_oauth"
+	"github.com/QuantumNous/new-api/relay/channel/codex"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
@@ -1148,4 +1151,182 @@ func TestGetClaudeChannelUsageBackfillsFableWindowFromSampledHeaders(t *testing.
 	assert.Equal(t, now.Add(2*time.Hour).UTC().Format(time.RFC3339), fable["resets_at"])
 	assert.Equal(t, now.Add(-time.Minute).UTC().Format(time.RFC3339), fable["sampled_at"])
 	assert.Nil(t, envelope.Data["seven_day_sonnet"], "a null window stays as upstream sent it")
+}
+
+// failChannelKeyWrites makes the next n channel key writes fail with
+// SQLITE_BUSY before they reach the database. It returns the remaining
+// failure count, which the test can reset to stop failing, and the number of
+// key writes attempted.
+func failChannelKeyWrites(t *testing.T, n int32) (remaining *atomic.Int32, attempts *atomic.Int32) {
+	t.Helper()
+	remaining, attempts = &atomic.Int32{}, &atomic.Int32{}
+	remaining.Store(n)
+	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register("test:busy_channel_key", func(tx *gorm.DB) {
+		values, ok := tx.Statement.Dest.(map[string]any)
+		if !ok || tx.Statement.Table != "channels" {
+			return
+		}
+		if _, writesKey := values["key"]; !writesKey {
+			return
+		}
+		attempts.Add(1)
+		if remaining.Add(-1) >= 0 {
+			_ = tx.AddError(errors.New("database is locked (5) (SQLITE_BUSY)"))
+		}
+	}))
+	return remaining, attempts
+}
+
+// rotatingClaudeTokenHandler answers every refresh with at-N/rt-N, N being the
+// call number plus one, and records the refresh tokens it was sent.
+func rotatingClaudeTokenHandler(t *testing.T, expiresIn *atomic.Int32, sent *[]string, mu *sync.Mutex) http.HandlerFunc {
+	var calls atomic.Int32
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		raw, _ := io.ReadAll(r.Body)
+		assert.NoError(t, common.Unmarshal(raw, &body))
+		mu.Lock()
+		*sent = append(*sent, body["refresh_token"])
+		mu.Unlock()
+		n := calls.Add(1) + 1
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"access_token":"at-%d","token_type":"Bearer","expires_in":%d,"refresh_token":"rt-%d"}`, n, expiresIn.Load(), n)
+	}
+}
+
+func TestClaudeOAuthRenewedKeyWriteRetriesBusyDatabase(t *testing.T) {
+	var expiresIn atomic.Int32
+	expiresIn.Store(28800)
+	var sent []string
+	var mu sync.Mutex
+	server, tokenCalls := newClaudeOAuthTaskFixture(t, rotatingClaudeTokenHandler(t, &expiresIn, &sent, &mu))
+	channel := newClaudeOAuthTaskChannel(t, server.URL, "rt-1", 10*time.Minute)
+	_, attempts := failChannelKeyWrites(t, 1)
+
+	_, refreshed := service.RunClaudeCredentialAutoRefreshOnce()
+	assert.Equal(t, 1, refreshed)
+	assert.Equal(t, int32(1), tokenCalls.Load(), "a write retry never repeats the token request")
+	assert.Equal(t, int32(2), attempts.Load())
+	stored := storedClaudeOAuthKey(t, channel.Id)
+	assert.Equal(t, "at-2", stored.AccessToken)
+	assert.Equal(t, "rt-2", stored.RefreshToken)
+}
+
+func TestClaudeOAuthRenewedKeyIsStashedWhileWritesFail(t *testing.T) {
+	t.Run("stashed key is used by the task and the request path until it is stored", func(t *testing.T) {
+		var expiresIn atomic.Int32
+		expiresIn.Store(60) // inside both leeways, so every caller refreshes again
+		var sent []string
+		var mu sync.Mutex
+		server, tokenCalls := newClaudeOAuthTaskFixture(t, rotatingClaudeTokenHandler(t, &expiresIn, &sent, &mu))
+		channel := newClaudeOAuthTaskChannel(t, server.URL, "rt-1", 10*time.Minute)
+		cachedKey, err := service.ParseClaudeOAuthKey(channel.Key)
+		require.NoError(t, err)
+		failures, _ := failChannelKeyWrites(t, 1<<30)
+
+		_, refreshed := service.RunClaudeCredentialAutoRefreshOnce()
+		assert.Equal(t, 1, refreshed, "the renewed key is usable even though the write failed")
+		assert.Equal(t, "rt-1", storedClaudeOAuthKey(t, channel.Id).RefreshToken)
+
+		// The relay holds the cached key with the rotated-out rt-1.
+		key, err := service.EnsureClaudeChannelAccessToken(context.Background(), channel.Id, cachedKey)
+		require.NoError(t, err)
+		assert.Equal(t, "at-3", key.AccessToken)
+
+		service.RunClaudeCredentialAutoRefreshOnce()
+		assert.Equal(t, []string{"rt-1", "rt-2", "rt-3"}, sent, "a rotated-out refresh token is never sent again")
+		assert.Equal(t, common.ChannelStatusEnabled, channelStatus(t, channel.Id))
+
+		// The database recovers: the next tick stores the stashed key without
+		// another token request, and the stash is dropped.
+		expiresIn.Store(28800)
+		key, err = service.EnsureClaudeChannelAccessToken(context.Background(), channel.Id, cachedKey)
+		require.NoError(t, err)
+		assert.Equal(t, "at-5", key.AccessToken)
+		failures.Store(0)
+		service.RunClaudeCredentialAutoRefreshOnce()
+		assert.Equal(t, int32(4), tokenCalls.Load())
+		stored := storedClaudeOAuthKey(t, channel.Id)
+		assert.Equal(t, "at-5", stored.AccessToken)
+		assert.Equal(t, "rt-5", stored.RefreshToken)
+		_, stashed := service.StashedOAuthChannelKey(channel.Id, "rt-1")
+		assert.False(t, stashed)
+	})
+
+	t.Run("a rejected stashed refresh token still disables the channel", func(t *testing.T) {
+		var calls atomic.Int32
+		server, _ := newClaudeOAuthTaskFixture(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if calls.Add(1) == 1 {
+				_, _ = w.Write([]byte(`{"access_token":"at-stash","token_type":"Bearer","expires_in":60,"refresh_token":"rt-stash"}`))
+				return
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+		})
+		channel := newClaudeOAuthTaskChannel(t, server.URL, "rt-before-stash", 10*time.Minute)
+		failures, _ := failChannelKeyWrites(t, 1<<30)
+
+		service.RunClaudeCredentialAutoRefreshOnce()
+		assert.Equal(t, common.ChannelStatusEnabled, channelStatus(t, channel.Id))
+		failures.Store(0)
+		service.RunClaudeCredentialAutoRefreshOnce()
+		assert.Equal(t, common.ChannelStatusAutoDisabled, channelStatus(t, channel.Id))
+	})
+}
+
+func TestCodexRenewedKeyIsStashedWhileWritesFail(t *testing.T) {
+	setupClaudeOAuthChannelDB(t)
+	var sent []string
+	var expiresIn atomic.Int32
+	expiresIn.Store(3600)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.NoError(t, r.ParseForm())
+		sent = append(sent, r.PostForm.Get("refresh_token"))
+		n := len(sent) + 1
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"access_token":"at-%d","refresh_token":"rt-%d","expires_in":%d}`, n, n, expiresIn.Load())
+	}))
+	defer server.Close()
+	original := service.CodexOAuthTokenURL
+	service.CodexOAuthTokenURL = server.URL + "/oauth/token"
+	t.Cleanup(func() { service.CodexOAuthTokenURL = original })
+
+	encoded, err := common.Marshal(service.CodexOAuthKey{AccessToken: "at-1", RefreshToken: "rt-1", AccountID: "acct-1"})
+	require.NoError(t, err)
+	channel := &model.Channel{Type: constant.ChannelTypeCodex, Key: string(encoded), Name: "codex-test", Status: common.ChannelStatusEnabled}
+	require.NoError(t, model.DB.Create(channel).Error)
+	storedRefreshToken := func() string {
+		var stored model.Channel
+		require.NoError(t, model.DB.First(&stored, "id = ?", channel.Id).Error)
+		key, err := codex.ParseOAuthKey(stored.Key)
+		require.NoError(t, err)
+		return key.RefreshToken
+	}
+	failures, _ := failChannelKeyWrites(t, 1<<30)
+
+	key, _, err := service.RefreshCodexChannelCredential(context.Background(), channel.Id, service.CodexCredentialRefreshOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "rt-2", key.RefreshToken)
+	assert.Equal(t, "rt-1", storedRefreshToken())
+	stashed, ok := service.StashedOAuthChannelKey(channel.Id, "rt-1")
+	require.True(t, ok, "the relay finds the renewed key for its cached rt-1 key")
+	assert.Contains(t, stashed, "at-2")
+
+	expiresIn.Store(10 * 24 * 3600)
+	key, _, err = service.RefreshCodexChannelCredential(context.Background(), channel.Id, service.CodexCredentialRefreshOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "rt-3", key.RefreshToken)
+	assert.Equal(t, []string{"rt-1", "rt-2"}, sent, "a rotated-out refresh token is never sent again")
+
+	// Once the database recovers, a refresh that is not due stores the stash
+	// without a token request.
+	failures.Store(0)
+	key, _, err = service.RefreshCodexChannelCredential(context.Background(), channel.Id, service.CodexCredentialRefreshOptions{Threshold: 24 * time.Hour})
+	require.NoError(t, err)
+	assert.Equal(t, "rt-3", key.RefreshToken)
+	assert.Len(t, sent, 2)
+	assert.Equal(t, "rt-3", storedRefreshToken())
+	_, ok = service.StashedOAuthChannelKey(channel.Id, "rt-1")
+	assert.False(t, ok)
 }

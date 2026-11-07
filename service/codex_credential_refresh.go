@@ -14,6 +14,11 @@ import (
 
 type CodexCredentialRefreshOptions struct {
 	ResetCaches bool
+	// Threshold, when positive, skips the token request while the stored key
+	// expires later than Threshold from now; the background task uses it so
+	// a caller queued behind another refresh reuses the renewed key. Zero
+	// always refreshes.
+	Threshold time.Duration
 }
 
 type CodexOAuthKey struct {
@@ -39,7 +44,18 @@ func parseCodexOAuthKey(raw string) (*CodexOAuthKey, error) {
 	return &key, nil
 }
 
+// RefreshCodexChannelCredential renews the channel's token set and writes it
+// back, stashing the renewed key in memory when the write keeps failing (see
+// persistRenewedChannelKey). Refreshes of one channel are serialised, and a
+// stashed key replaces a stored key that carries the rotated-out refresh
+// token.
 func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts CodexCredentialRefreshOptions) (*CodexOAuthKey, *model.Channel, error) {
+	release, err := acquireChannelCredentialLock(ctx, channelID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("codex channel: waiting for the credential lock: %w", err)
+	}
+	defer release()
+
 	ch, err := model.GetChannelById(channelID, true)
 	if err != nil {
 		return nil, nil, err
@@ -55,6 +71,23 @@ func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts Code
 	if err != nil {
 		return nil, nil, err
 	}
+	fromStash := false
+	if stashed, ok := resolveStashedChannelKey(ch.Id, oauthKey.RefreshToken); ok {
+		if renewed, err := parseCodexOAuthKey(stashed); err == nil {
+			ch.Key = stashed
+			oauthKey = renewed
+			fromStash = true
+		}
+	}
+	if opts.Threshold > 0 {
+		expiredAt, err := time.Parse(time.RFC3339, strings.TrimSpace(oauthKey.Expired))
+		if err == nil && time.Until(expiredAt) > opts.Threshold {
+			if fromStash {
+				writeBackStashedChannelKey(ctx, ch.Id)
+			}
+			return oauthKey, ch, nil
+		}
+	}
 	if strings.TrimSpace(oauthKey.RefreshToken) == "" {
 		return nil, nil, fmt.Errorf("codex channel: refresh_token is required to refresh credential")
 	}
@@ -62,7 +95,8 @@ func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts Code
 	refreshCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	res, err := RefreshCodexOAuthTokenWithProxy(refreshCtx, oauthKey.RefreshToken, ch.GetSetting().Proxy)
+	usedRefreshToken := oauthKey.RefreshToken
+	res, err := RefreshCodexOAuthTokenWithProxy(refreshCtx, usedRefreshToken, ch.GetSetting().Proxy)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -91,9 +125,8 @@ func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts Code
 		return nil, nil, err
 	}
 
-	if err := model.DB.Model(&model.Channel{}).Where("id = ?", ch.Id).Update("key", string(encoded)).Error; err != nil {
-		return nil, nil, err
-	}
+	persistRenewedChannelKey(ctx, ch.Id, usedRefreshToken, oauthKey.RefreshToken, string(encoded))
+	ch.Key = string(encoded)
 
 	if opts.ResetCaches {
 		model.InitChannelCache()

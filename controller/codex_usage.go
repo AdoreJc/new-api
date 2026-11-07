@@ -115,6 +115,11 @@ func codexChannelWhamFetch(c *gin.Context, ch *model.Channel, fetch codexWhamFet
 		common.ApiErrorT(c, "Failed to parse credentials. Please check the channel configuration")
 		return 0, nil, false
 	}
+	if stashed, ok := service.StashedOAuthChannelKey(ch.Id, oauthKey.RefreshToken); ok {
+		if renewed, err := codex.ParseOAuthKey(stashed); err == nil {
+			oauthKey = renewed
+		}
+	}
 	accessToken := strings.TrimSpace(oauthKey.AccessToken)
 	accountID := strings.TrimSpace(oauthKey.AccountID)
 	if accessToken == "" {
@@ -147,25 +152,13 @@ func codexChannelWhamFetch(c *gin.Context, ch *model.Channel, fetch codexWhamFet
 		refreshCtx, refreshCancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 		defer refreshCancel()
 
-		res, refreshErr := service.RefreshCodexOAuthTokenWithProxy(refreshCtx, oauthKey.RefreshToken, setting.Proxy)
-		if refreshErr == nil {
-			oauthKey.AccessToken = res.AccessToken
-			oauthKey.RefreshToken = res.RefreshToken
-			oauthKey.LastRefresh = time.Now().Format(time.RFC3339)
-			oauthKey.Expired = res.ExpiresAt.Format(time.RFC3339)
-			if strings.TrimSpace(oauthKey.Type) == "" {
-				oauthKey.Type = "codex"
-			}
-
-			encoded, encErr := common.Marshal(oauthKey)
-			if encErr == nil {
-				_ = model.DB.Model(&model.Channel{}).Where("id = ?", ch.Id).Update("key", string(encoded)).Error
-				model.InitChannelCache()
-			}
-
+		refreshedKey, _, refreshErr := service.RefreshCodexChannelCredential(refreshCtx, ch.Id, service.CodexCredentialRefreshOptions{ResetCaches: true})
+		if refreshErr != nil {
+			common.SysError(common.LogText("%s: token refresh after upstream %d failed: %s", logPrefix, statusCode, refreshErr.Error()))
+		} else {
 			ctx2, cancel2 := context.WithTimeout(c.Request.Context(), 15*time.Second)
 			defer cancel2()
-			statusCode, body, err = fetch(ctx2, client, ch.GetBaseURL(), oauthKey.AccessToken, accountID)
+			statusCode, body, err = fetch(ctx2, client, ch.GetBaseURL(), refreshedKey.AccessToken, accountID)
 			if err != nil {
 				common.SysError(common.LogText("%s after refresh: %s", logPrefix, err.Error()))
 				common.ApiErrorT(c, userMessage)

@@ -175,6 +175,13 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	if err != nil {
 		return err
 	}
+	// A renewed key whose database write failed replaces the cached key that
+	// still carries the rotated-out refresh token.
+	if stashed, ok := service.StashedOAuthChannelKey(info.ChannelId, oauthKey.RefreshToken); ok {
+		if renewed, err := ParseOAuthKey(stashed); err == nil {
+			oauthKey = renewed
+		}
+	}
 
 	accessToken := strings.TrimSpace(oauthKey.AccessToken)
 	accountID := strings.TrimSpace(oauthKey.AccountID)

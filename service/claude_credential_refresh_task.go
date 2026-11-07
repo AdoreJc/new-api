@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,11 +34,6 @@ var (
 	// retried.
 	claudeRejectedRefreshTokens sync.Map
 )
-
-func refreshTokenFingerprint(refreshToken string) string {
-	sum := sha256.Sum256([]byte(refreshToken))
-	return hex.EncodeToString(sum[:])
-}
 
 // StartClaudeCredentialAutoRefreshTask renews Claude Subscription (OAuth)
 // channel tokens on the master node before they expire, mirroring the Codex
@@ -108,10 +101,21 @@ func RunClaudeCredentialAutoRefreshOnce() (scanned int, refreshed int) {
 			scanned++
 
 			key, err := ParseClaudeOAuthKey(ch.Key)
-			if err != nil || strings.TrimSpace(key.RefreshToken) == "" {
+			if err != nil {
 				continue
 			}
-			if !claudeOAuthKeyNeedsRefresh(key, now, claudeOAuthRefreshLeeway) {
+			// A stashed key is written back by the refresh call below even
+			// when it is not near expiry.
+			stashed, hasStash := StashedOAuthChannelKey(ch.Id, key.RefreshToken)
+			if hasStash {
+				if renewed, err := ParseClaudeOAuthKey(stashed); err == nil {
+					key = renewed
+				}
+			}
+			if strings.TrimSpace(key.RefreshToken) == "" {
+				continue
+			}
+			if !hasStash && !claudeOAuthKeyNeedsRefresh(key, now, claudeOAuthRefreshLeeway) {
 				continue
 			}
 			fingerprint := refreshTokenFingerprint(key.RefreshToken)
@@ -157,7 +161,7 @@ func RunClaudeCredentialAutoRefreshOnce() (scanned int, refreshed int) {
 // an admin may have rotated or re-authorized the credential meanwhile; that
 // channel stays enabled.
 func disableClaudeChannelWithRejectedRefreshToken(ch *model.Channel, rejectedFingerprint string) {
-	_, stored, err := loadClaudeOAuthChannel(ch.Id)
+	_, stored, _, err := loadClaudeOAuthChannel(ch.Id)
 	if err != nil || refreshTokenFingerprint(stored.RefreshToken) != rejectedFingerprint {
 		return
 	}
