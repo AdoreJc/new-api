@@ -180,7 +180,11 @@ function getSortPrice(
       (entry) => entry.field === field && entry.unit === 'token'
     )?.value
   }
-  if (!isTokenBasedModel(model) || isUnconfiguredTaskUsageModel(model)) {
+  if (
+    !isTokenBasedModel(model) ||
+    isUnconfiguredTaskUsageModel(model) ||
+    model.price_not_configured
+  ) {
     return undefined
   }
   return calculateTokenPrice(model, kind, 1)

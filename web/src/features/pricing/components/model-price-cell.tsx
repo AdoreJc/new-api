@@ -182,6 +182,7 @@ export function ModelPriceCell(props: {
     }
     const tokenBased = isTokenBasedModel(props.model)
     if (
+      props.model.price_not_configured ||
       !Number.isFinite(
         tokenBased ? props.model.model_ratio : props.model.model_price
       )
