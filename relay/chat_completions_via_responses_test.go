@@ -306,8 +306,10 @@ data: {"type":"response.completed","response":{"id":"resp_codex","object":"respo
 
 // newCodexStreamOnlyUpstream behaves like chatgpt.com/backend-api/codex: it
 // rejects requests that do not stream and answers the others with a stream
-// whose terminal event carries no output, as the Codex backend does.
-func newCodexStreamOnlyUpstream(t *testing.T) (*httptest.Server, <-chan map[string]any) {
+// whose terminal event carries no output, as the Codex backend does. The
+// stream goes out with contentType; an empty one sends no Content-Type at all,
+// which the ChatGPT backend can do.
+func newCodexStreamOnlyUpstream(t *testing.T, contentType string) (*httptest.Server, <-chan map[string]any) {
 	t.Helper()
 	received := make(chan map[string]any, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -323,7 +325,12 @@ func newCodexStreamOnlyUpstream(t *testing.T) (*httptest.Server, <-chan map[stri
 			_, _ = w.Write([]byte(`{"detail":"Stream must be set to true"}`))
 			return
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
+		if contentType == "" {
+			// A nil value stops net/http from sniffing a type for the body.
+			w.Header()["Content-Type"] = nil
+		} else {
+			w.Header().Set("Content-Type", contentType)
+		}
 		_, _ = w.Write([]byte(codexStreamOnlySSE))
 	}))
 	t.Cleanup(server.Close)
@@ -358,99 +365,109 @@ func TestShouldChatCompletionsUseResponsesRoutesCodexWithoutPolicy(t *testing.T)
 	assert.False(t, service.ShouldChatCompletionsUseResponses(1, constant.ChannelTypeOpenAI, "gpt-5"))
 }
 
+// codexUpstreamContentTypes are the Content-Type values the Codex streams are
+// answered with; the body is a stream whatever the header says.
+var codexUpstreamContentTypes = []string{"text/event-stream", "text/event-stream; charset=utf-8", "application/json", ""}
+
 func TestTextRequestViaResponsesCodexStreamsUpstream(t *testing.T) {
-	for _, clientStream := range []bool{false, true} {
-		t.Run(fmt.Sprintf("client stream %v", clientStream), func(t *testing.T) {
-			server, received := newCodexStreamOnlyUpstream(t)
-			c, recorder := newCodexRelayContext(t, "/v1/chat/completions", server.URL)
-			request := &dto.GeneralOpenAIRequest{
-				Model:    "gpt-5-codex",
-				Messages: []dto.Message{{Role: "user", Content: "hello"}},
-				Stream:   lo.ToPtr(clientStream),
-			}
-			info := relaycommon.GenRelayInfoOpenAI(c, request)
-			info.InitChannelMeta(c)
-			info.ShouldIncludeUsage = true
-			adaptor := &codex.Adaptor{}
-			adaptor.Init(info)
+	for _, contentType := range codexUpstreamContentTypes {
+		for _, clientStream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("content type %q client stream %v", contentType, clientStream), func(t *testing.T) {
+				server, received := newCodexStreamOnlyUpstream(t, contentType)
+				c, recorder := newCodexRelayContext(t, "/v1/chat/completions", server.URL)
+				request := &dto.GeneralOpenAIRequest{
+					Model:    "gpt-5-codex",
+					Messages: []dto.Message{{Role: "user", Content: "hello"}},
+					Stream:   lo.ToPtr(clientStream),
+					TopP:     lo.ToPtr(0.9),
+				}
+				info := relaycommon.GenRelayInfoOpenAI(c, request)
+				info.InitChannelMeta(c)
+				info.ShouldIncludeUsage = true
+				adaptor := &codex.Adaptor{}
+				adaptor.Init(info)
 
-			usage, apiErr := textRequestViaResponses(c, info, adaptor, request)
+				usage, apiErr := textRequestViaResponses(c, info, adaptor, request)
 
-			require.Nil(t, apiErr)
-			upstream := <-received
-			assert.Equal(t, true, upstream["stream"])
-			// The request policy counts the attempt as successful only on a
-			// normal end without stream errors.
-			assert.True(t, info.StreamStatus.IsNormalEnd())
-			assert.False(t, info.StreamStatus.HasErrors())
-			assert.NotContains(t, upstream, "messages")
-			require.NotNil(t, usage)
-			assert.Equal(t, 11, usage.PromptTokens)
-			assert.Equal(t, 7, usage.CompletionTokens)
-			assert.Equal(t, 3, usage.PromptTokensDetails.CachedTokens)
+				require.Nil(t, apiErr)
+				upstream := <-received
+				assert.Equal(t, true, upstream["stream"])
+				// The request policy counts the attempt as successful only on a
+				// normal end without stream errors.
+				assert.True(t, info.StreamStatus.IsNormalEnd())
+				assert.False(t, info.StreamStatus.HasErrors())
+				assert.NotContains(t, upstream, "messages")
+				assert.NotContains(t, upstream, "top_p", "the Codex backend rejects top_p")
+				require.NotNil(t, usage)
+				assert.Equal(t, 11, usage.PromptTokens)
+				assert.Equal(t, 7, usage.CompletionTokens)
+				assert.Equal(t, 3, usage.PromptTokensDetails.CachedTokens)
 
-			if clientStream {
-				assert.Contains(t, recorder.Header().Get("Content-Type"), "text/event-stream")
-				assert.Contains(t, recorder.Body.String(), `"content":"Hello"`)
-				assert.Contains(t, recorder.Body.String(), "data: [DONE]")
-				return
-			}
-			assert.Equal(t, "application/json", recorder.Header().Get("Content-Type"))
-			var response dto.OpenAITextResponse
-			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
-			require.Len(t, response.Choices, 1)
-			assert.Equal(t, "Hello world", response.Choices[0].Message.StringContent())
-			assert.Equal(t, 18, response.Usage.TotalTokens)
-		})
+				if clientStream {
+					assert.Contains(t, recorder.Header().Get("Content-Type"), "text/event-stream")
+					assert.Contains(t, recorder.Body.String(), `"content":"Hello"`)
+					assert.Contains(t, recorder.Body.String(), "data: [DONE]")
+					return
+				}
+				assert.Equal(t, "application/json", recorder.Header().Get("Content-Type"))
+				var response dto.OpenAITextResponse
+				require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+				require.Len(t, response.Choices, 1)
+				assert.Equal(t, "Hello world", response.Choices[0].Message.StringContent())
+				assert.Equal(t, 18, response.Usage.TotalTokens)
+			})
+		}
 	}
 }
 
 func TestCodexResponsesRequestAlwaysStreamsUpstream(t *testing.T) {
-	for _, clientStream := range []bool{false, true} {
-		t.Run(fmt.Sprintf("client stream %v", clientStream), func(t *testing.T) {
-			server, received := newCodexStreamOnlyUpstream(t)
-			c, recorder := newCodexRelayContext(t, "/v1/responses", server.URL)
-			request := &dto.OpenAIResponsesRequest{Model: "gpt-5-codex", Input: []byte(`"hello"`), Stream: lo.ToPtr(clientStream)}
-			info := relaycommon.GenRelayInfoResponses(c, request)
-			adaptor, body, closer, apiErr := PrepareResponsesRequest(c, info, request)
-			require.Nil(t, apiErr)
-			defer closer.Close()
+	for _, contentType := range codexUpstreamContentTypes {
+		for _, clientStream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("content type %q client stream %v", contentType, clientStream), func(t *testing.T) {
+				server, received := newCodexStreamOnlyUpstream(t, contentType)
+				c, recorder := newCodexRelayContext(t, "/v1/responses", server.URL)
+				request := &dto.OpenAIResponsesRequest{Model: "gpt-5-codex", Input: []byte(`"hello"`), Stream: lo.ToPtr(clientStream)}
+				info := relaycommon.GenRelayInfoResponses(c, request)
+				adaptor, body, closer, apiErr := PrepareResponsesRequest(c, info, request)
+				require.Nil(t, apiErr)
+				defer closer.Close()
 
-			response, err := adaptor.DoRequest(c, info, body)
-			require.NoError(t, err)
-			httpResponse, ok := response.(*http.Response)
-			require.True(t, ok)
-			require.Equal(t, http.StatusOK, httpResponse.StatusCode)
-			usage, apiErr := adaptor.DoResponse(c, httpResponse, info)
+				response, err := adaptor.DoRequest(c, info, body)
+				require.NoError(t, err)
+				httpResponse, ok := response.(*http.Response)
+				require.True(t, ok)
+				require.Equal(t, http.StatusOK, httpResponse.StatusCode)
+				usage, apiErr := adaptor.DoResponse(c, httpResponse, info)
 
-			require.Nil(t, apiErr)
-			upstream := <-received
-			assert.Equal(t, true, upstream["stream"])
-			// The request policy counts the attempt as successful only on a
-			// normal end without stream errors.
-			assert.True(t, info.StreamStatus.IsNormalEnd())
-			assert.False(t, info.StreamStatus.HasErrors())
-			require.IsType(t, &dto.Usage{}, usage)
-			assert.Equal(t, 11, usage.(*dto.Usage).PromptTokens)
-			assert.Equal(t, 7, usage.(*dto.Usage).CompletionTokens)
-			assert.Equal(t, 3, usage.(*dto.Usage).PromptTokensDetails.CachedTokens)
+				require.Nil(t, apiErr)
+				upstream := <-received
+				assert.Equal(t, true, upstream["stream"])
+				// The request policy counts the attempt as successful only on a
+				// normal end without stream errors.
+				assert.True(t, info.StreamStatus.IsNormalEnd())
+				assert.False(t, info.StreamStatus.HasErrors())
+				require.IsType(t, &dto.Usage{}, usage)
+				assert.Equal(t, 11, usage.(*dto.Usage).PromptTokens)
+				assert.Equal(t, 7, usage.(*dto.Usage).CompletionTokens)
+				assert.Equal(t, 3, usage.(*dto.Usage).PromptTokensDetails.CachedTokens)
 
-			if clientStream {
-				assert.Contains(t, recorder.Header().Get("Content-Type"), "text/event-stream")
-				assert.Contains(t, recorder.Body.String(), `"type":"response.output_text.delta"`)
-				assert.Contains(t, recorder.Body.String(), `"type":"response.completed"`)
-				return
-			}
-			assert.Equal(t, "application/json", recorder.Header().Get("Content-Type"))
-			var aggregated dto.OpenAIResponsesResponse
-			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &aggregated))
-			assert.Equal(t, "resp_codex", aggregated.ID)
-			require.Len(t, aggregated.Output, 1)
-			require.Len(t, aggregated.Output[0].Content, 1)
-			assert.Equal(t, "Hello world", aggregated.Output[0].Content[0].Text)
-			require.NotNil(t, aggregated.Usage)
-			assert.Equal(t, 18, aggregated.Usage.TotalTokens)
-		})
+				if clientStream {
+					assert.Contains(t, recorder.Header().Get("Content-Type"), "text/event-stream")
+					assert.Contains(t, recorder.Body.String(), `"type":"response.output_text.delta"`)
+					assert.Contains(t, recorder.Body.String(), `"type":"response.completed"`)
+					return
+				}
+				assert.Equal(t, "application/json", recorder.Header().Get("Content-Type"))
+				var aggregated dto.OpenAIResponsesResponse
+				require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &aggregated))
+				assert.Equal(t, "resp_codex", aggregated.ID)
+				require.Len(t, aggregated.Output, 1)
+				require.Len(t, aggregated.Output[0].Content, 1)
+				assert.Equal(t, "Hello world", aggregated.Output[0].Content[0].Text)
+				require.NotNil(t, aggregated.Usage)
+				assert.Equal(t, 18, aggregated.Usage.TotalTokens)
+			})
+		}
 	}
 }
 
