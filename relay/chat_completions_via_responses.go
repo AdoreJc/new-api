@@ -165,7 +165,10 @@ func relayResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, adaptor 
 
 	httpResp = resp.(*http.Response)
 	clientStream := info.IsStream
-	upstreamStream := isResponsesEventStreamContentType(httpResp.Header.Get("Content-Type"))
+	// Codex requests always stream, and the ChatGPT backend may answer without
+	// an event-stream Content-Type, so its body is always read as a stream.
+	upstreamStream := info.ChannelType == constant.ChannelTypeCodex ||
+		isResponsesEventStreamContentType(httpResp.Header.Get("Content-Type"))
 	info.IsStream = clientStream || upstreamStream
 	if httpResp.StatusCode != http.StatusOK {
 		newApiErr := service.RelayErrorHandler(c.Request.Context(), httpResp, false)

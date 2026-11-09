@@ -111,6 +111,18 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	request.Temperature = nil
 	request.FrequencyPenalty = nil
 	request.PresencePenalty = nil
+	// The ChatGPT backend answers "Unsupported parameter" for these; chat
+	// requests converted to Responses carry them (Playground sends top_p).
+	request.TopP = nil
+	request.TopLogProbs = nil
+	request.StreamOptions = nil
+	request.Truncation = nil
+	request.User = nil
+	request.Metadata = nil
+	request.SafetyIdentifier = nil
+	request.PromptCacheRetention = nil
+	request.ChatTemplateKwargs = nil
+	request.Stop = nil
 	return request, nil
 }
 
@@ -138,10 +150,10 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		if info.IsStream {
 			return openai.OaiResponsesStreamHandler(c, info, resp)
 		}
-		if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
-			return openai.OaiResponsesStreamToNonStreamHandler(c, info, resp)
-		}
-		return openai.OaiResponsesHandler(c, info, resp)
+		// The upstream always streams (see ConvertOpenAIResponsesRequest) and
+		// may omit the event-stream Content-Type, so the body is aggregated
+		// whatever the header says.
+		return openai.OaiResponsesStreamToNonStreamHandler(c, info, resp)
 	default:
 		return nil, types.NewError(errors.New("codex channel: endpoint not supported"), types.ErrorCodeInvalidRequest)
 	}
