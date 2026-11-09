@@ -352,23 +352,23 @@ describe('model cards', () => {
     }
     const { rerender } = render(<ModelCard {...props} tokenUnit='M' />)
     expect(screen.getByText('Input').parentElement).toHaveTextContent(
-      /\$3\s*\/\s*1M/
+      /¥18\s*\/\s*1M/
     )
     expect(screen.getByText('Output').parentElement).toHaveTextContent(
-      /\$9\s*\/\s*1M/
+      /¥54\s*\/\s*1M/
     )
     expect(screen.getByText('Cached').parentElement).toHaveTextContent(
-      /\$0\s*\/\s*1M/
+      /¥0\s*\/\s*1M/
     )
     rerender(<ModelCard {...props} tokenUnit='K' />)
     expect(screen.getByText('Input').parentElement).toHaveTextContent(
-      /\$0.003\s*\/\s*1K/
+      /¥0.018\s*\/\s*1K/
     )
     expect(screen.getByText('Output').parentElement).toHaveTextContent(
-      /\$0.009\s*\/\s*1K/
+      /¥0.054\s*\/\s*1K/
     )
     expect(screen.getByText('Cached').parentElement).toHaveTextContent(
-      /\$0\s*\/\s*1K/
+      /¥0\s*\/\s*1K/
     )
   })
 
@@ -384,7 +384,7 @@ describe('model cards', () => {
         tokenUnit='K'
       />
     )
-    expect(screen.getByText(/\$0.6/)).toHaveTextContent(/\$0.6\s*\/\s*request/)
+    expect(screen.getByText(/¥3.6/)).toHaveTextContent(/¥3.6\s*\/\s*request/)
     expect(screen.queryByText(/1K|1M/)).not.toBeInTheDocument()
     expect(screen.getAllByText('Per Request')).toHaveLength(1)
     expect(screen.queryByText('Per-request')).not.toBeInTheDocument()
@@ -406,10 +406,10 @@ describe('model cards', () => {
       />
     )
     expect(screen.getByText('Input').parentElement).toHaveTextContent(
-      /\$0.0045\s*\/\s*1K/
+      /¥0.027\s*\/\s*1K/
     )
     expect(screen.getByText('Output').parentElement).toHaveTextContent(
-      /\$0.0225\s*\/\s*1K/
+      /¥0.135\s*\/\s*1K/
     )
   })
 

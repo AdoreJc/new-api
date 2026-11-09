@@ -32,6 +32,7 @@ import {
 } from '../lib/dynamic-price'
 import { isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
+import { RECHARGE_PRICE_CURRENCY_LABEL } from '../lib/recharge-price'
 import { taskUsageUnitLabel } from '../lib/task-price-display'
 import type { PricingModel, TokenUnit } from '../types'
 
@@ -50,9 +51,13 @@ export function ModelPriceCell(props: {
 }) {
   const { t, i18n } = useTranslation()
   const currency = useSystemConfigStore((state) => state.config.currency)
-  const currencyLabel =
-    currency.quotaDisplayType === 'TOKENS' ? 'USD' : getCurrencyLabel()
   const options = props.options ?? {}
+  let currencyLabel = getCurrencyLabel()
+  if (options.showRechargePrice) {
+    currencyLabel = RECHARGE_PRICE_CURRENCY_LABEL
+  } else if (currency.quotaDisplayType === 'TOKENS') {
+    currencyLabel = 'USD'
+  }
   const tokenUnit = options.tokenUnit ?? DEFAULT_TOKEN_UNIT
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
   const billingTime = useBillingTime(props.model.billing_expr)

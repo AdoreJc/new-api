@@ -296,6 +296,10 @@ export function DynamicPricingBreakdown({
   const currency = useSystemConfigStore((s) => s.config.currency)
 
   const { symbol, rate } = useMemo(() => {
+    // Recharge prices are RMB paid per USD of credit, whatever the display type.
+    if (taskPriceOptions?.showRechargePrice) {
+      return { symbol: '¥', rate: taskPriceOptions.priceRate ?? 1 }
+    }
     if (currency.quotaDisplayType === 'CNY') {
       return { symbol: '¥', rate: currency.usdExchangeRate || 7 }
     }
@@ -306,7 +310,11 @@ export function DynamicPricingBreakdown({
       }
     }
     return { symbol: '$', rate: 1 }
-  }, [currency])
+  }, [
+    currency,
+    taskPriceOptions?.showRechargePrice,
+    taskPriceOptions?.priceRate,
+  ])
 
   const { tiers, ruleGroups } = useMemo(() => {
     const split = splitBillingExprAndRequestRules(expr)

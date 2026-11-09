@@ -672,6 +672,8 @@ const PAYMENT_GATEWAY_DISPLAY_META: DisplayMeta = {
  * @remarks
  * Use this function for:
  * - Epay online payment amounts (subscription purchase, Epay pay button)
+ * - Model marketplace recharge prices (USD price × `Price`), via
+ *   formatModelPriceFromUSD in features/pricing
  *
  * DO NOT use for:
  * - Credit/top-up amounts shown in the display currency → use formatLocalCurrencyAmount()
