@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"sync"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 )
 
@@ -42,6 +43,17 @@ func ShouldChatCompletionsUseResponsesPolicy(policy model_setting.ChatCompletion
 		return false
 	}
 	return matchAnyModelPattern(policy.ModelPatterns, model)
+}
+
+// ShouldChatCompletionsUseResponses reports whether a chat-style request is
+// relayed through the Responses bridge. The Codex backend serves only the
+// Responses API, so its channels always take the bridge; other channels follow
+// the global policy.
+func ShouldChatCompletionsUseResponses(channelID int, channelType int, model string) bool {
+	if channelType == constant.ChannelTypeCodex {
+		return true
+	}
+	return ShouldChatCompletionsUseResponsesGlobal(channelID, channelType, model)
 }
 
 func ShouldChatCompletionsUseResponsesGlobal(channelID int, channelType int, model string) bool {

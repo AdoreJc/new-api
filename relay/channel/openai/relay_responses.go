@@ -1,9 +1,12 @@
 package openai
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -101,6 +104,88 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, info.StreamStatus)
 	info.StreamStatus.RequireTerminal()
+	return accumulator.Finish(), nil
+}
+
+// OaiResponsesStreamToNonStreamHandler answers a non-streaming Responses
+// client from an upstream that only streams (Codex). Usage comes from the same
+// accumulator as the streaming path. The client receives the terminal event's
+// response; when that response carries no output, the items of the
+// output_item.done events are filled in.
+func OaiResponsesStreamToNonStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	if resp == nil || resp.Body == nil {
+		return nil, types.NewOpenAIError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+	}
+	defer service.CloseResponseBodyGracefully(resp)
+
+	info.StreamStatus = relaycommon.NewStreamStatus()
+	info.StreamStatus.RequireTerminal()
+	accumulator := service.NewResponsesUsageAccumulator(info)
+	var finalResponse []byte
+	var outputItems [][]byte
+
+	scanner := helper.NewStreamScanner(resp.Body)
+	scanner.Split(bufio.ScanLines)
+	for finalResponse == nil && scanner.Scan() {
+		data, ok := strings.CutPrefix(scanner.Text(), "data:")
+		if !ok {
+			continue
+		}
+		data = strings.TrimSpace(data)
+		if data == "[DONE]" {
+			break
+		}
+		if data == "" {
+			continue
+		}
+		var event dto.ResponsesStreamResponse
+		if err := common.UnmarshalJsonStr(data, &event); err != nil {
+			logger.LogError(c, common.LogText("failed to unmarshal buffered responses stream event: %s", err.Error()))
+			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		}
+		raw := []byte(data)
+		accumulator.Observe(&event, raw)
+		switch event.Type {
+		case dto.ResponsesOutputTypeItemDone:
+			if item := ojson.GetBytes(raw, "item"); item.IsObject() {
+				outputItems = append(outputItems, []byte(item.Raw))
+			}
+		case "response.completed", "response.done", "response.incomplete":
+			if response := ojson.GetBytes(raw, "response"); response.IsObject() {
+				finalResponse = []byte(response.Raw)
+			}
+		case "response.failed", "response.error":
+			if event.Response != nil {
+				if oaiErr := event.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
+					return nil, types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
+				}
+			}
+			return nil, types.NewOpenAIError(fmt.Errorf("responses stream error: %s", event.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+		case "error":
+			// A bare error event carries only code and message; the code also
+			// serves as the type so usage-limit codes stay recognisable.
+			return nil, types.WithOpenAIError(types.OpenAIError{Message: event.Message, Type: event.Code, Param: event.Param, Code: event.Code}, http.StatusInternalServerError)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+	}
+	if finalResponse == nil {
+		return nil, types.NewOpenAIError(fmt.Errorf("responses stream ended without a terminal event"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+	}
+	info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+	if !ojson.GetBytes(finalResponse, "output.0").Exists() && len(outputItems) > 0 {
+		output := append([]byte{'['}, bytes.Join(outputItems, []byte{','})...)
+		output = append(output, ']')
+		patched, err := ojson.SetRawBytes(finalResponse, "output", output)
+		if err != nil {
+			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		}
+		finalResponse = patched
+	}
+
+	resp.Header.Set("Content-Type", "application/json")
+	service.IOCopyBytesGracefully(c, resp, finalResponse)
 	return accumulator.Finish(), nil
 }
 

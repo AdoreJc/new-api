@@ -666,7 +666,9 @@ func validateTestResponseBody(respBody []byte, isStream bool) error {
 	return nil
 }
 
-func shouldUseStreamForAutomaticChannelTest(channel *model.Channel) bool {
+// channelTestRequiresStream reports channels whose upstream rejects
+// non-streaming requests, so both manual and automatic tests stream.
+func channelTestRequiresStream(channel *model.Channel) bool {
 	return channel != nil && channel.Type == constant.ChannelTypeCodex
 }
 
@@ -865,6 +867,7 @@ func TestChannel(c *gin.Context) {
 	testModel := c.Query("model")
 	endpointType := c.Query("endpoint_type")
 	isStream, _ := strconv.ParseBool(c.Query("stream"))
+	isStream = isStream || channelTestRequiresStream(channel)
 	testUserID, err := resolveChannelTestUserID(c)
 	if err != nil {
 		common.ApiError(c, err)
@@ -922,7 +925,7 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 	summary := channelTestSummary{}
 	isChannelEnabled := channel.Status == common.ChannelStatusEnabled
 	tik := time.Now()
-	result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel))
+	result := testChannel(ctx, channel, testUserID, "", "", channelTestRequiresStream(channel))
 	milliseconds := time.Since(tik).Milliseconds()
 	if ctx.Err() != nil {
 		return summary

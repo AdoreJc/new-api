@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/samber/lo"
 )
 
 type Adaptor struct {
@@ -100,6 +101,9 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	if isCompact {
 		return request, nil
 	}
+	// The Codex backend rejects non-streaming requests ("Stream must be set to
+	// true"); DoResponse aggregates the stream for non-streaming clients.
+	request.Stream = lo.ToPtr(true)
 	// codex: store must be false
 	request.Store = json.RawMessage("false")
 	// rm max_output_tokens
@@ -133,6 +137,9 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	case relayconstant.RelayModeResponses:
 		if info.IsStream {
 			return openai.OaiResponsesStreamHandler(c, info, resp)
+		}
+		if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
+			return openai.OaiResponsesStreamToNonStreamHandler(c, info, resp)
 		}
 		return openai.OaiResponsesHandler(c, info, resp)
 	default:
@@ -207,7 +214,8 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	// Clients may omit it or include parameters like `application/json; charset=utf-8`,
 	// which can be rejected by the upstream. Force the exact media type.
 	req.Set("Content-Type", "application/json")
-	if info.IsStream {
+	// Responses requests are always streamed upstream (see ConvertOpenAIResponsesRequest).
+	if info.IsStream || info.RelayMode == relayconstant.RelayModeResponses {
 		req.Set("Accept", "text/event-stream")
 	} else if req.Get("Accept") == "" {
 		req.Set("Accept", "application/json")
