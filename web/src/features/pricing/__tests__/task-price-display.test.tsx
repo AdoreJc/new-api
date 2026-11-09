@@ -503,8 +503,8 @@ it('uses the same recharge conversion and token unit in task condition prices', 
       }}
     />
   )
-  expect(screen.getAllByText('$5/1M token')).toHaveLength(2)
-  expect(screen.getAllByText('$3/1M token')).toHaveLength(2)
+  expect(screen.getAllByText('¥10/1M token')).toHaveLength(2)
+  expect(screen.getAllByText('¥6/1M token')).toHaveLength(2)
 })
 
 it('switches provider group prices, localized conditions and examples, and shows unconfigured providers', async () => {

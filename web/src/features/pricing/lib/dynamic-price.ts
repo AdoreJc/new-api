@@ -16,8 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { formatBillingCurrencyFromUSD } from '@/lib/currency'
-
 import { TOKEN_UNIT_DIVISORS } from '../constants'
 import type {
   BillingUsageSchema,
@@ -38,6 +36,7 @@ import {
 import { compileBillingExpression } from './billing-expression/parser'
 import { getDisplayGroupRatio } from './model-helpers'
 import { withPluginPricing } from './plugin-pricing'
+import { formatModelPriceFromUSD } from './recharge-price'
 import {
   evaluateTaskVisualConfig,
   getTaskNumberFields,
@@ -48,8 +47,10 @@ import { getTaskPricingDisplayTiers } from './task-matrix-display'
 export type DynamicPriceOptions = {
   tokenUnit: TokenUnit
   showCurrencySymbol?: boolean
+  /** Show recharge prices: USD × priceRate in RMB (¥), see formatModelPriceFromUSD. */
   showRechargePrice?: boolean
   priceRate?: number
+  /** Not used for recharge prices; kept so callers can pass pricing data as-is. */
   usdExchangeRate?: number
   groupRatioMultiplier?: number
   usageSchema?: BillingUsageSchema
@@ -188,34 +189,15 @@ export function getDynamicDisplayGroupRatio(
   return getDisplayGroupRatio(model, selectedGroup)
 }
 
-function applyRechargeRate(
-  price: number,
-  showWithRecharge: boolean,
-  priceRate: number,
-  usdExchangeRate: number
-): number {
-  if (!showWithRecharge) return price
-  return (price * priceRate) / usdExchangeRate
-}
-
 export function formatDynamicUnitPrice(
   valuePerMillionTokens: number,
   options: DynamicPriceOptions
 ): string {
   const groupRatio = options.groupRatioMultiplier ?? 1
-  const priceRate = options.priceRate ?? 1
-  const usdExchangeRate = options.usdExchangeRate ?? 1
   const priceUSD =
     (valuePerMillionTokens * groupRatio) /
     TOKEN_UNIT_DIVISORS[options.tokenUnit]
-  const displayPrice = applyRechargeRate(
-    priceUSD,
-    options.showRechargePrice ?? false,
-    priceRate,
-    usdExchangeRate
-  )
-
-  return formatBillingCurrencyFromUSD(displayPrice, {
+  return formatModelPriceFromUSD(priceUSD, options, {
     showSymbol: options.showCurrencySymbol ?? true,
     digitsLarge: 4,
     digitsSmall: 6,
@@ -228,17 +210,7 @@ export function formatTaskUsageUnitPrice(
   options: DynamicPriceOptions
 ): string {
   const groupRatio = options.groupRatioMultiplier ?? 1
-  const priceRate = options.priceRate ?? 1
-  const usdExchangeRate = options.usdExchangeRate ?? 1
-  const priceUSD = valuePerUnit * groupRatio
-  const displayPrice = applyRechargeRate(
-    priceUSD,
-    options.showRechargePrice ?? false,
-    priceRate,
-    usdExchangeRate
-  )
-
-  return formatBillingCurrencyFromUSD(displayPrice, {
+  return formatModelPriceFromUSD(valuePerUnit * groupRatio, options, {
     showSymbol: options.showCurrencySymbol ?? true,
     digitsLarge: 4,
     digitsSmall: 6,
