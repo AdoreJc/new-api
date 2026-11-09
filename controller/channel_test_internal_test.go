@@ -493,3 +493,63 @@ func TestTestAllChannelsRejectsExistingActiveTask(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), existing.TaskID)
 	require.Contains(t, recorder.Body.String(), "A channel test task is already running or queued")
 }
+
+// The Codex backend rejects non-streaming requests, so a manual test of a
+// Codex channel streams even when the dialog leaves streaming off.
+func TestTestChannelStreamsCodexManualTest(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	withSelfUseModeEnabled(t)
+	oldLogConsume, oldTimeout := common.LogConsumeEnabled, constant.StreamingTimeout
+	common.LogConsumeEnabled = true
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() {
+		common.LogConsumeEnabled = oldLogConsume
+		constant.StreamingTimeout = oldTimeout
+	})
+
+	var upstreamStream atomic.Value
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		require.NoError(t, common.DecodeJson(r.Body, &body))
+		upstreamStream.Store(body["stream"])
+		if body["stream"] != true {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"detail":"Stream must be set to true"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_1\",\"delta\":\"ok\"}\n\n" +
+			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"gpt-5-codex\",\"output\":[],\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n"))
+	}))
+	defer server.Close()
+	baseURL := server.URL
+	channel := &model.Channel{
+		Type:    constant.ChannelTypeCodex,
+		BaseURL: &baseURL,
+		Key:     `{"access_token":"fake-access-token","account_id":"acct-test"}`,
+		Name:    "codex-test",
+		Models:  "gpt-5-codex",
+		Status:  common.ChannelStatusEnabled,
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/channel/test/%d?model=gpt-5-codex&endpoint_type=openai-response&stream=false", channel.Id), nil)
+	c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(channel.Id)}}
+	c.Set("id", rootID)
+
+	TestChannel(c)
+
+	var envelope apiEnvelope
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &envelope))
+	assert.True(t, envelope.Success, envelope.Message)
+	assert.Equal(t, true, upstreamStream.Load())
+	var testLog model.Log
+	require.NoError(t, model.LOG_DB.Where("channel_id = ?", channel.Id).First(&testLog).Error)
+	assert.True(t, testLog.IsStream, "the manual test takes the streaming path like the automatic test")
+	assert.Equal(t, 5, testLog.PromptTokens)
+	assert.Equal(t, 1, testLog.CompletionTokens)
+}

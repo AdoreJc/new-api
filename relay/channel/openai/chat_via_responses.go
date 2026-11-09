@@ -124,6 +124,13 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 	if err := scanner.Err(); err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
+	// The request policy reads the end reason; without one the buffered
+	// request counts as an abnormal stream end.
+	endReason := relaycommon.StreamEndReasonDone
+	if finalResponse == nil {
+		endReason = relaycommon.StreamEndReasonEOF
+	}
+	info.StreamStatus.SetEndReason(endReason, nil)
 	if finalResponse == nil {
 		finalResponse = &dto.OpenAIResponsesResponse{
 			ID:        helper.GetResponseID(c),
@@ -143,6 +150,8 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 	}
 
+	// The body is JSON; the upstream's text/event-stream type must not reach the client.
+	resp.Header.Set("Content-Type", "application/json")
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 	return usage, nil
 }

@@ -2,22 +2,28 @@ package relay
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/relay/channel/codex"
 	openaichannel "github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -276,4 +282,204 @@ func TestApplySystemPromptIfNeededSkipsToolLoadingMessages(t *testing.T) {
 			assert.Equal(t, tt.wantOverride, overrideSet)
 		})
 	}
+}
+
+const codexStreamOnlySSE = `event: response.created
+data: {"type":"response.created","response":{"id":"resp_codex","object":"response","status":"in_progress","model":"gpt-5-codex","output":[]}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_1","role":"assistant","status":"in_progress","content":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_1","content_index":0,"delta":"Hello"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_1","content_index":0,"delta":" world"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Hello world","annotations":[]}]}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_codex","object":"response","status":"completed","model":"gpt-5-codex","output":[],"usage":{"input_tokens":11,"input_tokens_details":{"cached_tokens":3},"output_tokens":7,"output_tokens_details":{"reasoning_tokens":2},"total_tokens":18}}}
+
+`
+
+// newCodexStreamOnlyUpstream behaves like chatgpt.com/backend-api/codex: it
+// rejects requests that do not stream and answers the others with a stream
+// whose terminal event carries no output, as the Codex backend does.
+func newCodexStreamOnlyUpstream(t *testing.T) (*httptest.Server, <-chan map[string]any) {
+	t.Helper()
+	received := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := common.DecodeJson(r.Body, &body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		received <- body
+		if r.URL.Path != "/backend-api/codex/responses" || body["stream"] != true || r.Header.Get("Accept") != "text/event-stream" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"detail":"Stream must be set to true"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(codexStreamOnlySSE))
+	}))
+	t.Cleanup(server.Close)
+	return server, received
+}
+
+func newCodexRelayContext(t *testing.T, path string, baseURL string) (*gin.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, path, nil)
+	c.Request.Header.Set("Content-Type", "application/json")
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, "gpt-5-codex")
+	common.SetContextKey(c, constant.ContextKeyChannelId, 45)
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeCodex)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, baseURL)
+	common.SetContextKey(c, constant.ContextKeyChannelKey, `{"access_token":"fake-access-token","account_id":"acct-test"}`)
+	return c, recorder
+}
+
+func TestShouldChatCompletionsUseResponsesRoutesCodexWithoutPolicy(t *testing.T) {
+	settings := model_setting.GetGlobalSettings()
+	oldPolicy := settings.ChatCompletionsToResponsesPolicy
+	settings.ChatCompletionsToResponsesPolicy = model_setting.ChatCompletionsToResponsesPolicy{}
+	t.Cleanup(func() { settings.ChatCompletionsToResponsesPolicy = oldPolicy })
+
+	assert.True(t, service.ShouldChatCompletionsUseResponses(45, constant.ChannelTypeCodex, "gpt-5-codex"))
+	assert.False(t, service.ShouldChatCompletionsUseResponses(1, constant.ChannelTypeOpenAI, "gpt-5"))
+}
+
+func TestTextRequestViaResponsesCodexStreamsUpstream(t *testing.T) {
+	for _, clientStream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("client stream %v", clientStream), func(t *testing.T) {
+			server, received := newCodexStreamOnlyUpstream(t)
+			c, recorder := newCodexRelayContext(t, "/v1/chat/completions", server.URL)
+			request := &dto.GeneralOpenAIRequest{
+				Model:    "gpt-5-codex",
+				Messages: []dto.Message{{Role: "user", Content: "hello"}},
+				Stream:   lo.ToPtr(clientStream),
+			}
+			info := relaycommon.GenRelayInfoOpenAI(c, request)
+			info.InitChannelMeta(c)
+			info.ShouldIncludeUsage = true
+			adaptor := &codex.Adaptor{}
+			adaptor.Init(info)
+
+			usage, apiErr := textRequestViaResponses(c, info, adaptor, request)
+
+			require.Nil(t, apiErr)
+			upstream := <-received
+			assert.Equal(t, true, upstream["stream"])
+			// The request policy counts the attempt as successful only on a
+			// normal end without stream errors.
+			assert.True(t, info.StreamStatus.IsNormalEnd())
+			assert.False(t, info.StreamStatus.HasErrors())
+			assert.NotContains(t, upstream, "messages")
+			require.NotNil(t, usage)
+			assert.Equal(t, 11, usage.PromptTokens)
+			assert.Equal(t, 7, usage.CompletionTokens)
+			assert.Equal(t, 3, usage.PromptTokensDetails.CachedTokens)
+
+			if clientStream {
+				assert.Contains(t, recorder.Header().Get("Content-Type"), "text/event-stream")
+				assert.Contains(t, recorder.Body.String(), `"content":"Hello"`)
+				assert.Contains(t, recorder.Body.String(), "data: [DONE]")
+				return
+			}
+			assert.Equal(t, "application/json", recorder.Header().Get("Content-Type"))
+			var response dto.OpenAITextResponse
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+			require.Len(t, response.Choices, 1)
+			assert.Equal(t, "Hello world", response.Choices[0].Message.StringContent())
+			assert.Equal(t, 18, response.Usage.TotalTokens)
+		})
+	}
+}
+
+func TestCodexResponsesRequestAlwaysStreamsUpstream(t *testing.T) {
+	for _, clientStream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("client stream %v", clientStream), func(t *testing.T) {
+			server, received := newCodexStreamOnlyUpstream(t)
+			c, recorder := newCodexRelayContext(t, "/v1/responses", server.URL)
+			request := &dto.OpenAIResponsesRequest{Model: "gpt-5-codex", Input: []byte(`"hello"`), Stream: lo.ToPtr(clientStream)}
+			info := relaycommon.GenRelayInfoResponses(c, request)
+			adaptor, body, closer, apiErr := PrepareResponsesRequest(c, info, request)
+			require.Nil(t, apiErr)
+			defer closer.Close()
+
+			response, err := adaptor.DoRequest(c, info, body)
+			require.NoError(t, err)
+			httpResponse, ok := response.(*http.Response)
+			require.True(t, ok)
+			require.Equal(t, http.StatusOK, httpResponse.StatusCode)
+			usage, apiErr := adaptor.DoResponse(c, httpResponse, info)
+
+			require.Nil(t, apiErr)
+			upstream := <-received
+			assert.Equal(t, true, upstream["stream"])
+			// The request policy counts the attempt as successful only on a
+			// normal end without stream errors.
+			assert.True(t, info.StreamStatus.IsNormalEnd())
+			assert.False(t, info.StreamStatus.HasErrors())
+			require.IsType(t, &dto.Usage{}, usage)
+			assert.Equal(t, 11, usage.(*dto.Usage).PromptTokens)
+			assert.Equal(t, 7, usage.(*dto.Usage).CompletionTokens)
+			assert.Equal(t, 3, usage.(*dto.Usage).PromptTokensDetails.CachedTokens)
+
+			if clientStream {
+				assert.Contains(t, recorder.Header().Get("Content-Type"), "text/event-stream")
+				assert.Contains(t, recorder.Body.String(), `"type":"response.output_text.delta"`)
+				assert.Contains(t, recorder.Body.String(), `"type":"response.completed"`)
+				return
+			}
+			assert.Equal(t, "application/json", recorder.Header().Get("Content-Type"))
+			var aggregated dto.OpenAIResponsesResponse
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &aggregated))
+			assert.Equal(t, "resp_codex", aggregated.ID)
+			require.Len(t, aggregated.Output, 1)
+			require.Len(t, aggregated.Output[0].Content, 1)
+			assert.Equal(t, "Hello world", aggregated.Output[0].Content[0].Text)
+			require.NotNil(t, aggregated.Usage)
+			assert.Equal(t, 18, aggregated.Usage.TotalTokens)
+		})
+	}
+}
+
+// The subscription fallback reads the status, error type and limit headers of
+// a failed attempt; the bridge must keep all three for Codex channels.
+func TestTextRequestViaResponsesCodexKeepsUsageLimitDetectable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Codex-Primary-Used-Percent", "100")
+		w.Header().Set("X-Codex-Primary-Reset-After-Seconds", "3600")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached"}}`))
+	}))
+	defer server.Close()
+	c, _ := newCodexRelayContext(t, "/v1/chat/completions", server.URL)
+	request := &dto.GeneralOpenAIRequest{Model: "gpt-5-codex", Messages: []dto.Message{{Role: "user", Content: "hello"}}}
+	info := relaycommon.GenRelayInfoOpenAI(c, request)
+	info.InitChannelMeta(c)
+	adaptor := &codex.Adaptor{}
+	adaptor.Init(info)
+
+	_, apiErr := textRequestViaResponses(c, info, adaptor, request)
+
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusTooManyRequests, apiErr.StatusCode)
+	assert.Equal(t, "usage_limit_reached", apiErr.ToOpenAIError().Type)
+	headers, ok := common.GetContextKeyType[http.Header](c, constant.ContextKeyUpstreamRateLimitHeaders)
+	require.True(t, ok)
+	assert.Equal(t, "100", headers.Get("X-Codex-Primary-Used-Percent"))
+	_, limited := service.DetectSubscriptionAccountLimit(apiErr, headers, nil, time.Now())
+	assert.True(t, limited)
 }
