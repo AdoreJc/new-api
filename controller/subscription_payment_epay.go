@@ -40,16 +40,6 @@ func subscriptionEpayMoney(plan *model.SubscriptionPlan) decimal.Decimal {
 	return payMoneyFromUSD(decimal.NewFromFloat(plan.PriceAmount))
 }
 
-// epayCallbackMoneyMatches reports whether the amount in an Epay callback equals
-// the amount stored on the order (compared at two decimals).
-func epayCallbackMoneyMatches(orderMoney float64, callbackMoney string) bool {
-	paid, err := decimal.NewFromString(callbackMoney)
-	if err != nil {
-		return false
-	}
-	return paid.Round(2).Equal(decimal.NewFromFloat(orderMoney).Round(2))
-}
-
 func SubscriptionRequestEpay(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
@@ -164,7 +154,7 @@ func completeEpaySubscriptionOrder(ctx context.Context, verifyInfo *epay.VerifyR
 		logger.LogWarn(ctx, common.LogText("Epay subscription order payment gateway mismatch trade_no=%s callback_type=%s client_ip=%s", verifyInfo.ServiceTradeNo, verifyInfo.Type, clientIp))
 		return model.ErrPaymentMethodMismatch
 	}
-	if !epayCallbackMoneyMatches(order.Money, verifyInfo.Money) {
+	if !model.EpayCallbackMoneyMatches(order.Money, verifyInfo.Money) {
 		logger.LogWarn(ctx, common.LogText("Epay subscription callback money mismatch trade_no=%s order_money=%.2f callback_money=%q client_ip=%s", verifyInfo.ServiceTradeNo, order.Money, verifyInfo.Money, clientIp))
 		return ErrSubscriptionOrderMoneyMismatch
 	}
@@ -180,6 +170,12 @@ func completeEpaySubscriptionOrder(ctx context.Context, verifyInfo *epay.VerifyR
 }
 
 func SubscriptionEpayNotify(c *gin.Context) {
+	if !isEpayWebhookEnabled() {
+		logger.LogWarn(c.Request.Context(), common.LogText("Epay webhook rejected reason=webhook_disabled path=%q client_ip=%s", c.Request.URL.Path, c.ClientIP()))
+		_, _ = c.Writer.Write([]byte("fail"))
+		return
+	}
+
 	var params map[string]string
 
 	if c.Request.Method == "POST" {
@@ -232,6 +228,12 @@ func SubscriptionEpayNotify(c *gin.Context) {
 // SubscriptionEpayReturn handles browser return after payment.
 // It verifies the payload and completes the order, then redirects to console.
 func SubscriptionEpayReturn(c *gin.Context) {
+	if !isEpayWebhookEnabled() {
+		logger.LogWarn(c.Request.Context(), common.LogText("Epay webhook rejected reason=webhook_disabled path=%q client_ip=%s", c.Request.URL.Path, c.ClientIP()))
+		c.Redirect(http.StatusFound, paymentReturnPath("/wallet?pay=fail"))
+		return
+	}
+
 	var params map[string]string
 
 	if c.Request.Method == "POST" {

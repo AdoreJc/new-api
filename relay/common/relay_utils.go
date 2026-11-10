@@ -87,6 +87,7 @@ func isSensitiveURLQueryKey(key string) bool {
 		"passwd",
 		"signature",
 		"sig",
+		"sign", // Epay callbacks and returns carry their signature as ?sign=
 		"awsaccesskeyid",
 		"x-amz-credential",
 		"x-amz-security-token",

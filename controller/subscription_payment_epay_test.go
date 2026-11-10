@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -275,4 +276,145 @@ func TestSubscriptionEpayReturn_RedirectsToFailOnMoneyMismatch(t *testing.T) {
 	var stored model.SubscriptionOrder
 	require.NoError(t, model.DB.Where("trade_no = ?", testEpaySubscriptionNo).First(&stored).Error)
 	assert.Equal(t, common.TopUpStatusPending, stored.Status)
+}
+
+// captureServerLogs sends server log lines written during the test to a buffer.
+func captureServerLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var output bytes.Buffer
+	previousWriter, previousErrorWriter := gin.DefaultWriter, gin.DefaultErrorWriter
+	gin.DefaultWriter, gin.DefaultErrorWriter = &output, &output
+	t.Cleanup(func() { gin.DefaultWriter, gin.DefaultErrorWriter = previousWriter, previousErrorWriter })
+	return &output
+}
+
+func TestEpayNotify_CreditsOnlyTheAmountSentToGatewayAndLogsNoSign(t *testing.T) {
+	setupSubscriptionEpayTest(t, 7.3)
+	require.NoError(t, model.DB.Create(&model.User{Id: 1, Username: "epay-user", Group: "default", Status: common.UserStatusEnabled}).Error)
+	logs := captureServerLogs(t)
+
+	// The wallet order is created the way RequestEpay creates it: the stored
+	// money is the unrounded conversion (10 USD x 7.3333 = 73.333), and the
+	// gateway is sent it formatted to two decimals, 73.33.
+	operation_setting.Price = 7.3333
+	tradeNo := "USR1NOEPAYMONEYTEST"
+	require.NoError(t, (&model.TopUp{
+		UserId:          1,
+		Amount:          10,
+		Money:           getPayMoney(10, "default"),
+		TradeNo:         tradeNo,
+		PaymentMethod:   "alipay",
+		PaymentProvider: model.PaymentProviderEpay,
+		Status:          common.TopUpStatusPending,
+	}).Insert())
+	var signs []string
+
+	callback := func(money string) map[string]string {
+		signed, err := epay.GenerateParamsWithError(map[string]string{
+			"pid":          "1000",
+			"trade_no":     "EPAY20261110",
+			"out_trade_no": tradeNo,
+			"type":         "alipay",
+			"name":         "TUC10",
+			"money":        money,
+			"trade_status": epay.StatusTradeSuccess,
+		}, testEpayKey)
+		require.NoError(t, err)
+		signs = append(signs, signed["sign"])
+		return signed
+	}
+	userQuota := func() int {
+		var user model.User
+		require.NoError(t, model.DB.First(&user, 1).Error)
+		return user.Quota
+	}
+	orderStatus := func() string {
+		topUp := model.GetTopUpByTradeNo(tradeNo)
+		require.NotNil(t, topUp)
+		return topUp.Status
+	}
+
+	// Validly signed callbacks whose amount differs from the 73.33 sent to the
+	// gateway never credit the wallet and leave the order payable.
+	for _, money := range []string{"73.32", "73.34", "abc", ""} {
+		body := postEpayForm(t, EpayNotify, "/api/user/epay/notify", callback(money))
+		assert.Equal(t, "fail", body, "callback money %q", money)
+		assert.Zero(t, userQuota(), "callback money %q", money)
+		assert.Equal(t, common.TopUpStatusPending, orderStatus(), "callback money %q", money)
+	}
+	assert.Contains(t, logs.String(), "callback money mismatch")
+
+	// A callback with a forged signature is rejected without logging it.
+	forged := callback("73.33")
+	forged["sign"] = "0123456789abcdef0123456789abcdef"
+	signs = append(signs, forged["sign"])
+	assert.Equal(t, "fail", postEpayForm(t, EpayNotify, "/api/user/epay/notify", forged))
+	assert.Equal(t, common.TopUpStatusPending, orderStatus())
+
+	// The real amount credits once; a duplicate callback stays idempotent.
+	wantQuota := int(10 * common.QuotaPerUnit)
+	assert.Equal(t, "success", postEpayForm(t, EpayNotify, "/api/user/epay/notify", callback("73.33")))
+	assert.Equal(t, wantQuota, userQuota())
+	assert.Equal(t, common.TopUpStatusSuccess, orderStatus())
+	assert.Equal(t, "success", postEpayForm(t, EpayNotify, "/api/user/epay/notify", callback("73.33")))
+	assert.Equal(t, wantQuota, userQuota())
+
+	output := logs.String()
+	require.Contains(t, output, tradeNo)
+	for _, sign := range signs {
+		require.NotEmpty(t, sign)
+		assert.NotContains(t, output, sign)
+	}
+	assert.NotContains(t, output, "sign_type")
+}
+
+func TestSubscriptionEpayCallbacks_RejectedWhileEpayWebhookDisabled(t *testing.T) {
+	setupSubscriptionEpayTest(t, 7.3)
+	plan := createEpayTestPlan(t, 10)
+	order := &model.SubscriptionOrder{
+		UserId:          1,
+		PlanId:          plan.Id,
+		Money:           73,
+		TradeNo:         testEpaySubscriptionNo,
+		PaymentMethod:   "alipay",
+		PaymentProvider: model.PaymentProviderEpay,
+		Status:          common.TopUpStatusPending,
+	}
+	require.NoError(t, order.Insert())
+	orderStatus := func() string {
+		var stored model.SubscriptionOrder
+		require.NoError(t, model.DB.Where("trade_no = ?", testEpaySubscriptionNo).First(&stored).Error)
+		return stored.Status
+	}
+
+	logs := captureServerLogs(t)
+
+	// Withdrawing payment compliance disables Epay top-ups and their webhooks.
+	operation_setting.GetPaymentSetting().ComplianceConfirmed = false
+	require.False(t, isEpayWebhookEnabled())
+
+	body := postEpayForm(t, SubscriptionEpayNotify, "/api/subscription/epay/notify", signedEpayCallback(t, "73.00"))
+	assert.Equal(t, "fail", body)
+	assert.Equal(t, common.TopUpStatusPending, orderStatus())
+
+	form := url.Values{}
+	for key, value := range signedEpayCallback(t, "73.00") {
+		form.Set(key, value)
+	}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/subscription/epay/return?"+form.Encode(), nil)
+	SubscriptionEpayReturn(c)
+	assert.Equal(t, http.StatusFound, recorder.Code)
+	assert.Equal(t, "https://api.example.com/wallet?pay=fail", recorder.Header().Get("Location"))
+	assert.Equal(t, common.TopUpStatusPending, orderStatus())
+	// The rejected GET callback carried its signature in the query string.
+	assert.Contains(t, logs.String(), "reason=webhook_disabled")
+	assert.NotContains(t, logs.String(), form.Get("sign"))
+
+	// The same callback completes the order once the webhook is enabled again.
+	operation_setting.GetPaymentSetting().ComplianceConfirmed = true
+	body = postEpayForm(t, SubscriptionEpayNotify, "/api/subscription/epay/notify", signedEpayCallback(t, "73.00"))
+	assert.Equal(t, "success", body)
+	assert.Equal(t, common.TopUpStatusSuccess, orderStatus())
 }
