@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -237,4 +239,50 @@ func TestStatusReportsLocalizedOnlyLegalDocumentsAndFooter(t *testing.T) {
 	assert.Equal(t, true, data["user_agreement_enabled"])
 	assert.Equal(t, false, data["privacy_policy_enabled"], "a blank override does not enable the document")
 	assert.Equal(t, true, data["footer_i18n_enabled"])
+}
+
+// GetStatus must not take OptionMapRWMutex again while it already holds the
+// read lock: sync.RWMutex read locks are not reentrant, so a writer queued
+// between the two RLocks (any option save) would deadlock /api/status and
+// every option update. A writer saving options in a loop makes that window
+// hit almost immediately with nested locking.
+func TestGetStatusDoesNotDeadlockWithConcurrentOptionWriters(t *testing.T) {
+	setupLocalizedContentTest(t)
+	require.NoError(t, model.UpdateOption("site_content_i18n.footer", `{"en":"footer"}`))
+
+	stop := make(chan struct{})
+	var writer sync.WaitGroup
+	writer.Go(func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			common.OptionMapRWMutex.Lock()
+			common.OptionMapRWMutex.Unlock()
+		}
+	})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 500 {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+			GetStatus(ctx)
+		}
+	}()
+
+	select {
+	case <-done:
+		close(stop)
+		writer.Wait()
+	case <-time.After(10 * time.Second):
+		// Panic instead of t.Fatal: the deadlocked GetStatus still holds the
+		// read lock, so test cleanup (which saves options) would hang too. The
+		// panic's goroutine dump shows where GetStatus is stuck.
+		panic("GetStatus deadlocked against a queued option writer")
+	}
 }

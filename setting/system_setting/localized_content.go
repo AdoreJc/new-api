@@ -160,6 +160,8 @@ func contentLanguageCandidates(lang string) []string {
 // LocalizedSiteContent returns the non-blank override of field for lang (a
 // canonical tag from NormalizeContentLanguage), following
 // contentLanguageCandidates. ok is false when the default content applies.
+// It takes common.OptionMapRWMutex's read lock, so callers must not already
+// hold that lock (read locks are not reentrant).
 func LocalizedSiteContent(field SiteContentField, lang string) (content string, ok bool) {
 	if lang == "" {
 		return "", false
@@ -176,6 +178,7 @@ func LocalizedSiteContent(field SiteContentField, lang string) (content string, 
 }
 
 // HasLocalizedSiteContent reports whether field has any non-blank override.
+// Like LocalizedSiteContent, call it without holding common.OptionMapRWMutex.
 func HasLocalizedSiteContent(field SiteContentField) bool {
 	common.OptionMapRWMutex.RLock()
 	defer common.OptionMapRWMutex.RUnlock()

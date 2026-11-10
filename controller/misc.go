@@ -42,6 +42,12 @@ func GetStatus(c *gin.Context) {
 
 	cs := console_setting.GetConsoleSetting()
 	passkeySetting := system_setting.PasskeySettingsSnapshot()
+	// Read before taking OptionMapRWMutex: these helpers take its read lock
+	// themselves, and RWMutex read locks are not reentrant (a queued writer
+	// between the two RLocks would deadlock).
+	userAgreementTranslated := system_setting.HasLocalizedSiteContent(system_setting.SiteContentUserAgreement)
+	privacyPolicyTranslated := system_setting.HasLocalizedSiteContent(system_setting.SiteContentPrivacyPolicy)
+	footerTranslated := system_setting.HasLocalizedSiteContent(system_setting.SiteContentFooter)
 	common.OptionMapRWMutex.RLock()
 	defer common.OptionMapRWMutex.RUnlock()
 
@@ -120,9 +126,9 @@ func GetStatus(c *gin.Context) {
 		"passkey_user_verification":   passkeySetting.UserVerification,
 		"passkey_attachment":          passkeySetting.AttachmentPreference,
 		"setup":                       constant.Setup,
-		"user_agreement_enabled":      legalSetting.UserAgreement != "" || system_setting.HasLocalizedSiteContent(system_setting.SiteContentUserAgreement),
-		"privacy_policy_enabled":      legalSetting.PrivacyPolicy != "" || system_setting.HasLocalizedSiteContent(system_setting.SiteContentPrivacyPolicy),
-		"footer_i18n_enabled":         system_setting.HasLocalizedSiteContent(system_setting.SiteContentFooter),
+		"user_agreement_enabled":      legalSetting.UserAgreement != "" || userAgreementTranslated,
+		"privacy_policy_enabled":      legalSetting.PrivacyPolicy != "" || privacyPolicyTranslated,
+		"footer_i18n_enabled":         footerTranslated,
 		"checkin_enabled":             operation_setting.GetCheckinSetting().Enabled,
 		"log_export_enabled":          operation_setting.GetLogSetting().UserExportEnabled,
 		"log_max_range_days":          operation_setting.GetLogSetting().MaxRangeDays,
