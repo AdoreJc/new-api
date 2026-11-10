@@ -159,7 +159,9 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
     return map
   }, [groups])
 
-  if (metricsQuery.isLoading || performances.length === 0) {
+  // Per-group rows only cover groups the viewer can use; the summary also
+  // counts groups they cannot see (such as subscription dedicated groups).
+  if (metricsQuery.isLoading || (!summary && performances.length === 0)) {
     return (
       <div className='text-muted-foreground rounded-lg border p-6 text-center text-sm'>
         {t('Performance data is not yet available for this model.')}
@@ -201,63 +203,65 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
         />
       </div>
 
-      <section>
-        <SectionHeader
-          icon={HeartPulse}
-          title={t('Per-group performance')}
-          description={t('Average latency, TTFT, TPS, and success rate')}
-        />
-        <StaticDataTable
-          className='rounded-lg'
-          tableClassName='text-sm'
-          headerRowClassName={tableStyles.compactHeaderRow}
-          data={performances}
-          getRowKey={(perf) => perf.group}
-          columns={[
-            {
-              id: 'group',
-              header: t('Group'),
-              className: tableStyles.compactHeaderCell,
-              cellClassName: tableStyles.compactCell,
-              cell: (perf) => <GroupBadge group={perf.group} size='sm' />,
-            },
-            {
-              id: 'tps',
-              header: 'TPS',
-              className: tableStyles.compactHeaderCellRight,
-              cellClassName: tableStyles.compactNumericCell,
-              cell: (perf) => formatThroughput(perf.avg_tps),
-            },
-            {
-              id: 'ttft',
-              header: t('Average TTFT'),
-              className: tableStyles.compactHeaderCellRight,
-              cellClassName: tableStyles.compactNumericCell,
-              cell: (perf) => formatLatency(perf.avg_ttft_ms),
-            },
-            {
-              id: 'latency',
-              header: t('Average latency'),
-              className: tableStyles.compactHeaderCellRight,
-              cellClassName: tableStyles.compactMutedNumericCell,
-              cell: (perf) => formatLatency(perf.avg_latency_ms),
-            },
-            {
-              id: 'success',
-              header: t('Success rate'),
-              className: cn(tableStyles.compactHeaderCell, 'min-w-[180px]'),
-              cellClassName: tableStyles.compactCell,
-              cell: (perf) => (
-                <UptimeSparkline
-                  size='sm'
-                  series={uptimeByGroup[perf.group] ?? []}
-                  overallSuccessRate={perf.success_rate}
-                />
-              ),
-            },
-          ]}
-        />
-      </section>
+      {performances.length > 0 && (
+        <section>
+          <SectionHeader
+            icon={HeartPulse}
+            title={t('Per-group performance')}
+            description={t('Average latency, TTFT, TPS, and success rate')}
+          />
+          <StaticDataTable
+            className='rounded-lg'
+            tableClassName='text-sm'
+            headerRowClassName={tableStyles.compactHeaderRow}
+            data={performances}
+            getRowKey={(perf) => perf.group}
+            columns={[
+              {
+                id: 'group',
+                header: t('Group'),
+                className: tableStyles.compactHeaderCell,
+                cellClassName: tableStyles.compactCell,
+                cell: (perf) => <GroupBadge group={perf.group} size='sm' />,
+              },
+              {
+                id: 'tps',
+                header: 'TPS',
+                className: tableStyles.compactHeaderCellRight,
+                cellClassName: tableStyles.compactNumericCell,
+                cell: (perf) => formatThroughput(perf.avg_tps),
+              },
+              {
+                id: 'ttft',
+                header: t('Average TTFT'),
+                className: tableStyles.compactHeaderCellRight,
+                cellClassName: tableStyles.compactNumericCell,
+                cell: (perf) => formatLatency(perf.avg_ttft_ms),
+              },
+              {
+                id: 'latency',
+                header: t('Average latency'),
+                className: tableStyles.compactHeaderCellRight,
+                cellClassName: tableStyles.compactMutedNumericCell,
+                cell: (perf) => formatLatency(perf.avg_latency_ms),
+              },
+              {
+                id: 'success',
+                header: t('Success rate'),
+                className: cn(tableStyles.compactHeaderCell, 'min-w-[180px]'),
+                cellClassName: tableStyles.compactCell,
+                cell: (perf) => (
+                  <UptimeSparkline
+                    size='sm'
+                    series={uptimeByGroup[perf.group] ?? []}
+                    overallSuccessRate={perf.success_rate}
+                  />
+                ),
+              },
+            ]}
+          />
+        </section>
+      )}
 
       <section>
         <SectionHeader

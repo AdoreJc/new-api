@@ -188,6 +188,8 @@ export function usePricingColumns(
       header: t('Groups'),
       cell: ({ row }) => {
         const groups = row.original.enable_groups || []
+        // No usable group: leave the cell blank rather than showing a dash.
+        if (groups.length === 0) return null
         return (
           <BadgeListCell
             items={groups.map((group) => (

@@ -118,7 +118,7 @@ export function CachedPriceCell(props: {
     )
   }
 
-  if (isUnconfiguredTaskUsageModel(model)) {
+  if (isUnconfiguredTaskUsageModel(model) || model.price_not_configured) {
     return <span className='text-muted-foreground/30 text-xs'>—</span>
   }
 

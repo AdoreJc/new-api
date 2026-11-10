@@ -2,6 +2,7 @@ package controller
 
 import (
 	"net/http"
+	"slices"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -58,11 +59,20 @@ func GetPerfMetrics(c *gin.Context) {
 		}
 	}
 
+	// The model summary and series cover every active group, dedicated
+	// subscription groups included; per-group rows only name groups the viewer
+	// can use, and a group the viewer cannot use cannot be queried by name.
+	viewer := getPricingViewer(c)
+	group := c.Query("group")
+	allowedGroups := append(lo.Keys(ratio_setting.GetGroupRatioCopy()), "auto")
+	if _, visible := viewer.usableGroup[group]; group != "" && !visible {
+		allowedGroups = []string{}
+	}
 	result, err := perfmetrics.Query(perfmetrics.QueryParams{
 		Model:         modelName,
-		Group:         c.Query("group"),
+		Group:         group,
 		Hours:         hours,
-		AllowedGroups: append(lo.Keys(ratio_setting.GetGroupRatioCopy()), "auto"),
+		AllowedGroups: allowedGroups,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -71,6 +81,10 @@ func GetPerfMetrics(c *gin.Context) {
 		})
 		return
 	}
+	result.Groups = slices.DeleteFunc(result.Groups, func(groupResult perfmetrics.GroupResult) bool {
+		_, visible := viewer.usableGroup[groupResult.Group]
+		return !visible
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

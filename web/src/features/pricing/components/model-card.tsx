@@ -218,6 +218,12 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
         {t('Usage-based billing · price not configured')}
       </span>
     )
+  } else if (props.model.price_not_configured) {
+    priceSummary = (
+      <span className='text-muted-foreground col-span-full'>
+        {t('Unset price')}
+      </span>
+    )
   } else if (isTokenBased) {
     const prices: { type: PriceType; label: string }[] = [
       { type: 'input', label: t('Input') },

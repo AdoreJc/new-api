@@ -74,7 +74,10 @@ export type PricingModel = {
   image_ratio?: number | null
   audio_ratio?: number | null
   audio_completion_ratio?: number | null
+  /** Groups the viewer can use; empty when the viewer can use none of them. */
   enable_groups: string[]
+  /** Ratio-billed model without a configured price; relay refuses it. */
+  price_not_configured?: boolean
   tags?: string
   supported_endpoint_types?: string[]
   key?: string

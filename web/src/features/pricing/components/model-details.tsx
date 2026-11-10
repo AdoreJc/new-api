@@ -839,6 +839,15 @@ function PriceSection(props: {
     )
   }
 
+  if (props.model.price_not_configured) {
+    return (
+      <section>
+        <SectionTitle>{t('Base Price')}</SectionTitle>
+        <p className='text-muted-foreground text-sm'>{t('Unset price')}</p>
+      </section>
+    )
+  }
+
   if (!isTokenBased) {
     return (
       <section>
@@ -999,6 +1008,9 @@ type GroupPricingSectionProps = {
 
 function GroupPricingSection(props: GroupPricingSectionProps) {
   const { t } = useTranslation()
+  // The viewer can use none of the model's groups (for example it is served
+  // only in subscription dedicated groups): only the base price applies.
+  if (!props.model.enable_groups?.length) return null
   const variants = props.model.billing_plugin_variants
   if (!variants?.length) {
     return <ProviderGroupPricingSection {...props} />
@@ -1348,6 +1360,17 @@ function ProviderGroupPricingSection(
         )}
         <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
         <UnconfiguredTaskPricingNotice model={props.model} />
+      </section>
+    )
+  }
+
+  if (props.model.price_not_configured) {
+    return (
+      <section>
+        {!props.hideTitle && (
+          <SectionTitle>{t('Pricing by Group')}</SectionTitle>
+        )}
+        <p className='text-muted-foreground text-sm'>{t('Unset price')}</p>
       </section>
     )
   }
