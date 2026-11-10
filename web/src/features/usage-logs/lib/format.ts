@@ -564,6 +564,8 @@ const AUDIT_TEMPLATES: Record<string, string> = {
     'Bound channel {{channel_id}} to the subscription of user {{target_user_id}}',
   'subscription.channel_unbind':
     'Unbound the channel from subscription {{subscription_id}} of user {{target_user_id}}',
+  'subscription.reset_credit_redeem':
+    'Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}',
   // Logs
   'log.clear': 'Cleared historical logs',
   'log.cleanup_start': 'Log cleanup task started.',

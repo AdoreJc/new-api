@@ -39,6 +39,7 @@ import {
   parseSubscriptionUsageWindows,
 } from '../../lib/channel-binding'
 import type { SubscriptionUsageData, UserSubscription } from '../../types'
+import { SubscriptionResetCreditsSection } from './subscription-reset-credits-section'
 
 type SubscriptionUsageDialogProps = {
   open: boolean
@@ -49,8 +50,9 @@ type SubscriptionUsageDialogProps = {
 /**
  * Shows the subscriber the rate-limit windows of the OAuth account bound to
  * one of their subscriptions. The data comes from the trimmed
- * /api/subscription/self/usage/:id endpoint; reset credits stay with the
- * administrator.
+ * /api/subscription/self/usage/:id endpoint. Reset credits appear only when
+ * the administrator enabled them for this user (can_reset); otherwise no
+ * reset-credit request is made.
  */
 export function SubscriptionUsageDialog(props: SubscriptionUsageDialogProps) {
   const { t } = useTranslation()
@@ -233,6 +235,14 @@ export function SubscriptionUsageDialog(props: SubscriptionUsageDialogProps) {
         </Button>
       </UsageSectionHeading>
       {body}
+      {data?.can_reset && !errorMessage ? (
+        <SubscriptionResetCreditsSection
+          key={subscriptionId}
+          subscriptionId={subscriptionId}
+          provider={data.provider}
+          onReset={load}
+        />
+      ) : null}
     </Dialog>
   )
 }

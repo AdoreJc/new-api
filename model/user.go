@@ -112,6 +112,9 @@ type User struct {
 	LastLoginAt          int64                      `json:"last_login_at" gorm:"default:0;column:last_login_at"`
 	AuthVersion          int64                      `json:"-" gorm:"type:bigint;not null;default:1;column:auth_version"`
 	AdminPermissions     map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`
+	// AllowSubscriptionResetCredit mirrors setting.allow_subscription_reset_credit
+	// for the admin user editor; nil on update leaves the stored value unchanged.
+	AllowSubscriptionResetCredit *bool `json:"allow_subscription_reset_credit,omitempty" gorm:"-:all"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
@@ -195,6 +198,26 @@ func UpdateUserSetting(userId int, setting dto.UserSetting) error {
 		return err
 	}
 	return PublishUserAuthCache(userId)
+}
+
+// SetUserSubscriptionResetCreditAllowedWithTx stores the administrator switch
+// that lets the user redeem reset credits of the account bound to their own
+// subscription. Other setting fields are left untouched.
+func SetUserSubscriptionResetCreditAllowedWithTx(tx *gorm.DB, userId int, allowed bool) error {
+	var current User
+	if err := lockForUpdate(tx).Select("id", "setting").First(&current, userId).Error; err != nil {
+		return err
+	}
+	setting := current.GetSetting()
+	if setting.AllowSubscriptionResetCredit == allowed {
+		return nil
+	}
+	setting.AllowSubscriptionResetCredit = allowed
+	settingBytes, err := common.Marshal(setting)
+	if err != nil {
+		return err
+	}
+	return tx.Model(&User{}).Where("id = ?", userId).Update("setting", string(settingBytes)).Error
 }
 
 // userBindColumns 允许通过 UpdateUserBindColumn 更新的第三方账号绑定列白名单。

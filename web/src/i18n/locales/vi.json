@@ -7523,6 +7523,12 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "By clicking sign in, you agree to our": "Bằng cách nhấp đăng nhập, bạn đồng ý với",
-    "By creating an account, you agree to our": "Bằng cách tạo tài khoản, bạn đồng ý với"
+    "By creating an account, you agree to our": "Bằng cách tạo tài khoản, bạn đồng ý với",
+    "Allow subscription reset credits": "Cho phép dùng lượt đặt lại của gói đăng ký",
+    "Let this user view and redeem the reset credits of the account bound to their own subscription.": "Cho phép người dùng này xem và sử dụng lượt đặt lại của tài khoản được liên kết với gói đăng ký của họ.",
+    "Use one available reset credit for the account bound to this subscription. The reset request is sent only after confirmation.": "Sử dụng một lượt đặt lại khả dụng cho tài khoản được liên kết với gói đăng ký này. Yêu cầu chỉ được gửi sau khi xác nhận.",
+    "Reset credits are not enabled for your account": "Tài khoản của bạn chưa được bật lượt đặt lại",
+    "Another reset for this account is still in progress. Refresh the reset credits after it finishes": "Một yêu cầu đặt lại khác cho tài khoản này vẫn đang chạy. Hãy làm mới lượt đặt lại sau khi hoàn tất",
+    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "Đã dùng lượt đặt lại {{provider}} cho gói đăng ký {{subscription_id}} (kênh {{channel_id}}): {{result}}"
   }
 }

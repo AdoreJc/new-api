@@ -33,6 +33,7 @@ import type {
   SubscriptionBindableChannel,
   BindSubscriptionChannelRequest,
   SubscriptionUsageResponse,
+  SubscriptionResetCreditsResponse,
 } from './types'
 
 // ============================================================================
@@ -259,6 +260,29 @@ export async function getSelfSubscriptionUsage(
   subId: number
 ): Promise<SubscriptionUsageResponse> {
   const res = await api.get(`/api/subscription/self/usage/${subId}`)
+  return res.data
+}
+
+// Reset credits of the account bound to one of the caller's own
+// subscriptions; the administrator enables this per user.
+export async function getSelfSubscriptionResetCredits(
+  subId: number
+): Promise<SubscriptionResetCreditsResponse> {
+  const res = await api.get(
+    `/api/subscription/self/usage/${subId}/reset-credits`,
+    { skipBusinessError: true, skipErrorHandler: true, disableDuplicate: true }
+  )
+  return res.data
+}
+
+export async function resetSelfSubscriptionUsage(
+  subId: number
+): Promise<SubscriptionResetCreditsResponse> {
+  const res = await api.post(
+    `/api/subscription/self/usage/${subId}/reset`,
+    {},
+    { skipBusinessError: true, skipErrorHandler: true, disableDuplicate: true }
+  )
   return res.data
 }
 

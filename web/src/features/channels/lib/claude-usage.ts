@@ -209,3 +209,47 @@ export function parseClaudeResetCredits(
     fetched_at: typeof doc.fetched_at === 'string' ? doc.fetched_at : undefined,
   }
 }
+
+const RESET_OUTCOME_KEYS: Record<string, string> = {
+  reset: 'Reset completed. Latest usage has been refreshed.',
+  already_used: 'This reset credit was already used.',
+  not_limited: 'The account is not rate limited, so nothing was reset.',
+  cooldown: 'Reset is in cooldown. Try again later.',
+  ineligible: 'This account is not eligible for a reset.',
+  unavailable: 'The reset service is unavailable right now.',
+  unknown:
+    'The reset result could not be confirmed. Check the usage before trying again.',
+}
+
+/** Translated title of a Claude usage window, or the raw key when unknown. */
+export function claudeWindowName(
+  key: string,
+  t: (key: string) => string
+): string {
+  const definition = WINDOW_DEFINITIONS.find((d) => d.key === key)
+  return definition ? t(definition.labelKey) : key
+}
+
+/**
+ * Message for the answer of a Claude reset request: the outcome sentence and
+ * the windows upstream reports as cleared. Only the 'reset' outcome succeeded.
+ */
+export function describeClaudeResetOutcome(
+  payload: unknown,
+  t: (key: string) => string
+): { succeeded: boolean; message: string } {
+  const doc =
+    payload && typeof payload === 'object'
+      ? (payload as Record<string, unknown>)
+      : {}
+  const outcome = typeof doc.outcome === 'string' ? doc.outcome : ''
+  const cleared = Array.isArray(doc.cleared)
+    ? doc.cleared.filter((w): w is string => typeof w === 'string')
+    : []
+  const clearedText =
+    cleared.length > 0
+      ? ` ${t('Cleared windows:')} ${cleared.map((w) => claudeWindowName(w, t)).join(', ')}`
+      : ''
+  const key = RESET_OUTCOME_KEYS[outcome] ?? RESET_OUTCOME_KEYS.unknown
+  return { succeeded: outcome === 'reset', message: `${t(key)}${clearedText}` }
+}

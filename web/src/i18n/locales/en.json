@@ -7523,6 +7523,12 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "By clicking sign in, you agree to our": "By clicking sign in, you agree to our",
-    "By creating an account, you agree to our": "By creating an account, you agree to our"
+    "By creating an account, you agree to our": "By creating an account, you agree to our",
+    "Allow subscription reset credits": "Allow subscription reset credits",
+    "Let this user view and redeem the reset credits of the account bound to their own subscription.": "Let this user view and redeem the reset credits of the account bound to their own subscription.",
+    "Use one available reset credit for the account bound to this subscription. The reset request is sent only after confirmation.": "Use one available reset credit for the account bound to this subscription. The reset request is sent only after confirmation.",
+    "Reset credits are not enabled for your account": "Reset credits are not enabled for your account",
+    "Another reset for this account is still in progress. Refresh the reset credits after it finishes": "Another reset for this account is still in progress. Refresh the reset credits after it finishes",
+    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}"
   }
 }

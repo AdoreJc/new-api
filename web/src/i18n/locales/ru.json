@@ -7523,6 +7523,12 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "By clicking sign in, you agree to our": "Нажимая «Войти», вы соглашаетесь с нашими",
-    "By creating an account, you agree to our": "Создавая аккаунт, вы соглашаетесь с нашими"
+    "By creating an account, you agree to our": "Создавая аккаунт, вы соглашаетесь с нашими",
+    "Allow subscription reset credits": "Разрешить кредиты сброса подписки",
+    "Let this user view and redeem the reset credits of the account bound to their own subscription.": "Позволяет пользователю просматривать и использовать кредиты сброса аккаунта, привязанного к его подписке.",
+    "Use one available reset credit for the account bound to this subscription. The reset request is sent only after confirmation.": "Использовать один доступный кредит сброса для аккаунта, привязанного к этой подписке. Запрос отправляется только после подтверждения.",
+    "Reset credits are not enabled for your account": "Кредиты сброса не включены для вашего аккаунта",
+    "Another reset for this account is still in progress. Refresh the reset credits after it finishes": "Другой сброс для этого аккаунта ещё выполняется. Обновите кредиты сброса после его завершения",
+    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "Использован кредит сброса {{provider}} для подписки {{subscription_id}} (канал {{channel_id}}): {{result}}"
   }
 }

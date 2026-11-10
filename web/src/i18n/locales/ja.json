@@ -7523,6 +7523,12 @@
     "Zhipu V4": "Zhipu V 4",
     "Zoom": "ズーム",
     "By clicking sign in, you agree to our": "サインインをクリックすると、以下に同意したことになります：",
-    "By creating an account, you agree to our": "アカウントを作成すると、以下に同意したことになります："
+    "By creating an account, you agree to our": "アカウントを作成すると、以下に同意したことになります：",
+    "Allow subscription reset credits": "サブスクリプションのリセットクレジットを許可",
+    "Let this user view and redeem the reset credits of the account bound to their own subscription.": "このユーザーが自分のサブスクリプションにバインドされたアカウントのリセットクレジットを表示・使用できるようにします。",
+    "Use one available reset credit for the account bound to this subscription. The reset request is sent only after confirmation.": "このサブスクリプションにバインドされたアカウントで利用可能なリセットクレジットを 1 つ使用します。リセットリクエストは確認後にのみ送信されます。",
+    "Reset credits are not enabled for your account": "お使いのアカウントではリセットクレジットが有効になっていません",
+    "Another reset for this account is still in progress. Refresh the reset credits after it finishes": "このアカウントの別のリセットがまだ処理中です。完了後にリセットクレジットを更新してください",
+    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "サブスクリプション {{subscription_id}}（チャンネル {{channel_id}}）で {{provider}} のリセットクレジットを使用しました：{{result}}"
   }
 }
