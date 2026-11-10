@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
 
+import { useContentLanguage } from '@/hooks/use-content-language'
 import { useStatus } from '@/hooks/use-status'
 import { getNotice } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
@@ -64,6 +65,7 @@ function getAnnouncementKey(item: Record<string, unknown>): string {
  * Provides unread counts and read status management
  */
 export function useNotifications() {
+  const lang = useContentLanguage()
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<'notice' | 'announcements'>(
     'notice'
@@ -75,8 +77,8 @@ export function useNotifications() {
     isLoading: noticeLoading,
     refetch: refetchNotice,
   } = useQuery({
-    queryKey: ['notice'],
-    queryFn: async () => requireServerSuccess(await getNotice()),
+    queryKey: ['notice', lang],
+    queryFn: async () => requireServerSuccess(await getNotice(lang)),
     staleTime: 1000 * 60 * 5, // 5 minutes
   })
 

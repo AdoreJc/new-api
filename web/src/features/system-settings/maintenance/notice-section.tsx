@@ -22,54 +22,71 @@ import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import * as z from 'zod'
 
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
-import { Textarea } from '@/components/ui/textarea'
+import { Form } from '@/components/ui/form'
 
 import { SettingsForm } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { LocalizedContentField } from '../general/localized-content-field'
 import { useUpdateOption } from '../hooks/use-update-option'
+import {
+  normalizeLocalizedContentOption,
+  toLocalizedContentOptionValue,
+} from '../utils/localized-content'
 
 const noticeSchema = z.object({
   Notice: z.string().optional(),
+  site_content_i18n: z.object({ notice: z.string() }),
 })
 
 type NoticeFormValues = z.infer<typeof noticeSchema>
 
 type NoticeSectionProps = {
   defaultValue: string
+  /** Stored site_content_i18n.notice JSON (per-language notices). */
+  defaultTranslations: string
 }
 
-export function NoticeSection({ defaultValue }: NoticeSectionProps) {
+export function NoticeSection({
+  defaultValue,
+  defaultTranslations,
+}: NoticeSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const initialTranslations =
+    normalizeLocalizedContentOption(defaultTranslations)
   const form = useForm<NoticeFormValues>({
     resolver: zodResolver(noticeSchema),
     defaultValues: {
       Notice: defaultValue ?? '',
+      site_content_i18n: { notice: initialTranslations },
     },
   })
 
   useEffect(() => {
-    form.reset({ Notice: defaultValue ?? '' })
-  }, [defaultValue, form])
+    form.reset({
+      Notice: defaultValue ?? '',
+      site_content_i18n: { notice: initialTranslations },
+    })
+  }, [defaultValue, initialTranslations, form])
 
   const onSubmit = async (values: NoticeFormValues) => {
     const normalized = values.Notice ?? ''
-    if (normalized === (defaultValue ?? '')) {
-      return
+    if (normalized !== (defaultValue ?? '')) {
+      await updateOption.mutateAsync({
+        key: 'Notice',
+        value: normalized,
+      })
     }
-    await updateOption.mutateAsync({
-      key: 'Notice',
-      value: normalized,
-    })
+    const translations = toLocalizedContentOptionValue(
+      values.site_content_i18n.notice
+    )
+    if (translations !== toLocalizedContentOptionValue(initialTranslations)) {
+      await updateOption.mutateAsync({
+        key: 'site_content_i18n.notice',
+        value: translations,
+      })
+    }
   }
 
   return (
@@ -81,24 +98,13 @@ export function NoticeSection({ defaultValue }: NoticeSectionProps) {
             isSaving={updateOption.isPending}
             saveLabel='Save notice'
           />
-          <FormField
+          <LocalizedContentField
             control={form.control}
             name='Notice'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('Announcement content')}</FormLabel>
-                <FormControl>
-                  <Textarea
-                    rows={8}
-                    placeholder={t(
-                      'Planned maintenance on Friday at 22:00 UTC...'
-                    )}
-                    {...field}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
+            translationsName='site_content_i18n.notice'
+            label={t('Announcement content')}
+            placeholder={t('Planned maintenance on Friday at 22:00 UTC...')}
+            rows={8}
           />
         </SettingsForm>
       </Form>

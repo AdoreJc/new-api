@@ -26,6 +26,14 @@ type publicContentResponse struct {
 // Accept-Encoding keeps the gzip and identity encodings apart in shared
 // caches.
 func serveRevalidatedJSON(c *gin.Context, content string) {
+	serveRevalidatedJSONVariant(c, content, "")
+}
+
+// serveRevalidatedJSONVariant is serveRevalidatedJSON for a representation
+// chosen by a query parameter (such as ?lang=). A non-empty variant is folded
+// into the ETag, so a validator issued for one variant never earns a 304 for
+// another, even when both carry the same content.
+func serveRevalidatedJSONVariant(c *gin.Context, content string, variant string) {
 	body, err := common.Marshal(publicContentResponse{
 		Success: true,
 		Message: "",
@@ -39,7 +47,11 @@ func serveRevalidatedJSON(c *gin.Context, content string) {
 		return
 	}
 
-	etag := common.ETagFor(etagVersionPublicContent, content)
+	namespace := etagVersionPublicContent
+	if variant != "" {
+		namespace += ":" + variant
+	}
+	etag := common.ETagFor(namespace, content)
 
 	c.Header("ETag", etag)
 	c.Header("Cache-Control", "no-cache")

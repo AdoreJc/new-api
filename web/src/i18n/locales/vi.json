@@ -7529,6 +7529,13 @@
     "Use one available reset credit for the account bound to this subscription. The reset request is sent only after confirmation.": "Sử dụng một lượt đặt lại khả dụng cho tài khoản được liên kết với gói đăng ký này. Yêu cầu chỉ được gửi sau khi xác nhận.",
     "Reset credits are not enabled for your account": "Tài khoản của bạn chưa được bật lượt đặt lại",
     "Another reset for this account is still in progress. Refresh the reset credits after it finishes": "Một yêu cầu đặt lại khác cho tài khoản này vẫn đang chạy. Hãy làm mới lượt đặt lại sau khi hoàn tất",
-    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "Đã dùng lượt đặt lại {{provider}} cho gói đăng ký {{subscription_id}} (kênh {{channel_id}}): {{result}}"
+    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "Đã dùng lượt đặt lại {{provider}} cho gói đăng ký {{subscription_id}} (kênh {{channel_id}}): {{result}}",
+    "Content language": "Ngôn ngữ nội dung",
+    "Translated": "Đã dịch",
+    "Leave empty to use the default content": "Để trống để dùng nội dung mặc định",
+    "Use the language tabs to enter a translation. Languages left empty show the default content.": "Dùng các thẻ ngôn ngữ để nhập bản dịch. Ngôn ngữ để trống sẽ hiển thị nội dung mặc định.",
+    "Unknown localized content field: {{field}}": "Trường nội dung đa ngôn ngữ không xác định: {{field}}",
+    "Localized content must be a JSON object that maps language codes to text": "Nội dung đa ngôn ngữ phải là đối tượng JSON ánh xạ mã ngôn ngữ sang văn bản",
+    "Invalid language code in localized content: {{lang}}": "Mã ngôn ngữ không hợp lệ trong nội dung đa ngôn ngữ: {{lang}}"
   }
 }

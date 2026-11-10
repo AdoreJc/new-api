@@ -7529,6 +7529,13 @@
     "Use one available reset credit for the account bound to this subscription. The reset request is sent only after confirmation.": "Use one available reset credit for the account bound to this subscription. The reset request is sent only after confirmation.",
     "Reset credits are not enabled for your account": "Reset credits are not enabled for your account",
     "Another reset for this account is still in progress. Refresh the reset credits after it finishes": "Another reset for this account is still in progress. Refresh the reset credits after it finishes",
-    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}"
+    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}",
+    "Content language": "Content language",
+    "Translated": "Translated",
+    "Leave empty to use the default content": "Leave empty to use the default content",
+    "Use the language tabs to enter a translation. Languages left empty show the default content.": "Use the language tabs to enter a translation. Languages left empty show the default content.",
+    "Unknown localized content field: {{field}}": "Unknown localized content field: {{field}}",
+    "Localized content must be a JSON object that maps language codes to text": "Localized content must be a JSON object that maps language codes to text",
+    "Invalid language code in localized content: {{lang}}": "Invalid language code in localized content: {{lang}}"
   }
 }

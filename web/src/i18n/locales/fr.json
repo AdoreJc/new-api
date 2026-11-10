@@ -7529,6 +7529,13 @@
     "Use one available reset credit for the account bound to this subscription. The reset request is sent only after confirmation.": "Utiliser un crédit de réinitialisation disponible pour le compte lié à cet abonnement. La demande n'est envoyée qu'après confirmation.",
     "Reset credits are not enabled for your account": "Les crédits de réinitialisation ne sont pas activés pour votre compte",
     "Another reset for this account is still in progress. Refresh the reset credits after it finishes": "Une autre réinitialisation de ce compte est encore en cours. Actualisez les crédits de réinitialisation une fois terminée",
-    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "Crédit de réinitialisation {{provider}} utilisé pour l'abonnement {{subscription_id}} (canal {{channel_id}}) : {{result}}"
+    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "Crédit de réinitialisation {{provider}} utilisé pour l'abonnement {{subscription_id}} (canal {{channel_id}}) : {{result}}",
+    "Content language": "Langue du contenu",
+    "Translated": "Traduit",
+    "Leave empty to use the default content": "Laisser vide pour utiliser le contenu par défaut",
+    "Use the language tabs to enter a translation. Languages left empty show the default content.": "Utilisez les onglets de langue pour saisir une traduction. Les langues laissées vides affichent le contenu par défaut.",
+    "Unknown localized content field: {{field}}": "Champ de contenu localisé inconnu : {{field}}",
+    "Localized content must be a JSON object that maps language codes to text": "Le contenu localisé doit être un objet JSON associant des codes de langue à du texte",
+    "Invalid language code in localized content: {{lang}}": "Code de langue invalide dans le contenu localisé : {{lang}}"
   }
 }

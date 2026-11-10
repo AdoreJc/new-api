@@ -7529,6 +7529,13 @@
     "Use one available reset credit for the account bound to this subscription. The reset request is sent only after confirmation.": "Использовать один доступный кредит сброса для аккаунта, привязанного к этой подписке. Запрос отправляется только после подтверждения.",
     "Reset credits are not enabled for your account": "Кредиты сброса не включены для вашего аккаунта",
     "Another reset for this account is still in progress. Refresh the reset credits after it finishes": "Другой сброс для этого аккаунта ещё выполняется. Обновите кредиты сброса после его завершения",
-    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "Использован кредит сброса {{provider}} для подписки {{subscription_id}} (канал {{channel_id}}): {{result}}"
+    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "Использован кредит сброса {{provider}} для подписки {{subscription_id}} (канал {{channel_id}}): {{result}}",
+    "Content language": "Язык содержимого",
+    "Translated": "Переведено",
+    "Leave empty to use the default content": "Оставьте пустым, чтобы использовать содержимое по умолчанию",
+    "Use the language tabs to enter a translation. Languages left empty show the default content.": "Используйте вкладки языков, чтобы ввести перевод. Для языков без перевода показывается содержимое по умолчанию.",
+    "Unknown localized content field: {{field}}": "Неизвестное поле локализованного содержимого: {{field}}",
+    "Localized content must be a JSON object that maps language codes to text": "Локализованное содержимое должно быть JSON-объектом, сопоставляющим коды языков с текстом",
+    "Invalid language code in localized content: {{lang}}": "Недопустимый код языка в локализованном содержимом: {{lang}}"
   }
 }

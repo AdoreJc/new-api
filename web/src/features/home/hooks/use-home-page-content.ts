@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import i18next from 'i18next'
 import { useEffect, useState } from 'react'
 
+import { useContentLanguage } from '@/hooks/use-content-language'
 import { isHttpUrl } from '@/lib/content-format'
 import { handleServerError } from '@/lib/handle-server-error'
 
@@ -32,32 +33,35 @@ const STORAGE_KEY = 'home_page_content'
  * Supports both Markdown/HTML content and iframe URLs
  */
 export function useHomePageContent(): HomePageContentResult {
+  const lang = useContentLanguage()
   const [content, setContent] = useState<string>('')
   const [isLoaded, setIsLoaded] = useState(false)
 
   useEffect(() => {
     let mounted = true
+    // One cached copy per language, so switching shows the right one at once.
+    const storageKey = lang ? `${STORAGE_KEY}:${lang}` : STORAGE_KEY
 
     const loadContent = async () => {
       // Load from localStorage first for immediate display
-      const cached = localStorage.getItem(STORAGE_KEY)
-      if (cached && mounted) {
-        setContent(cached)
+      const cached = localStorage.getItem(storageKey)
+      if (mounted) {
+        setContent(cached ?? '')
       }
 
       try {
-        const response = await getHomePageContent()
+        const response = await getHomePageContent(lang)
         const { success, data } = response
 
         if (!mounted) return
 
         if (success && data) {
           setContent(data)
-          localStorage.setItem(STORAGE_KEY, data)
+          localStorage.setItem(storageKey, data)
         } else {
           // Clear content if API returns empty
           setContent('')
-          localStorage.removeItem(STORAGE_KEY)
+          localStorage.removeItem(storageKey)
         }
       } catch (error) {
         if (!mounted) return
@@ -74,7 +78,7 @@ export function useHomePageContent(): HomePageContentResult {
     return () => {
       mounted = false
     }
-  }, [])
+  }, [lang])
 
   const isUrl = isHttpUrl(content)
 

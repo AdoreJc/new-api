@@ -36,6 +36,12 @@ const defaultSiteSettings: SiteSettings = {
   'general_setting.docs_link': '',
   'legal.user_agreement': '',
   'legal.privacy_policy': '',
+  'site_content_i18n.notice': '{}',
+  'site_content_i18n.footer': '{}',
+  'site_content_i18n.about': '{}',
+  'site_content_i18n.home_page_content': '{}',
+  'site_content_i18n.user_agreement': '{}',
+  'site_content_i18n.privacy_policy': '{}',
   HeaderNavModules: '',
   SidebarModulesAdmin: '',
 }

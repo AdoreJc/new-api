@@ -7529,6 +7529,13 @@
     "Use one available reset credit for the account bound to this subscription. The reset request is sent only after confirmation.": "このサブスクリプションにバインドされたアカウントで利用可能なリセットクレジットを 1 つ使用します。リセットリクエストは確認後にのみ送信されます。",
     "Reset credits are not enabled for your account": "お使いのアカウントではリセットクレジットが有効になっていません",
     "Another reset for this account is still in progress. Refresh the reset credits after it finishes": "このアカウントの別のリセットがまだ処理中です。完了後にリセットクレジットを更新してください",
-    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "サブスクリプション {{subscription_id}}（チャンネル {{channel_id}}）で {{provider}} のリセットクレジットを使用しました：{{result}}"
+    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "サブスクリプション {{subscription_id}}（チャンネル {{channel_id}}）で {{provider}} のリセットクレジットを使用しました：{{result}}",
+    "Content language": "コンテンツの言語",
+    "Translated": "翻訳済み",
+    "Leave empty to use the default content": "空欄の場合はデフォルトの内容を使用します",
+    "Use the language tabs to enter a translation. Languages left empty show the default content.": "言語タブで各言語の翻訳を入力します。空欄の言語にはデフォルトの内容が表示されます。",
+    "Unknown localized content field: {{field}}": "不明なローカライズコンテンツ項目：{{field}}",
+    "Localized content must be a JSON object that maps language codes to text": "ローカライズコンテンツは言語コードとテキストを対応付ける JSON オブジェクトである必要があります",
+    "Invalid language code in localized content: {{lang}}": "ローカライズコンテンツの言語コードが無効です：{{lang}}"
   }
 }

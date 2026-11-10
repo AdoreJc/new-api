@@ -78,7 +78,7 @@ export async function getStatus() {
   return requireServerSuccess(res.data)?.data as Record<string, unknown>
 }
 
-export async function getNotice(): Promise<{
+export async function getNotice(lang?: string): Promise<{
   success: boolean
   message?: string
   data?: string
@@ -88,7 +88,23 @@ export async function getNotice(): Promise<{
   // copy at all, so it would never hold an ETag to revalidate with and the
   // server could never answer 304. The server sends `no-cache`, so the browser
   // still revalidates on every request and an admin edit shows up immediately.
+  // `lang` (see useContentLanguage) selects the administrator's translation;
+  // the server falls back to the default notice and binds the ETag to it.
   const res = await api.get('/api/notice', {
+    params: { lang },
+    headers: { 'Cache-Control': null },
+  })
+  return res.data
+}
+
+/** Footer HTML for `lang`; same caching policy as getNotice. */
+export async function getFooter(lang?: string): Promise<{
+  success: boolean
+  message?: string
+  data?: string
+}> {
+  const res = await api.get('/api/footer', {
+    params: { lang },
     headers: { 'Cache-Control': null },
   })
   return res.data
