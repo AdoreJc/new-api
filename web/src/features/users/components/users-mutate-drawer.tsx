@@ -30,6 +30,7 @@ import {
   sideDrawerFooterClassName,
   sideDrawerFormClassName,
   sideDrawerHeaderClassName,
+  sideDrawerSwitchItemClassName,
 } from '@/components/drawer-layout'
 import { PermissionMatrix } from '@/components/permission-matrix'
 import { Button } from '@/components/ui/button'
@@ -62,6 +63,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import {
   ADMIN_PERMISSION_ACTIONS,
@@ -493,6 +495,31 @@ export function UsersMutateDrawer({
                           />
                         </FormControl>
                         <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='allow_subscription_reset_credit'
+                    render={({ field }) => (
+                      <FormItem className={sideDrawerSwitchItemClassName()}>
+                        <div className='flex flex-col gap-1'>
+                          <FormLabel className='!mt-0'>
+                            {t('Allow subscription reset credits')}
+                          </FormLabel>
+                          <FormDescription>
+                            {t(
+                              'Let this user view and redeem the reset credits of the account bound to their own subscription.'
+                            )}
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value === true}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
                       </FormItem>
                     )}
                   />

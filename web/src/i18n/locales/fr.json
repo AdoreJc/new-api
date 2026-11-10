@@ -7523,6 +7523,12 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "By clicking sign in, you agree to our": "En cliquant sur se connecter, vous acceptez nos",
-    "By creating an account, you agree to our": "En créant un compte, vous acceptez nos"
+    "By creating an account, you agree to our": "En créant un compte, vous acceptez nos",
+    "Allow subscription reset credits": "Autoriser les crédits de réinitialisation de l'abonnement",
+    "Let this user view and redeem the reset credits of the account bound to their own subscription.": "Permet à cet utilisateur de consulter et d'utiliser les crédits de réinitialisation du compte lié à son propre abonnement.",
+    "Use one available reset credit for the account bound to this subscription. The reset request is sent only after confirmation.": "Utiliser un crédit de réinitialisation disponible pour le compte lié à cet abonnement. La demande n'est envoyée qu'après confirmation.",
+    "Reset credits are not enabled for your account": "Les crédits de réinitialisation ne sont pas activés pour votre compte",
+    "Another reset for this account is still in progress. Refresh the reset credits after it finishes": "Une autre réinitialisation de ce compte est encore en cours. Actualisez les crédits de réinitialisation une fois terminée",
+    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "Crédit de réinitialisation {{provider}} utilisé pour l'abonnement {{subscription_id}} (canal {{channel_id}}) : {{result}}"
   }
 }

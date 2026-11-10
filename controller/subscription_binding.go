@@ -112,6 +112,9 @@ type SubscriptionUsageResponse struct {
 	PlanType     string `json:"plan_type,omitempty"`
 	LimitReached bool   `json:"limit_reached"`
 	FetchedAt    int64  `json:"fetched_at"`
+	// CanReset reports the administrator switch that lets this user view and
+	// redeem the reset credits of the bound account.
+	CanReset bool `json:"can_reset"`
 }
 
 var claudeSubscriptionUsageWindows = []string{"five_hour", "seven_day", "seven_day_sonnet", "seven_day_overage_included"}
@@ -204,38 +207,51 @@ func projectCodexSubscriptionUsage(body []byte, now time.Time) (map[string]Subsc
 	return windows, strings.TrimSpace(doc.PlanType), doc.RateLimit.LimitReached
 }
 
-// GetSubscriptionSelfUsage returns the rate-limit windows of the OAuth
-// account bound to one of the caller's own active subscriptions. Reset
-// credits are not exposed here; redemption stays an administrator action.
-func GetSubscriptionSelfUsage(c *gin.Context) {
+// resolveSelfBoundSubscription loads one of the caller's own active
+// subscriptions and the single-key OAuth channel bound to it. On failure the
+// error response has already been written and ok is false; the messages never
+// name the channel or its dedicated group.
+func resolveSelfBoundSubscription(c *gin.Context) (sub *model.UserSubscription, ch *model.Channel, ok bool) {
 	userId := c.GetInt("id")
 	subId, _ := strconv.Atoi(c.Param("id"))
 	if subId <= 0 {
 		common.ApiErrorT(c, "Invalid subscription ID")
-		return
+		return nil, nil, false
 	}
 	sub, err := model.GetUserSubscriptionById(subId)
 	if err != nil || sub.UserId != userId {
 		// Same answer for a foreign and a missing subscription.
 		common.ApiErrorT(c, "Subscription not found")
-		return
+		return nil, nil, false
 	}
 	now := model.GetDBTimestamp()
 	if sub.Status != "active" || sub.EndTime <= now {
 		common.ApiErrorT(c, "This subscription is no longer active")
-		return
+		return nil, nil, false
 	}
 	if sub.BoundChannelId <= 0 {
 		common.ApiErrorT(c, "This subscription is not bound to a channel")
-		return
+		return nil, nil, false
 	}
-	ch, err := model.GetChannelById(sub.BoundChannelId, true)
+	ch, err = model.GetChannelById(sub.BoundChannelId, true)
 	if err != nil || ch == nil || !model.IsSubscriptionBindableChannelType(ch.Type) {
 		common.ApiErrorT(c, "The bound channel is no longer available")
-		return
+		return nil, nil, false
 	}
 	if ch.ChannelInfo.IsMultiKey {
 		common.ApiErrorT(c, "Multi-key channels are not supported")
+		return nil, nil, false
+	}
+	return sub, ch, true
+}
+
+// GetSubscriptionSelfUsage returns the rate-limit windows of the OAuth
+// account bound to one of the caller's own active subscriptions. Reset
+// credits are served by the separate self reset-credit endpoints, which an
+// administrator enables per user; can_reset reports that switch.
+func GetSubscriptionSelfUsage(c *gin.Context) {
+	sub, ch, ok := resolveSelfBoundSubscription(c)
+	if !ok {
 		return
 	}
 
@@ -244,6 +260,7 @@ func GetSubscriptionSelfUsage(c *gin.Context) {
 		ChannelType:    ch.Type,
 		Windows:        map[string]SubscriptionUsageWindow{},
 		FetchedAt:      common.GetTimestamp(),
+		CanReset:       userAllowsSubscriptionResetCredit(c.GetInt("id")),
 	}
 	var statusCode int
 	switch ch.Type {

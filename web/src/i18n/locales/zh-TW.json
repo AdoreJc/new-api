@@ -7523,6 +7523,12 @@
     "Zhipu V4": "智譜 V4",
     "Zoom": "縮放",
     "By clicking sign in, you agree to our": "點擊登入即表示您同意我們的",
-    "By creating an account, you agree to our": "建立帳戶即表示您同意我們的"
+    "By creating an account, you agree to our": "建立帳戶即表示您同意我們的",
+    "Allow subscription reset credits": "允許使用訂閱重置額度",
+    "Let this user view and redeem the reset credits of the account bound to their own subscription.": "允許該用戶查看並使用其訂閱所綁定帳戶的重置額度。",
+    "Use one available reset credit for the account bound to this subscription. The reset request is sent only after confirmation.": "為此訂閱綁定的帳戶使用一次可用的重置額度。確認後才會發送重置請求。",
+    "Reset credits are not enabled for your account": "你的帳戶未開啟重置額度",
+    "Another reset for this account is still in progress. Refresh the reset credits after it finishes": "該帳戶的另一個重置請求仍在進行中。完成後請重新整理重置額度",
+    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "已為訂閱 {{subscription_id}}（渠道 {{channel_id}}）使用 {{provider}} 重置額度：{{result}}"
   }
 }

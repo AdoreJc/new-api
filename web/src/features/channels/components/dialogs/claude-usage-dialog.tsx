@@ -64,6 +64,8 @@ import {
   type ClaudeUsageResponse,
 } from '../../api'
 import {
+  claudeWindowName,
+  describeClaudeResetOutcome,
   isClaudeUsageWindow,
   parseClaudeResetCredits,
   parseClaudeUsageWindows,
@@ -94,28 +96,6 @@ type ClaudeUsageDialogProps = {
   response: ClaudeUsageDialogData | null
   onRefresh?: () => void | Promise<void>
   isRefreshing?: boolean
-}
-
-const WINDOW_NAME_KEYS: Record<string, string> = {
-  five_hour: '5-Hour Window',
-  seven_day: '7-Day Window',
-  seven_day_sonnet: '7-Day Sonnet Window',
-  seven_day_overage_included: '7-Day Fable Window',
-}
-
-const RESET_OUTCOME_KEYS: Record<string, string> = {
-  reset: 'Reset completed. Latest usage has been refreshed.',
-  already_used: 'This reset credit was already used.',
-  not_limited: 'The account is not rate limited, so nothing was reset.',
-  cooldown: 'Reset is in cooldown. Try again later.',
-  ineligible: 'This account is not eligible for a reset.',
-  unavailable: 'The reset service is unavailable right now.',
-  unknown:
-    'The reset result could not be confirmed. Check the usage before trying again.',
-}
-
-function windowName(key: string, t: (key: string) => string): string {
-  return WINDOW_NAME_KEYS[key] ? t(WINDOW_NAME_KEYS[key]) : key
 }
 
 function getUsageStatusBadge(
@@ -225,7 +205,9 @@ function ResetCreditItem(props: {
           <div className='text-muted-foreground mt-1 text-xs leading-5'>
             {t('Clears:')}{' '}
             {props.credit.clears.length > 0
-              ? props.credit.clears.map((w) => windowName(w, t)).join(', ')
+              ? props.credit.clears
+                  .map((w) => claudeWindowName(w, t))
+                  .join(', ')
               : '-'}
           </div>
           {props.credit.use_requires_limit ? (
@@ -277,7 +259,7 @@ function ResetCreditItem(props: {
           <div className='mt-1 text-xs leading-5 tabular-nums'>
             {percentEntries.length > 0
               ? percentEntries
-                  .map(([w, v]) => `${windowName(w, t)} ${v}%`)
+                  .map(([w, v]) => `${claudeWindowName(w, t)} ${v}%`)
                   .join(' · ')
               : '-'}
           </div>
@@ -287,7 +269,7 @@ function ResetCreditItem(props: {
   )
 }
 
-function ResetCreditsPanel(props: {
+export function ClaudeResetCreditsPanel(props: {
   view: ClaudeResetCreditsView | null
   response: ClaudeResetCreditsResponse | null
   isLoading: boolean
@@ -580,21 +562,11 @@ export function ClaudeUsageDialog(props: ClaudeUsageDialogProps) {
       if (!res.success) {
         throw createServerError(res, t('Failed to reset usage'))
       }
-      const outcome = res.data as
-        | { outcome?: string; cleared?: string[]; reason?: string }
-        | undefined
-      const outcomeKey =
-        RESET_OUTCOME_KEYS[outcome?.outcome ?? ''] ?? RESET_OUTCOME_KEYS.unknown
-      const cleared = Array.isArray(outcome?.cleared) ? outcome.cleared : []
-      const clearedText =
-        cleared.length > 0
-          ? ` ${t('Cleared windows:')} ${cleared.map((w) => windowName(w, t)).join(', ')}`
-          : ''
-      const message = `${t(outcomeKey)}${clearedText}`
-      if (outcome?.outcome === 'reset') {
-        setResetActionMessage(message)
+      const outcome = describeClaudeResetOutcome(res.data, t)
+      if (outcome.succeeded) {
+        setResetActionMessage(outcome.message)
       } else {
-        setResetActionError(message)
+        setResetActionError(outcome.message)
       }
       setResetConfirmOpen(false)
       await Promise.resolve(props.onRefresh?.())
@@ -755,7 +727,7 @@ export function ClaudeUsageDialog(props: ClaudeUsageDialogProps) {
             )}
           </CollapsibleTrigger>
           <CollapsibleContent className='border-t'>
-            <ResetCreditsPanel
+            <ClaudeResetCreditsPanel
               view={resetCreditsView}
               response={resetCreditsResponse}
               isLoading={isLoadingResetCredits}

@@ -18,6 +18,7 @@ type UserSetting struct {
 	SidebarModules                   string  `json:"sidebar_modules,omitempty"`                      // SidebarModules 左侧边栏模块配置
 	BillingPreference                string  `json:"billing_preference,omitempty"`                   // BillingPreference 扣费策略（订阅/钱包）
 	Language                         string  `json:"language,omitempty"`                             // Language 用户语言偏好 (zh, en)
+	AllowSubscriptionResetCredit     bool    `json:"allow_subscription_reset_credit,omitempty"`      // 允许用户对自己订阅绑定的账户使用重置额度（仅管理员可设置）
 }
 
 var (

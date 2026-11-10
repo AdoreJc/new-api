@@ -62,6 +62,8 @@ export const userSchema = z.object({
   admin_permissions: z
     .record(z.string(), z.record(z.string(), z.boolean()))
     .optional(),
+  /** Only returned by GET /api/user/:id */
+  allow_subscription_reset_credit: z.boolean().optional(),
 })
 export type User = z.infer<typeof userSchema>
 
@@ -126,6 +128,7 @@ export interface UserFormData {
   group?: string // Only used when updating user
   remark?: string // Only used when updating user
   admin_permissions?: AdminPermissionMatrix
+  allow_subscription_reset_credit?: boolean // Only used when updating user
 }
 
 export type ManageUserAction =

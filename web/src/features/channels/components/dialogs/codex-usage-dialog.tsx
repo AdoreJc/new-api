@@ -113,7 +113,7 @@ type CodexResetCredit = {
   description?: string
 }
 
-type CodexResetCreditsPayload = {
+export type CodexResetCreditsPayload = {
   credits?: CodexResetCredit[]
   available_count?: number
   total_earned_count?: number
@@ -512,12 +512,14 @@ function ResetCreditItem(props: { credit: CodexResetCredit; index: number }) {
   )
 }
 
-function ResetCreditsPanel(props: {
+export function CodexResetCreditsPanel(props: {
   payload: CodexResetCreditsPayload | null
   response: CodexResetCreditsResponse | null
   usageAvailableCount: string
   isLoading: boolean
   isResetting: boolean
+  /** The last reset did not complete; credits must be re-queried first */
+  isStale?: boolean
   errorMessage: string
   resetErrorMessage: string
   resetSuccessMessage: string
@@ -538,7 +540,7 @@ function ResetCreditsPanel(props: {
   )
     ? String(props.payload?.total_earned_count)
     : '-'
-  const canReset = Number(availableCount) > 0
+  const canReset = Number(availableCount) > 0 && !props.isStale
   let creditsContent: ReactNode
   if (props.errorMessage) {
     creditsContent = (
@@ -646,7 +648,19 @@ function ResetCreditsPanel(props: {
         </Button>
       </div>
 
-      {!canReset ? (
+      {props.isStale ? (
+        <Alert variant='destructive'>
+          <AlertTriangle />
+          <AlertTitle>{t('Reset credits need a refresh')}</AlertTitle>
+          <AlertDescription>
+            {t(
+              'The last reset request did not complete. Refresh the reset credits before applying another reset.'
+            )}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {!canReset && !props.isStale ? (
         <Alert>
           <AlertTriangle />
           <AlertTitle>{t('No reset credits available')}</AlertTitle>
@@ -994,7 +1008,7 @@ export function CodexUsageDialog({
             )}
           </CollapsibleTrigger>
           <CollapsibleContent className='border-t'>
-            <ResetCreditsPanel
+            <CodexResetCreditsPanel
               payload={resetCreditsPayload}
               response={resetCreditsResponse}
               usageAvailableCount={resetCreditsText}

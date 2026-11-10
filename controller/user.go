@@ -401,6 +401,7 @@ func GetUser(c *gin.Context) {
 		return
 	}
 	user.AdminPermissions = authz.Capabilities(user.Id, user.Role)
+	user.AllowSubscriptionResetCredit = common.GetPointer(user.GetSetting().AllowSubscriptionResetCredit)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -696,10 +697,19 @@ func UpdateUser(c *gin.Context) {
 		auditParams["password_reset"] = updatePassword
 		auditParams["admin_permissions_updated"] = updatedUser.AdminPermissions != nil
 	}
+	allowResetCredit := updatedUser.AllowSubscriptionResetCredit
+	if allowResetCredit != nil {
+		auditParams["allow_subscription_reset_credit"] = *allowResetCredit
+	}
 	authzTouched := false
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
 		if err := updatedUser.EditWithTx(tx, updatePassword); err != nil {
 			return err
+		}
+		if allowResetCredit != nil {
+			if err := model.SetUserSubscriptionResetCreditAllowedWithTx(tx, updatedUser.Id, *allowResetCredit); err != nil {
+				return err
+			}
 		}
 		touched, err := updateAdminPermissionsForUserInTx(c, tx, updatedUser.Id, originUser.Role, updatedUser.AdminPermissions)
 		authzTouched = touched

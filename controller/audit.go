@@ -70,11 +70,12 @@ var auditContentTemplates = map[string]string{
 	"redemption.create":       "Created ${count} redemption codes named ${name} (${quota} each)",
 	"redemption.delete_batch": "Batch deleted ${count} redemption codes",
 
-	"subscription.plan_reset":       "Reset active subscriptions for plan ${plan_id}",
-	"subscription.user_plan_reset":  "Reset active plan ${plan_id} subscriptions for user ${target_user_id}",
-	"subscription.user_quota_reset": "Administrator reset the quota of subscription plan ${plan_title} (ID: ${plan_id})",
-	"subscription.channel_bind":     "Bound channel ${channel_id} to the subscription of user ${target_user_id}",
-	"subscription.channel_unbind":   "Unbound the channel from subscription ${subscription_id} of user ${target_user_id}",
+	"subscription.plan_reset":          "Reset active subscriptions for plan ${plan_id}",
+	"subscription.user_plan_reset":     "Reset active plan ${plan_id} subscriptions for user ${target_user_id}",
+	"subscription.user_quota_reset":    "Administrator reset the quota of subscription plan ${plan_title} (ID: ${plan_id})",
+	"subscription.channel_bind":        "Bound channel ${channel_id} to the subscription of user ${target_user_id}",
+	"subscription.channel_unbind":      "Unbound the channel from subscription ${subscription_id} of user ${target_user_id}",
+	"subscription.reset_credit_redeem": "Redeemed a ${provider} reset credit for subscription ${subscription_id} (channel ${channel_id}): ${result}",
 }
 
 func recordPasskeyDomainAudit(c *gin.Context, change *model.PasskeyDomainChange, confirmed bool, err error) {

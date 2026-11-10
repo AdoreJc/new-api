@@ -115,6 +115,8 @@ export interface SubscriptionUsageData {
   plan_type?: string
   limit_reached: boolean
   fetched_at: number
+  /** Administrator switch: the user may view and redeem reset credits */
+  can_reset?: boolean
 }
 
 export interface SubscriptionUsageResponse {
@@ -122,6 +124,17 @@ export interface SubscriptionUsageResponse {
   message?: string
   upstream_status?: number
   data?: SubscriptionUsageData
+}
+
+/**
+ * Reset credits of the bound account, or the answer of one redemption. The
+ * data follows the provider's channel reset-credit projection.
+ */
+export interface SubscriptionResetCreditsResponse {
+  success: boolean
+  message?: string
+  upstream_status?: number
+  data?: Record<string, unknown>
 }
 
 export interface UserSubscriptionRecord {
