@@ -120,8 +120,9 @@ func GetStatus(c *gin.Context) {
 		"passkey_user_verification":   passkeySetting.UserVerification,
 		"passkey_attachment":          passkeySetting.AttachmentPreference,
 		"setup":                       constant.Setup,
-		"user_agreement_enabled":      legalSetting.UserAgreement != "",
-		"privacy_policy_enabled":      legalSetting.PrivacyPolicy != "",
+		"user_agreement_enabled":      legalSetting.UserAgreement != "" || system_setting.HasLocalizedSiteContent(system_setting.SiteContentUserAgreement),
+		"privacy_policy_enabled":      legalSetting.PrivacyPolicy != "" || system_setting.HasLocalizedSiteContent(system_setting.SiteContentPrivacyPolicy),
+		"footer_i18n_enabled":         system_setting.HasLocalizedSiteContent(system_setting.SiteContentFooter),
 		"checkin_enabled":             operation_setting.GetCheckinSetting().Enabled,
 		"log_export_enabled":          operation_setting.GetLogSetting().UserExportEnabled,
 		"log_max_range_days":          operation_setting.GetLogSetting().MaxRangeDays,
@@ -180,22 +181,22 @@ func GetNotice(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
 	notice := common.OptionMap["Notice"]
 	common.OptionMapRWMutex.RUnlock()
-	serveRevalidatedJSON(c, notice)
+	serveLocalizedSiteContent(c, system_setting.SiteContentNotice, notice)
 }
 
 func GetAbout(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
 	about := common.OptionMap["About"]
 	common.OptionMapRWMutex.RUnlock()
-	serveRevalidatedJSON(c, about)
+	serveLocalizedSiteContent(c, system_setting.SiteContentAbout, about)
 }
 
 func GetUserAgreement(c *gin.Context) {
-	serveRevalidatedJSON(c, system_setting.GetLegalSettings().UserAgreement)
+	serveLocalizedSiteContent(c, system_setting.SiteContentUserAgreement, system_setting.GetLegalSettings().UserAgreement)
 }
 
 func GetPrivacyPolicy(c *gin.Context) {
-	serveRevalidatedJSON(c, system_setting.GetLegalSettings().PrivacyPolicy)
+	serveLocalizedSiteContent(c, system_setting.SiteContentPrivacyPolicy, system_setting.GetLegalSettings().PrivacyPolicy)
 }
 
 func GetMidjourney(c *gin.Context) {
@@ -213,7 +214,7 @@ func GetHomePageContent(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
 	homePageContent := common.OptionMap["HomePageContent"]
 	common.OptionMapRWMutex.RUnlock()
-	serveRevalidatedJSON(c, homePageContent)
+	serveLocalizedSiteContent(c, system_setting.SiteContentHomePageContent, homePageContent)
 }
 
 func SendEmailVerification(c *gin.Context) {

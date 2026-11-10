@@ -50,6 +50,13 @@ const SITE_SECTIONS = [
             user_agreement: settings['legal.user_agreement'],
             privacy_policy: settings['legal.privacy_policy'],
           },
+          site_content_i18n: {
+            footer: settings['site_content_i18n.footer'],
+            about: settings['site_content_i18n.about'],
+            home_page_content: settings['site_content_i18n.home_page_content'],
+            user_agreement: settings['site_content_i18n.user_agreement'],
+            privacy_policy: settings['site_content_i18n.privacy_policy'],
+          },
         }}
       />
     ),
@@ -58,7 +65,10 @@ const SITE_SECTIONS = [
     id: 'notice',
     titleKey: 'System Notice',
     build: (settings: SiteSettings) => (
-      <NoticeSection defaultValue={settings.Notice ?? ''} />
+      <NoticeSection
+        defaultValue={settings.Notice ?? ''}
+        defaultTranslations={settings['site_content_i18n.notice'] ?? '{}'}
+      />
     ),
   },
   {

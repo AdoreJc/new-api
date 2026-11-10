@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { PublicLayout } from '@/components/layout'
 import { RichContent } from '@/components/rich-content'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useContentLanguage } from '@/hooks/use-content-language'
 import { isHttpUrl, isLikelyHtml } from '@/lib/content-format'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
@@ -115,9 +116,10 @@ function EmptyAboutState() {
 
 export function About() {
   const { t } = useTranslation()
+  const lang = useContentLanguage()
   const { data, isLoading } = useQuery({
-    queryKey: ['about-content'],
-    queryFn: async () => requireServerSuccess(await getAboutContent()),
+    queryKey: ['about-content', lang],
+    queryFn: async () => requireServerSuccess(await getAboutContent(lang)),
   })
 
   const rawContent = data?.data?.trim() ?? ''

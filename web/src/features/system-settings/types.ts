@@ -152,6 +152,12 @@ export type SiteSettings = {
   'general_setting.docs_link': string
   'legal.user_agreement': string
   'legal.privacy_policy': string
+  'site_content_i18n.notice': string
+  'site_content_i18n.footer': string
+  'site_content_i18n.about': string
+  'site_content_i18n.home_page_content': string
+  'site_content_i18n.user_agreement': string
+  'site_content_i18n.privacy_policy': string
   HeaderNavModules: string
   SidebarModulesAdmin: string
 }

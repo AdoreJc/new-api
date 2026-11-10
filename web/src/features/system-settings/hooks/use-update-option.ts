@@ -31,6 +31,10 @@ const STATUS_RELATED_KEYS = new Set([
   'HeaderNavModules',
   'SidebarModulesAdmin',
   'Notice',
+  // Status reports whether these have any translation.
+  'site_content_i18n.footer',
+  'site_content_i18n.user_agreement',
+  'site_content_i18n.privacy_policy',
   'LogConsumeEnabled',
   'log_setting.user_export_enabled',
   'log_setting.max_range_days',

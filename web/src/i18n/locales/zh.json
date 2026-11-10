@@ -7529,6 +7529,13 @@
     "Use one available reset credit for the account bound to this subscription. The reset request is sent only after confirmation.": "为此订阅绑定的账户使用一次可用的重置额度。确认后才会发送重置请求。",
     "Reset credits are not enabled for your account": "你的账户未开启重置额度",
     "Another reset for this account is still in progress. Refresh the reset credits after it finishes": "该账户的另一个重置请求仍在进行中。完成后请刷新重置额度",
-    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "已为订阅 {{subscription_id}}（渠道 {{channel_id}}）使用 {{provider}} 重置额度：{{result}}"
+    "Redeemed a {{provider}} reset credit for subscription {{subscription_id}} (channel {{channel_id}}): {{result}}": "已为订阅 {{subscription_id}}（渠道 {{channel_id}}）使用 {{provider}} 重置额度：{{result}}",
+    "Content language": "内容语言",
+    "Translated": "已翻译",
+    "Leave empty to use the default content": "留空则使用默认内容",
+    "Use the language tabs to enter a translation. Languages left empty show the default content.": "通过语言标签页填写各语言版本。留空的语言显示默认内容。",
+    "Unknown localized content field: {{field}}": "未知的多语言内容字段：{{field}}",
+    "Localized content must be a JSON object that maps language codes to text": "多语言内容必须是将语言代码映射到文本的 JSON 对象",
+    "Invalid language code in localized content: {{lang}}": "多语言内容中的语言代码无效：{{lang}}"
   }
 }

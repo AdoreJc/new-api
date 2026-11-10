@@ -25,6 +25,7 @@ import { RichContent } from '@/components/rich-content'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useContentLanguage } from '@/hooks/use-content-language'
 import { isHttpUrl, isLikelyHtml } from '@/lib/content-format'
 
 import type { LegalDocumentResponse } from './types'
@@ -32,7 +33,7 @@ import type { LegalDocumentResponse } from './types'
 type LegalDocumentProps = {
   title: string
   queryKey: string
-  fetchDocument: () => Promise<LegalDocumentResponse>
+  fetchDocument: (lang?: string) => Promise<LegalDocumentResponse>
   emptyMessage: string
 }
 
@@ -43,9 +44,10 @@ export function LegalDocument({
   emptyMessage,
 }: LegalDocumentProps) {
   const { t } = useTranslation()
+  const lang = useContentLanguage()
   const { data, isLoading } = useQuery({
-    queryKey: [queryKey],
-    queryFn: fetchDocument,
+    queryKey: [queryKey, lang],
+    queryFn: () => fetchDocument(lang),
     staleTime: 10 * 60 * 1000,
   })
 

@@ -25,15 +25,21 @@ import type { LegalDocumentResponse } from './types'
 // keeping a copy, so it would never hold an ETag to revalidate with and the
 // server could never answer 304. These are the largest payloads in this family
 // and are re-fetched on every sign-up, so the saving is the most visible here.
-export async function getUserAgreement(): Promise<LegalDocumentResponse> {
+export async function getUserAgreement(
+  lang?: string
+): Promise<LegalDocumentResponse> {
   const res = await api.get<LegalDocumentResponse>('/api/user-agreement', {
+    params: { lang },
     headers: { 'Cache-Control': null },
   })
   return res.data
 }
 
-export async function getPrivacyPolicy(): Promise<LegalDocumentResponse> {
+export async function getPrivacyPolicy(
+  lang?: string
+): Promise<LegalDocumentResponse> {
   const res = await api.get<LegalDocumentResponse>('/api/privacy-policy', {
+    params: { lang },
     headers: { 'Cache-Control': null },
   })
   return res.data

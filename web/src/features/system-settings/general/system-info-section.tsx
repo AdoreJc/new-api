@@ -31,7 +31,6 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 
 import { FormDirtyIndicator } from '../components/form-dirty-indicator'
 import { FormNavigationGuard } from '../components/form-navigation-guard'
@@ -44,6 +43,11 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
+import {
+  normalizeLocalizedContentOption,
+  toLocalizedContentOptionValue,
+} from '../utils/localized-content'
+import { LocalizedContentField } from './localized-content-field'
 import { isValidTaskPublicAddress } from './task-public-address'
 
 const _systemInfoSchema = z.object({
@@ -60,6 +64,13 @@ const _systemInfoSchema = z.object({
   legal: z.object({
     user_agreement: z.string().optional(),
     privacy_policy: z.string().optional(),
+  }),
+  site_content_i18n: z.object({
+    footer: z.string(),
+    about: z.string(),
+    home_page_content: z.string(),
+    user_agreement: z.string(),
+    privacy_policy: z.string(),
   }),
 })
 
@@ -93,6 +104,23 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
       user_agreement: normalizeValue(defaultValues.legal?.user_agreement),
       privacy_policy: normalizeValue(defaultValues.legal?.privacy_policy),
     },
+    site_content_i18n: {
+      footer: normalizeLocalizedContentOption(
+        defaultValues.site_content_i18n?.footer
+      ),
+      about: normalizeLocalizedContentOption(
+        defaultValues.site_content_i18n?.about
+      ),
+      home_page_content: normalizeLocalizedContentOption(
+        defaultValues.site_content_i18n?.home_page_content
+      ),
+      user_agreement: normalizeLocalizedContentOption(
+        defaultValues.site_content_i18n?.user_agreement
+      ),
+      privacy_policy: normalizeLocalizedContentOption(
+        defaultValues.site_content_i18n?.privacy_policy
+      ),
+    },
   }
 
   const systemInfoSchemaWithI18n = z.object({
@@ -117,6 +145,13 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
       user_agreement: z.string().optional(),
       privacy_policy: z.string().optional(),
     }),
+    site_content_i18n: z.object({
+      footer: z.string(),
+      about: z.string(),
+      home_page_content: z.string(),
+      user_agreement: z.string(),
+      privacy_policy: z.string(),
+    }),
   })
 
   const { form, handleSubmit, handleReset, isDirty, isSubmitting } =
@@ -132,6 +167,9 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
           let v = normalizeValue(value)
           if (key === 'ServerAddress' || key === 'TaskPublicAddress') {
             v = v.replace(/\/+$/, '')
+          }
+          if (key.startsWith('site_content_i18n.')) {
+            v = toLocalizedContentOptionValue(v)
           }
           await updateOption.mutateAsync({
             key,
@@ -254,126 +292,67 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                 )}
               />
 
-              <FormField
+              <LocalizedContentField
                 control={form.control}
                 name='Footer'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Footer')}</FormLabel>
-                    <FormControl>
-                      <Textarea
-                        placeholder={t(
-                          '© 2025 Your Company. All rights reserved.'
-                        )}
-                        rows={4}
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t('Footer text displayed at the bottom of pages')}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                translationsName='site_content_i18n.footer'
+                label={t('Footer')}
+                placeholder={t('© 2025 Your Company. All rights reserved.')}
+                description={t('Footer text displayed at the bottom of pages')}
               />
 
-              <FormField
+              <LocalizedContentField
                 control={form.control}
                 name='About'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('About')}</FormLabel>
-                    <FormControl>
-                      <Textarea
-                        placeholder={t(
-                          'Enter HTML code (e.g., <p>About us...</p>) or a URL (e.g., https://example.com) to embed as iframe'
-                        )}
-                        rows={4}
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t(
-                        'Supports HTML markup or iframe embedding. Enter HTML code directly, or provide a complete URL to automatically embed it as an iframe.'
-                      )}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
+                translationsName='site_content_i18n.about'
+                label={t('About')}
+                placeholder={t(
+                  'Enter HTML code (e.g., <p>About us...</p>) or a URL (e.g., https://example.com) to embed as iframe'
+                )}
+                description={t(
+                  'Supports HTML markup or iframe embedding. Enter HTML code directly, or provide a complete URL to automatically embed it as an iframe.'
                 )}
               />
 
               <SettingsFormGridItem span='full'>
-                <FormField
+                <LocalizedContentField
                   control={form.control}
                   name='HomePageContent'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>{t('Home Page Content')}</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder={t('Welcome to our New API...')}
-                          rows={6}
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        {t(
-                          'Content displayed on the home page (supports Markdown)'
-                        )}
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
+                  translationsName='site_content_i18n.home_page_content'
+                  label={t('Home Page Content')}
+                  placeholder={t('Welcome to our New API...')}
+                  rows={6}
+                  description={t(
+                    'Content displayed on the home page (supports Markdown)'
                   )}
                 />
               </SettingsFormGridItem>
 
-              <FormField
+              <LocalizedContentField
                 control={form.control}
                 name='legal.user_agreement'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('User Agreement')}</FormLabel>
-                    <FormControl>
-                      <Textarea
-                        placeholder={t(
-                          'Provide Markdown, HTML, or an external URL for the user agreement'
-                        )}
-                        rows={6}
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t(
-                        'Leave empty to disable the agreement requirement. Supports Markdown, HTML, or a full URL to redirect users.'
-                      )}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
+                translationsName='site_content_i18n.user_agreement'
+                label={t('User Agreement')}
+                placeholder={t(
+                  'Provide Markdown, HTML, or an external URL for the user agreement'
+                )}
+                rows={6}
+                description={t(
+                  'Leave empty to disable the agreement requirement. Supports Markdown, HTML, or a full URL to redirect users.'
                 )}
               />
 
-              <FormField
+              <LocalizedContentField
                 control={form.control}
                 name='legal.privacy_policy'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Privacy Policy')}</FormLabel>
-                    <FormControl>
-                      <Textarea
-                        placeholder={t(
-                          'Provide Markdown, HTML, or an external URL for the privacy policy'
-                        )}
-                        rows={6}
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t(
-                        'Leave empty to disable the privacy policy requirement. Supports Markdown, HTML, or a full URL to redirect users.'
-                      )}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
+                translationsName='site_content_i18n.privacy_policy'
+                label={t('Privacy Policy')}
+                placeholder={t(
+                  'Provide Markdown, HTML, or an external URL for the privacy policy'
+                )}
+                rows={6}
+                description={t(
+                  'Leave empty to disable the privacy policy requirement. Supports Markdown, HTML, or a full URL to redirect users.'
                 )}
               />
             </SettingsFormGrid>
