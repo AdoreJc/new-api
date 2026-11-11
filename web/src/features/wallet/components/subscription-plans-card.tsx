@@ -67,7 +67,8 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
-import type { PaymentMethod, TopupInfo } from '../types'
+import { getEpayPayMethods, getStripeRoutedPayMethods } from '../lib/payment'
+import type { TopupInfo } from '../types'
 
 interface SubscriptionPlansCardProps {
   topupInfo: TopupInfo | null
@@ -76,12 +77,6 @@ interface SubscriptionPlansCardProps {
   /** Price charged per 1 USD when a plan is paid through Epay. */
   priceRatio?: number
   onPurchaseSuccess?: () => void | Promise<void>
-}
-
-function getEpayMethods(payMethods: PaymentMethod[] = []): PaymentMethod[] {
-  return payMethods.filter(
-    (m) => m?.type && m.type !== 'stripe' && m.type !== 'creem'
-  )
 }
 
 function getBillingPreferenceLabel(
@@ -133,7 +128,11 @@ export function SubscriptionPlansCard({
   const enableWaffoPancake = !!topupInfo?.enable_waffo_pancake_topup
   const enableOnlineTopUp = !!topupInfo?.enable_online_topup
   const epayMethods = useMemo(
-    () => getEpayMethods(topupInfo?.pay_methods),
+    () => getEpayPayMethods(topupInfo?.pay_methods),
+    [topupInfo?.pay_methods]
+  )
+  const stripeRoutedMethods = useMemo(
+    () => getStripeRoutedPayMethods(topupInfo?.pay_methods),
     [topupInfo?.pay_methods]
   )
 
@@ -685,6 +684,7 @@ export function SubscriptionPlansCard({
         enableWaffoPancake={enableWaffoPancake}
         enableOnlineTopUp={enableOnlineTopUp}
         epayMethods={epayMethods}
+        stripeMethods={stripeRoutedMethods}
         priceRatio={priceRatio}
         userQuota={userQuota}
         onPurchaseSuccess={onPurchaseSuccess}

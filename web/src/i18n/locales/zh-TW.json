@@ -7536,6 +7536,14 @@
     "Use the language tabs to enter a translation. Languages left empty show the default content.": "透過語言分頁填寫各語言版本。留空的語言顯示預設內容。",
     "Unknown localized content field: {{field}}": "未知的多語言內容欄位：{{field}}",
     "Localized content must be a JSON object that maps language codes to text": "多語言內容必須是將語言代碼對應到文字的 JSON 物件",
-    "Invalid language code in localized content: {{lang}}": "多語言內容中的語言代碼無效：{{lang}}"
+    "Invalid language code in localized content: {{lang}}": "多語言內容中的語言代碼無效：{{lang}}",
+    "Epay": "易支付",
+    "Payment channel": "支付渠道",
+    "via Stripe": "經 Stripe",
+    "With Stripe, enable Alipay / WeChat Pay in the Stripe Dashboard first, and make sure the Stripe price currency is supported by these payment methods.": "選擇 Stripe 前，請先在 Stripe Dashboard 開通 Alipay / WeChat Pay，並確認 Stripe 價格的幣種受這兩種支付方式支援。",
+    "Payment methods must be a JSON array of objects with string values": "支付方式必須是 JSON 陣列，且每項的值都是字串",
+    "Only alipay and wxpay payment methods can use the Stripe channel, got {{type}}": "只有 alipay 和 wxpay 支付方式可以使用 Stripe 渠道，目前為 {{type}}",
+    "Unsupported payment channel {{provider}} for payment method {{type}}": "支付方式 {{type}} 的支付渠道 {{provider}} 不受支援",
+    "Payment method {{type}} uses the Stripe channel and must be configured only once": "支付方式 {{type}} 使用 Stripe 渠道，只能設定一次"
   }
 }

@@ -7536,6 +7536,14 @@
     "Use the language tabs to enter a translation. Languages left empty show the default content.": "Use the language tabs to enter a translation. Languages left empty show the default content.",
     "Unknown localized content field: {{field}}": "Unknown localized content field: {{field}}",
     "Localized content must be a JSON object that maps language codes to text": "Localized content must be a JSON object that maps language codes to text",
-    "Invalid language code in localized content: {{lang}}": "Invalid language code in localized content: {{lang}}"
+    "Invalid language code in localized content: {{lang}}": "Invalid language code in localized content: {{lang}}",
+    "Epay": "Epay",
+    "Payment channel": "Payment channel",
+    "via Stripe": "via Stripe",
+    "With Stripe, enable Alipay / WeChat Pay in the Stripe Dashboard first, and make sure the Stripe price currency is supported by these payment methods.": "With Stripe, enable Alipay / WeChat Pay in the Stripe Dashboard first, and make sure the Stripe price currency is supported by these payment methods.",
+    "Payment methods must be a JSON array of objects with string values": "Payment methods must be a JSON array of objects with string values",
+    "Only alipay and wxpay payment methods can use the Stripe channel, got {{type}}": "Only alipay and wxpay payment methods can use the Stripe channel, got {{type}}",
+    "Unsupported payment channel {{provider}} for payment method {{type}}": "Unsupported payment channel {{provider}} for payment method {{type}}",
+    "Payment method {{type}} uses the Stripe channel and must be configured only once": "Payment method {{type}} uses the Stripe channel and must be configured only once"
   }
 }
