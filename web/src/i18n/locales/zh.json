@@ -7638,7 +7638,6 @@
     "Delete matching events": "删除符合条件的事件",
     "Delete prompt audit events": "删除提示词审计事件",
     "Delete this event? This cannot be undone.": "删除这条事件？此操作无法撤销。",
-    "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.": "删除符合当前筛选条件的 {{count}} 条事件？预览之后新记录的事件会保留。此操作无法撤销。",
     "Deleted {{count}} events": "已删除 {{count}} 条事件",
     "Deleted {{count}} prompt audit events": "删除了 {{count}} 条提示词审计事件",
     "Dropped (queue full)": "丢弃（队列已满）",
@@ -7761,12 +7760,18 @@
     "Scanned {{rows}} events. The search reached the oldest event.": "已扫描 {{rows}} 条事件，已搜索到最早的事件。",
     "Continue search": "继续搜索",
     "Back to newest": "回到最新",
-    "Delete selected": "删除所选",
     "Delete {{count}} selected events? This cannot be undone.": "删除所选的 {{count}} 条事件？此操作无法撤销。",
     "Unknown keyword search mode": "未知的关键词搜索模式",
     "Unknown keyword search field": "未知的关键词搜索字段",
     "Regex and full prompt searches cannot delete by filter because their matches are found by scanning. Select the results and delete them instead": "正则搜索和完整提示词搜索的结果是逐行扫描得到的，不能按筛选删除。请勾选结果后批量删除",
     "Regex and full prompt searches are paged with a cursor": "正则搜索和完整提示词搜索使用游标分页",
-    "Invalid regular expression (RE2 syntax): {{error}}": "正则表达式无效（RE2 语法）：{{error}}"
+    "Invalid regular expression (RE2 syntax): {{error}}": "正则表达式无效（RE2 语法）：{{error}}",
+    "Delete selected ({{count}})": "删除选中（{{count}}）",
+    "Delete {{count}} events that match these filters? Events recorded after this preview are kept. This cannot be undone.": "删除符合以下条件的 {{count}} 条事件？预览之后新记录的事件会保留。此操作无法撤销。",
+    "Keyword": "关键词",
+    "Deletion filters": "删除条件",
+    "No filters are set: every event up to this preview is deleted.": "未设置任何条件：将删除截至本次预览的所有事件。",
+    "The deletion preview expired. Preview the deletion again": "删除预览已过期，请重新预览",
+    "The filters changed after the preview. Preview the deletion again": "预览后筛选条件已改变，请重新预览"
   }
 }

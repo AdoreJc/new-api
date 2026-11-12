@@ -7638,7 +7638,6 @@
     "Delete matching events": "Supprimer les événements correspondants",
     "Delete prompt audit events": "Supprimer des événements d'audit des prompts",
     "Delete this event? This cannot be undone.": "Supprimer cet événement ? Cette action est irréversible.",
-    "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.": "Supprimer les {{count}} événements correspondant aux filtres appliqués ? Les événements enregistrés après cet aperçu sont conservés. Cette action est irréversible.",
     "Deleted {{count}} events": "{{count}} événements supprimés",
     "Deleted {{count}} prompt audit events": "{{count}} événements d'audit des prompts supprimés",
     "Dropped (queue full)": "Ignorés (file pleine)",
@@ -7761,12 +7760,18 @@
     "Scanned {{rows}} events. The search reached the oldest event.": "{{rows}} événements analysés. La recherche a atteint l'événement le plus ancien.",
     "Continue search": "Continuer la recherche",
     "Back to newest": "Revenir aux plus récents",
-    "Delete selected": "Supprimer la sélection",
     "Delete {{count}} selected events? This cannot be undone.": "Supprimer les {{count}} événements sélectionnés ? Cette action est irréversible.",
     "Unknown keyword search mode": "Mode de recherche par mot-clé inconnu",
     "Unknown keyword search field": "Champ de recherche par mot-clé inconnu",
     "Regex and full prompt searches cannot delete by filter because their matches are found by scanning. Select the results and delete them instead": "Les recherches par regex et dans les prompts complets ne peuvent pas supprimer par filtre, car leurs résultats sont obtenus par analyse. Sélectionnez les résultats et supprimez-les",
     "Regex and full prompt searches are paged with a cursor": "Les recherches par regex et dans les prompts complets sont paginées par curseur",
-    "Invalid regular expression (RE2 syntax): {{error}}": "Expression régulière invalide (syntaxe RE2) : {{error}}"
+    "Invalid regular expression (RE2 syntax): {{error}}": "Expression régulière invalide (syntaxe RE2) : {{error}}",
+    "Delete selected ({{count}})": "Supprimer la sélection ({{count}})",
+    "Delete {{count}} events that match these filters? Events recorded after this preview are kept. This cannot be undone.": "Supprimer les {{count}} événements correspondant à ces filtres ? Les événements enregistrés après cet aperçu sont conservés. Cette action est irréversible.",
+    "Keyword": "Mot-clé",
+    "Deletion filters": "Filtres de suppression",
+    "No filters are set: every event up to this preview is deleted.": "Aucun filtre : tous les événements jusqu'à cet aperçu seront supprimés.",
+    "The deletion preview expired. Preview the deletion again": "L'aperçu de suppression a expiré. Relancez l'aperçu",
+    "The filters changed after the preview. Preview the deletion again": "Les filtres ont changé depuis l'aperçu. Relancez l'aperçu"
   }
 }

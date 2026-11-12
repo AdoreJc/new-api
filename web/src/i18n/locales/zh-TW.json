@@ -7638,7 +7638,6 @@
     "Delete matching events": "刪除符合條件的事件",
     "Delete prompt audit events": "刪除提示詞稽核事件",
     "Delete this event? This cannot be undone.": "刪除這筆事件？此操作無法復原。",
-    "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.": "刪除符合目前篩選條件的 {{count}} 筆事件？預覽之後新記錄的事件會保留。此操作無法復原。",
     "Deleted {{count}} events": "已刪除 {{count}} 筆事件",
     "Deleted {{count}} prompt audit events": "刪除了 {{count}} 筆提示詞稽核事件",
     "Dropped (queue full)": "捨棄（佇列已滿）",
@@ -7761,12 +7760,18 @@
     "Scanned {{rows}} events. The search reached the oldest event.": "已掃描 {{rows}} 筆事件，已搜尋到最早的事件。",
     "Continue search": "繼續搜尋",
     "Back to newest": "回到最新",
-    "Delete selected": "刪除所選",
     "Delete {{count}} selected events? This cannot be undone.": "刪除所選的 {{count}} 筆事件？此操作無法復原。",
     "Unknown keyword search mode": "未知的關鍵字搜尋模式",
     "Unknown keyword search field": "未知的關鍵字搜尋欄位",
     "Regex and full prompt searches cannot delete by filter because their matches are found by scanning. Select the results and delete them instead": "正規表示式搜尋和完整提示詞搜尋的結果是逐列掃描得到的，不能依篩選刪除。請勾選結果後批次刪除",
     "Regex and full prompt searches are paged with a cursor": "正規表示式搜尋和完整提示詞搜尋使用游標分頁",
-    "Invalid regular expression (RE2 syntax): {{error}}": "正規表示式無效（RE2 語法）：{{error}}"
+    "Invalid regular expression (RE2 syntax): {{error}}": "正規表示式無效（RE2 語法）：{{error}}",
+    "Delete selected ({{count}})": "刪除選取（{{count}}）",
+    "Delete {{count}} events that match these filters? Events recorded after this preview are kept. This cannot be undone.": "刪除符合以下條件的 {{count}} 筆事件？預覽之後新記錄的事件會保留。此操作無法復原。",
+    "Keyword": "關鍵字",
+    "Deletion filters": "刪除條件",
+    "No filters are set: every event up to this preview is deleted.": "未設定任何條件：將刪除截至本次預覽的所有事件。",
+    "The deletion preview expired. Preview the deletion again": "刪除預覽已過期，請重新預覽",
+    "The filters changed after the preview. Preview the deletion again": "預覽後篩選條件已改變，請重新預覽"
   }
 }

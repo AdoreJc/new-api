@@ -2,6 +2,8 @@ package model
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"regexp"
 	"slices"
 	"strings"
@@ -440,6 +442,39 @@ func DeletePromptAuditEventsByIds(ids []int64) (int64, error) {
 	}
 	result := DB.Where("id IN ?", ids).Delete(&PromptAuditEvent{})
 	return result.RowsAffected, result.Error
+}
+
+// DeletionHash identifies the filter and snapshot a deletion preview counted.
+// The keyword settings are normalized the way apply reads them, so
+// equivalent filters hash the same; any change to what would be deleted
+// changes the hash.
+func (f PromptAuditEventFilter) DeletionHash(snapshotMaxId int64) (string, error) {
+	fields, err := f.SearchFields()
+	if err != nil {
+		return "", err
+	}
+	keyword := strings.TrimSpace(f.Keyword)
+	mode := f.KeywordMode
+	if mode == "" {
+		mode = PromptAuditKeywordModePlain
+	}
+	if keyword == "" {
+		fields, mode = nil, ""
+	}
+	payload, err := common.Marshal(struct {
+		Filter        PromptAuditEventFilter `json:"filter"`
+		SnapshotMaxId int64                  `json:"snapshot_max_id"`
+	}{PromptAuditEventFilter{
+		Decision: f.Decision, RiskLevel: f.RiskLevel,
+		UserId: f.UserId, TokenId: f.TokenId, Group: f.Group, ModelName: f.ModelName, RequestId: f.RequestId,
+		PromptHash: strings.ToLower(f.PromptHash), Keyword: keyword, KeywordMode: mode,
+		KeywordFields: strings.Join(fields, ","), StartTime: f.StartTime, EndTime: f.EndTime,
+	}, snapshotMaxId})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(payload)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 // PreviewPromptAuditEventDeletion counts the matching events and returns the

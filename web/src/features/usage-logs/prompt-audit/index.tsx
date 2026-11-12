@@ -45,10 +45,12 @@ import {
   deletePromptAuditEventsByFilter,
   getPromptAuditEvents,
   previewPromptAuditDeletion,
+  type PromptAuditDeletionPreview,
   type PromptAuditEvent,
   type PromptAuditEventFilter,
 } from './api'
 import { usePromptAuditColumns } from './components/prompt-audit-columns'
+import { PromptAuditFilterSummary } from './components/prompt-audit-filter-summary'
 import { PromptAuditKeywordOptions } from './components/prompt-audit-keyword-options'
 import { PromptAuditScanStatus } from './components/prompt-audit-scan-status'
 import {
@@ -61,17 +63,18 @@ const EMPTY_EVENTS: PromptAuditEvent[] = []
 type PendingDeletion =
   | { kind: 'one'; event: PromptAuditEvent }
   | { kind: 'selected'; ids: number[] }
-  | { kind: 'filter'; total: number; maxId: number }
+  | {
+      kind: 'filter'
+      filter: PromptAuditEventFilter
+      preview: PromptAuditDeletionPreview
+    }
 
-function deletePendingEvents(
-  deletion: PendingDeletion,
-  filter: PromptAuditEventFilter
-) {
+function deletePendingEvents(deletion: PendingDeletion) {
   if (deletion.kind === 'one') return deletePromptAuditEvent(deletion.event.id)
   if (deletion.kind === 'selected') {
     return batchDeletePromptAuditEvents(deletion.ids)
   }
-  return deletePromptAuditEventsByFilter(filter, deletion.maxId)
+  return deletePromptAuditEventsByFilter(deletion.filter, deletion.preview)
 }
 
 export function PromptAuditEvents() {
@@ -117,20 +120,22 @@ export function PromptAuditEvents() {
     manualPagination: true,
   })
 
+  // The preview counts the filters on screen, so it also applies them: what
+  // the list shows, what the dialog counts and what is deleted stay the same.
   const preview = useMutation({
-    mutationFn: () => previewPromptAuditDeletion(filter),
-    onSuccess: (data) => {
-      if (data.total === 0) {
+    mutationFn: (previewed: PromptAuditEventFilter) =>
+      previewPromptAuditDeletion(previewed),
+    onSuccess: (data, previewed) => {
+      if (data.matched_count === 0) {
         toast.info(t('No events match the current filters'))
         return
       }
-      setPending({ kind: 'filter', total: data.total, maxId: data.max_id })
+      setPending({ kind: 'filter', filter: previewed, preview: data })
     },
     onError: (error) => handleServerError(error),
   })
   const remove = useMutation({
-    mutationFn: (deletion: PendingDeletion) =>
-      deletePendingEvents(deletion, filter),
+    mutationFn: deletePendingEvents,
     onSuccess: (data) => {
       toast.success(t('Deleted {{count}} events', { count: data.deleted }))
       setPending(null)
@@ -139,7 +144,11 @@ export function PromptAuditEvents() {
         queryKey: ['prompt-audit', 'events'],
       })
     },
-    onError: (error) => handleServerError(error),
+    onError: (error, deletion) => {
+      handleServerError(error)
+      // An expired or outdated preview cannot be confirmed again.
+      if (deletion.kind === 'filter') setPending(null)
+    },
   })
 
   const apply = (next: PromptAuditEventFilter) => {
@@ -296,7 +305,9 @@ export function PromptAuditEvents() {
                     })
                   }
                 >
-                  {t('Delete selected')}
+                  {t('Delete selected ({{count}})', {
+                    count: table.getSelectedRowModel().rows.length,
+                  })}
                 </Button>
               </DataTableBulkActions>
             }
@@ -325,14 +336,17 @@ export function PromptAuditEvents() {
                   apply({})
                 }}
                 actionEnd={
-                  scanned ? undefined : (
+                  scanned || isScannedPromptAuditSearch(draft) ? undefined : (
                     <Button
                       type='button'
                       size='sm'
                       variant='outline'
                       className='text-destructive'
                       disabled={preview.isPending}
-                      onClick={() => preview.mutate()}
+                      onClick={() => {
+                        apply(draft)
+                        preview.mutate(draft)
+                      }}
                     >
                       {t('Delete matching events')}
                     </Button>
@@ -342,21 +356,36 @@ export function PromptAuditEvents() {
             }
           />
         </div>
+        {/* Inside Content: SectionPageLayout renders only its slot children. */}
+        <ConfirmDialog
+          open={pending !== null}
+          onOpenChange={(open) => {
+            if (!open) setPending(null)
+          }}
+          title={t('Delete prompt audit events')}
+          desc={
+            pending?.kind === 'filter' ? (
+              <div className='grid gap-2'>
+                <p>
+                  {t(
+                    'Delete {{count}} events that match these filters? Events recorded after this preview are kept. This cannot be undone.',
+                    { count: pending.preview.matched_count }
+                  )}
+                </p>
+                <PromptAuditFilterSummary filter={pending.filter} />
+              </div>
+            ) : (
+              pendingDeletionText(pending, t)
+            )
+          }
+          destructive
+          confirmText={t('Delete')}
+          isLoading={remove.isPending}
+          handleConfirm={() => {
+            if (pending) remove.mutate(pending)
+          }}
+        />
       </SectionPageLayout.Content>
-      <ConfirmDialog
-        open={pending !== null}
-        onOpenChange={(open) => {
-          if (!open) setPending(null)
-        }}
-        title={t('Delete prompt audit events')}
-        desc={pendingDeletionText(pending, t)}
-        destructive
-        confirmText={t('Delete')}
-        isLoading={remove.isPending}
-        handleConfirm={() => {
-          if (pending) remove.mutate(pending)
-        }}
-      />
     </SectionPageLayout>
   )
 }
@@ -365,12 +394,6 @@ function pendingDeletionText(
   pending: PendingDeletion | null,
   t: TFunction
 ): string {
-  if (pending?.kind === 'filter') {
-    return t(
-      'Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.',
-      { count: pending.total }
-    )
-  }
   if (pending?.kind === 'selected') {
     return t('Delete {{count}} selected events? This cannot be undone.', {
       count: pending.ids.length,

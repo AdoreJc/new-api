@@ -146,9 +146,22 @@ export function batchDeletePromptAuditEvents(ids: number[]) {
   )
 }
 
+/**
+ * A filtered deletion preview. The confirmation token expires after a few
+ * minutes and only deletes events up to snapshot_max_id that still match the
+ * same filter.
+ */
+export type PromptAuditDeletionPreview = {
+  matched_count: number
+  snapshot_max_id: number
+  filter_hash: string
+  confirmation_token: string
+  expires_at: number
+}
+
 export function previewPromptAuditDeletion(filter: PromptAuditEventFilter) {
   return unwrap(
-    api.post<ApiResponse<{ total: number; max_id: number }>>(
+    api.post<ApiResponse<PromptAuditDeletionPreview>>(
       '/api/prompt_audit/events/delete-preview',
       filter
     ),
@@ -158,12 +171,17 @@ export function previewPromptAuditDeletion(filter: PromptAuditEventFilter) {
 
 export function deletePromptAuditEventsByFilter(
   filter: PromptAuditEventFilter,
-  maxId: number
+  preview: PromptAuditDeletionPreview
 ) {
   return unwrap(
     api.post<ApiResponse<{ deleted: number }>>(
       '/api/prompt_audit/events/delete-by-filter',
-      { filter, max_id: maxId }
+      {
+        filter,
+        snapshot_max_id: preview.snapshot_max_id,
+        filter_hash: preview.filter_hash,
+        confirmation_token: preview.confirmation_token,
+      }
     ),
     t('Failed to delete prompt audit events')
   )

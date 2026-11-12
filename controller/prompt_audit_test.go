@@ -350,5 +350,109 @@ func TestPromptAuditFilteredDeletionRejectsScannedSearches(t *testing.T) {
 	assert.Equal(t, int64(5), remaining)
 
 	preview := securityEnrollmentRequest(http.MethodPost, "/api/prompt_audit/events/delete-preview", `{"keyword":"gpt","keyword_fields":"model_name"}`, "", identity, PreviewPromptAuditEventDeletion)
-	assert.Contains(t, preview.Body.String(), `"total":3`, "plain searches keep filtered deletion")
+	assert.Contains(t, preview.Body.String(), `"matched_count":3`, "plain searches keep filtered deletion")
+}
+
+type promptAuditDeletePreview struct {
+	MatchedCount      int64  `json:"matched_count"`
+	SnapshotMaxId     int64  `json:"snapshot_max_id"`
+	FilterHash        string `json:"filter_hash"`
+	ConfirmationToken string `json:"confirmation_token"`
+	ExpiresAt         int64  `json:"expires_at"`
+}
+
+func previewPromptAuditDeletion(t *testing.T, identity service.AuthIdentity, filter string) promptAuditDeletePreview {
+	t.Helper()
+	response := securityEnrollmentRequest(http.MethodPost, "/api/prompt_audit/events/delete-preview", filter, "", identity, PreviewPromptAuditEventDeletion)
+	var body struct {
+		Success bool                     `json:"success"`
+		Data    promptAuditDeletePreview `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body), response.Body.String())
+	require.True(t, body.Success, response.Body.String())
+	return body.Data
+}
+
+func confirmPromptAuditDeletion(t *testing.T, identity service.AuthIdentity, filter string, preview promptAuditDeletePreview) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := common.Marshal(map[string]any{"snapshot_max_id": preview.SnapshotMaxId, "filter_hash": preview.FilterHash, "confirmation_token": preview.ConfirmationToken})
+	require.NoError(t, err)
+	request := `{"filter":` + filter + `,` + strings.TrimPrefix(string(body), "{")
+	return securityEnrollmentRequest(http.MethodPost, "/api/prompt_audit/events/delete-by-filter", request, "", identity, DeletePromptAuditEventsByFilter)
+}
+
+func promptAuditEventCount(t *testing.T) int64 {
+	t.Helper()
+	var count int64
+	require.NoError(t, model.DB.Model(&model.PromptAuditEvent{}).Count(&count).Error)
+	return count
+}
+
+func TestPromptAuditFilteredDeletionNeedsAMatchingUnexpiredPreview(t *testing.T) {
+	identity := setupPromptAuditTest(t)
+	events := seedPromptAuditSearchEvents(t)
+	const flagged = `{"decision":"flag","keyword":"gpt","keyword_fields":"model_name"}`
+
+	preview := previewPromptAuditDeletion(t, identity, flagged)
+	assert.Equal(t, int64(3), preview.MatchedCount)
+	assert.Equal(t, events[4].Id, preview.SnapshotMaxId)
+	assert.NotEmpty(t, preview.FilterHash)
+	assert.Greater(t, preview.ExpiresAt, time.Now().Unix())
+	_, err := model.CreatePromptAuditEvents([]*model.PromptAuditEvent{{CreatedAt: 600, Decision: "flag", ModelName: "gpt-4o", FullPrompt: "recorded after the preview"}})
+	require.NoError(t, err)
+
+	changed := confirmPromptAuditDeletion(t, identity, `{"decision":"critical"}`, preview)
+	assert.Equal(t, http.StatusConflict, changed.Code)
+	assert.Contains(t, changed.Body.String(), "The filters changed after the preview")
+	widened := preview
+	widened.SnapshotMaxId += 10
+	assert.Equal(t, http.StatusConflict, confirmPromptAuditDeletion(t, identity, flagged, widened).Code, "the snapshot cannot be raised")
+	forged := preview
+	forged.ConfirmationToken += "0"
+	assert.Equal(t, http.StatusBadRequest, confirmPromptAuditDeletion(t, identity, flagged, forged).Code)
+	otherAdmin, err := signPromptAuditDeleteClaims(promptAuditDeleteClaims{FilterHash: preview.FilterHash, SnapshotMaxId: preview.SnapshotMaxId, AdminId: identity.UserID + 1, ExpiresAt: preview.ExpiresAt})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, confirmPromptAuditDeletion(t, identity, flagged, promptAuditDeletePreview{SnapshotMaxId: preview.SnapshotMaxId, FilterHash: preview.FilterHash, ConfirmationToken: otherAdmin}).Code)
+	expiredToken, err := signPromptAuditDeleteClaims(promptAuditDeleteClaims{FilterHash: preview.FilterHash, SnapshotMaxId: preview.SnapshotMaxId, AdminId: identity.UserID, ExpiresAt: time.Now().Add(-time.Second).Unix()})
+	require.NoError(t, err)
+	expired := confirmPromptAuditDeletion(t, identity, flagged, promptAuditDeletePreview{SnapshotMaxId: preview.SnapshotMaxId, FilterHash: preview.FilterHash, ConfirmationToken: expiredToken})
+	assert.Equal(t, http.StatusConflict, expired.Code)
+	assert.Contains(t, expired.Body.String(), "The deletion preview expired")
+	assert.Equal(t, int64(6), promptAuditEventCount(t), "rejected confirmations delete nothing")
+
+	confirmed := confirmPromptAuditDeletion(t, identity, flagged, preview)
+	require.Contains(t, confirmed.Body.String(), `"deleted":3`, confirmed.Body.String())
+	var left []string
+	require.NoError(t, model.DB.Model(&model.PromptAuditEvent{}).Order("id").Pluck("username", &left).Error)
+	assert.Equal(t, []string{"bob", "dave", ""}, left, "the event recorded after the preview is kept")
+
+	var logs []model.AuditLog
+	require.NoError(t, model.LOG_DB.Where("action = ?", "prompt_audit.events_delete").Find(&logs).Error)
+	require.Len(t, logs, 1)
+	require.NotNil(t, logs[0].Other.Op)
+	for key, value := range map[string]string{"count": "3", "scope": `"filter"`, "decision": `"flag"`, "keyword": `"gpt"`, "snapshot_max_id": strconv.FormatInt(events[4].Id, 10)} {
+		encoded, err := common.Marshal(logs[0].Other.Op.Params[key])
+		require.NoError(t, err)
+		assert.JSONEq(t, value, string(encoded), key)
+	}
+	encoded, err := common.Marshal(logs)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "ship order", "deleted prompt text is never logged")
+}
+
+func TestPromptAuditFilteredDeletionDeletesInBatches(t *testing.T) {
+	identity := setupPromptAuditTest(t)
+	seedPromptAuditSearchEvents(t)
+	bulk := make([]*model.PromptAuditEvent, 0, 1100)
+	for range 1100 {
+		bulk = append(bulk, &model.PromptAuditEvent{CreatedAt: 700, Decision: "flag", ModelName: "bulk"})
+	}
+	require.NoError(t, model.DB.CreateInBatches(bulk, 200).Error)
+
+	const filter = `{"model_name":"bulk"}`
+	preview := previewPromptAuditDeletion(t, identity, filter)
+	require.Equal(t, int64(1100), preview.MatchedCount)
+	response := confirmPromptAuditDeletion(t, identity, filter, preview)
+	assert.Contains(t, response.Body.String(), `"deleted":1100`, "more rows than one 500-row batch are all deleted")
+	assert.Equal(t, int64(5), promptAuditEventCount(t))
 }

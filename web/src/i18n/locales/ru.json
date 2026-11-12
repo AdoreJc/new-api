@@ -7638,7 +7638,6 @@
     "Delete matching events": "Удалить подходящие события",
     "Delete prompt audit events": "Удалить события проверки промптов",
     "Delete this event? This cannot be undone.": "Удалить это событие? Это действие нельзя отменить.",
-    "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.": "Удалить {{count}} событий, подходящих под применённые фильтры? События, записанные после предпросмотра, сохранятся. Это действие нельзя отменить.",
     "Deleted {{count}} events": "Удалено событий: {{count}}",
     "Deleted {{count}} prompt audit events": "Удалено событий проверки промптов: {{count}}",
     "Dropped (queue full)": "Отброшено (очередь заполнена)",
@@ -7761,12 +7760,18 @@
     "Scanned {{rows}} events. The search reached the oldest event.": "Просмотрено событий: {{rows}}. Поиск дошёл до самого старого события.",
     "Continue search": "Продолжить поиск",
     "Back to newest": "К самым новым",
-    "Delete selected": "Удалить выбранные",
     "Delete {{count}} selected events? This cannot be undone.": "Удалить выбранные события ({{count}})? Это действие нельзя отменить.",
     "Unknown keyword search mode": "Неизвестный режим поиска по ключевому слову",
     "Unknown keyword search field": "Неизвестное поле поиска по ключевому слову",
     "Regex and full prompt searches cannot delete by filter because their matches are found by scanning. Select the results and delete them instead": "Поиск по регулярному выражению и по полным промптам не поддерживает удаление по фильтру, так как совпадения находятся сканированием. Выберите результаты и удалите их",
     "Regex and full prompt searches are paged with a cursor": "Поиск по регулярному выражению и по полным промптам использует постраничный вывод по курсору",
-    "Invalid regular expression (RE2 syntax): {{error}}": "Недопустимое регулярное выражение (синтаксис RE2): {{error}}"
+    "Invalid regular expression (RE2 syntax): {{error}}": "Недопустимое регулярное выражение (синтаксис RE2): {{error}}",
+    "Delete selected ({{count}})": "Удалить выбранные ({{count}})",
+    "Delete {{count}} events that match these filters? Events recorded after this preview are kept. This cannot be undone.": "Удалить события, подходящие под эти фильтры ({{count}})? События, записанные после предпросмотра, сохранятся. Это действие нельзя отменить.",
+    "Keyword": "Ключевое слово",
+    "Deletion filters": "Фильтры удаления",
+    "No filters are set: every event up to this preview is deleted.": "Фильтры не заданы: будут удалены все события до этого предпросмотра.",
+    "The deletion preview expired. Preview the deletion again": "Срок предпросмотра удаления истёк. Выполните предпросмотр снова",
+    "The filters changed after the preview. Preview the deletion again": "Фильтры изменились после предпросмотра. Выполните предпросмотр снова"
   }
 }

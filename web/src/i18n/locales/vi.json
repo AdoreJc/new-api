@@ -7638,7 +7638,6 @@
     "Delete matching events": "Xóa các sự kiện khớp",
     "Delete prompt audit events": "Xóa sự kiện kiểm duyệt prompt",
     "Delete this event? This cannot be undone.": "Xóa sự kiện này? Không thể hoàn tác.",
-    "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.": "Xóa {{count}} sự kiện khớp với bộ lọc đang áp dụng? Các sự kiện ghi sau lần xem trước này được giữ lại. Không thể hoàn tác.",
     "Deleted {{count}} events": "Đã xóa {{count}} sự kiện",
     "Deleted {{count}} prompt audit events": "Đã xóa {{count}} sự kiện kiểm duyệt prompt",
     "Dropped (queue full)": "Bị bỏ (hàng đợi đầy)",
@@ -7761,12 +7760,18 @@
     "Scanned {{rows}} events. The search reached the oldest event.": "Đã quét {{rows}} sự kiện. Tìm kiếm đã đến sự kiện cũ nhất.",
     "Continue search": "Tiếp tục tìm kiếm",
     "Back to newest": "Về mới nhất",
-    "Delete selected": "Xóa mục đã chọn",
     "Delete {{count}} selected events? This cannot be undone.": "Xóa {{count}} sự kiện đã chọn? Không thể hoàn tác.",
     "Unknown keyword search mode": "Chế độ tìm kiếm từ khóa không xác định",
     "Unknown keyword search field": "Trường tìm kiếm từ khóa không xác định",
     "Regex and full prompt searches cannot delete by filter because their matches are found by scanning. Select the results and delete them instead": "Tìm kiếm regex và prompt đầy đủ không thể xóa theo bộ lọc vì kết quả được tìm bằng cách quét. Hãy chọn kết quả rồi xóa",
     "Regex and full prompt searches are paged with a cursor": "Tìm kiếm regex và prompt đầy đủ được phân trang bằng con trỏ",
-    "Invalid regular expression (RE2 syntax): {{error}}": "Biểu thức chính quy không hợp lệ (cú pháp RE2): {{error}}"
+    "Invalid regular expression (RE2 syntax): {{error}}": "Biểu thức chính quy không hợp lệ (cú pháp RE2): {{error}}",
+    "Delete selected ({{count}})": "Xóa mục đã chọn ({{count}})",
+    "Delete {{count}} events that match these filters? Events recorded after this preview are kept. This cannot be undone.": "Xóa {{count}} sự kiện khớp các bộ lọc này? Các sự kiện ghi sau lần xem trước này được giữ lại. Không thể hoàn tác.",
+    "Keyword": "Từ khóa",
+    "Deletion filters": "Bộ lọc xóa",
+    "No filters are set: every event up to this preview is deleted.": "Chưa đặt bộ lọc: mọi sự kiện tính đến lần xem trước này sẽ bị xóa.",
+    "The deletion preview expired. Preview the deletion again": "Bản xem trước xóa đã hết hạn. Hãy xem trước lại",
+    "The filters changed after the preview. Preview the deletion again": "Bộ lọc đã thay đổi sau khi xem trước. Hãy xem trước lại"
   }
 }
