@@ -216,6 +216,18 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/subscription/epay/notify", controller.SubscriptionEpayNotify)
 		apiRouter.GET("/subscription/epay/return", controller.SubscriptionEpayReturn)
 		apiRouter.POST("/subscription/epay/return", anonymousRequestBodyLimit, controller.SubscriptionEpayReturn)
+		contentAuditRoute := apiRouter.Group("/content_audit")
+		contentAuditRoute.Use(middleware.RootAuth())
+		{
+			contentAuditRoute.GET("/config", controller.GetContentAuditConfig)
+			contentAuditRoute.PUT("/config", controller.UpdateContentAuditConfig)
+			contentAuditRoute.POST("/endpoints/probe", controller.ProbeContentAuditEndpoint)
+			contentAuditRoute.GET("/runtime", controller.GetContentAuditRuntime)
+			contentAuditRoute.GET("/events", controller.GetContentAuditEvents)
+			contentAuditRoute.GET("/events/:id", controller.GetContentAuditEvent)
+			contentAuditRoute.DELETE("/events/:id", controller.DeleteContentAuditEvent)
+			contentAuditRoute.POST("/events/batch-delete", controller.BatchDeleteContentAuditEvents)
+		}
 		optionRoute := apiRouter.Group("/option")
 		optionRoute.Use(middleware.RootAuth())
 		{

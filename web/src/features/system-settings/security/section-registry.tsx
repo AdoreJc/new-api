@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { ContentAuditSettingsSection } from '@/features/content-audit/components/content-audit-settings-section'
+
 import { RateLimitSection } from '../request-limits/rate-limit-section'
 import { SSRFSection } from '../request-limits/ssrf-section'
 import { TokenLimitSection } from '../request-limits/token-limit-section'
@@ -76,6 +78,12 @@ const SECURITY_SECTIONS = [
         }}
       />
     ),
+  },
+  {
+    id: 'content-audit',
+    titleKey: 'Content Audit',
+    // Uses its own API instead of the shared system options.
+    build: () => <ContentAuditSettingsSection />,
   },
 ] as const
 

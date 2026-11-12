@@ -13,6 +13,8 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/plugins"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service/contentaudit"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -180,4 +182,78 @@ func setupRelayRouterTestDB(t *testing.T) {
 			require.NoError(t, os.Unsetenv("SQL_DSN"))
 		}
 	})
+}
+
+// TestRelayRoutesAreClassifiedForContentAudit lists every relay POST route with
+// the relay format it enters controller.Relay with, or why it bypasses the
+// relay entry. A new route fails here until it is classified.
+func TestRelayRoutesAreClassifiedForContentAudit(t *testing.T) {
+	const (
+		notImplemented = "answered with not implemented"
+		task           = "asynchronous task submission, not the relay entry"
+	)
+	relayFormats := map[string]types.RelayFormat{
+		"POST /pg/chat/completions":          types.RelayFormatOpenAI,
+		"POST /v1/chat/completions":          types.RelayFormatOpenAI,
+		"POST /v1/completions":               types.RelayFormatOpenAI,
+		"POST /v1/moderations":               types.RelayFormatOpenAI,
+		"POST /v1/messages":                  types.RelayFormatClaude,
+		"POST /v1/responses":                 types.RelayFormatOpenAIResponses,
+		"POST /v1/responses/compact":         types.RelayFormatOpenAIResponsesCompaction,
+		"POST /v1/models/*path":              types.RelayFormatGemini,
+		"POST /v1beta/models/*path":          types.RelayFormatGemini,
+		"POST /v1/engines/:model/embeddings": types.RelayFormatGemini, // embedding paths are skipped at the entry
+		"POST /v1/images/generations":        types.RelayFormatOpenAIImage,
+		"POST /v1/images/edits":              types.RelayFormatOpenAIImage,
+		"POST /v1/edits":                     types.RelayFormatOpenAIImage,
+		"POST /v1/embeddings":                types.RelayFormatEmbedding,
+		"POST /v1/rerank":                    types.RelayFormatRerank,
+		"POST /v1/audio/speech":              types.RelayFormatOpenAIAudio,
+		"POST /v1/audio/transcriptions":      types.RelayFormatOpenAIAudio,
+		"POST /v1/audio/translations":        types.RelayFormatOpenAIAudio,
+		"POST /v1/alpha/search":              types.RelayFormatOpenAIAlphaSearch,
+		"POST /v1/tools/search":              types.RelayFormatDeepSeekTools,
+		"POST /v1/tools/fetch":               types.RelayFormatDeepSeekTools,
+		"GET /v1/realtime":                   types.RelayFormatOpenAIRealtime,
+	}
+	bypassReasons := map[string]string{
+		"GET /v1/responses":               "Responses WebSocket turns are billed per turn outside the relay entry",
+		"POST /v1/images/variations":      notImplemented,
+		"POST /v1/files":                  notImplemented,
+		"POST /v1/fine-tunes":             notImplemented,
+		"POST /v1/fine-tunes/:id/cancel":  notImplemented,
+		"POST /v1/tasks/:key":             task,
+		"POST /v1/video/generations":      task,
+		"POST /v1/videos":                 task,
+		"POST /v1/videos/:video_id/remix": task,
+	}
+
+	engine := gin.New()
+	SetRelayRouter(engine)
+	SetTaskPluginProtocolRouter(engine)
+	SetVideoRouter(engine)
+	SetTaskRouter(engine)
+	registered := map[string]bool{}
+	for _, route := range engine.Routes() {
+		key := route.Method + " " + route.Path
+		registered[key] = true
+		if route.Method != http.MethodPost {
+			continue
+		}
+		if strings.HasPrefix(route.Path, "/mj/") || strings.HasPrefix(route.Path, "/:mode/mj/") {
+			continue // Midjourney submissions bypass the relay entry
+		}
+		_, relayed := relayFormats[key]
+		_, bypassed := bypassReasons[key]
+		assert.True(t, relayed || bypassed, "classify %s for content audit", key)
+	}
+	for key, format := range relayFormats {
+		assert.True(t, registered[key], "%s is no longer registered", key)
+		assert.True(t, contentaudit.IsAuditedFormat(format) || contentaudit.ExemptReason(format) != "", "%s format %s has no audit classification", key, format)
+	}
+	for key := range bypassReasons {
+		assert.True(t, registered[key], "%s is no longer registered", key)
+	}
+	assert.NotEmpty(t, contentaudit.ExemptReason(types.RelayFormatMjProxy))
+	assert.NotEmpty(t, contentaudit.ExemptReason(types.RelayFormatTask))
 }

@@ -194,6 +194,14 @@ export function auditFieldLabel(key: string, t: TFunction): string {
       return t('Admin permissions updated')
     case 'provider_id':
       return t('Provider ID')
+    case 'enabled':
+      return t('Enabled')
+    case 'config_version':
+      return t('Config version')
+    case 'endpoint_count':
+      return t('Guard endpoint count')
+    case 'success':
+      return t('Success')
     default:
       return key
   }

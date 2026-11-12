@@ -149,6 +149,16 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/subscription/admin/user_subscriptions/:id/invalidate":     accessTokenScopeRule("billing:write"),
 	"DELETE /api/subscription/admin/user_subscriptions/:id":              accessTokenScopeRule("billing:write"),
 
+	// router/api-router.go: /api/content_audit (session only)
+	"GET /api/content_audit/config":               accessTokenSessionRule,
+	"PUT /api/content_audit/config":               accessTokenSessionRule,
+	"POST /api/content_audit/endpoints/probe":     accessTokenSessionRule,
+	"GET /api/content_audit/runtime":              accessTokenSessionRule,
+	"GET /api/content_audit/events":               accessTokenSessionRule,
+	"GET /api/content_audit/events/:id":           accessTokenSessionRule,
+	"DELETE /api/content_audit/events/:id":        accessTokenSessionRule,
+	"POST /api/content_audit/events/batch-delete": accessTokenSessionRule,
+
 	// router/api-router.go: /api/option
 	"GET /api/option/":                                           accessTokenScopeRule("option:read"),
 	"GET /api/option/request_policy":                             accessTokenScopeRule("option:read"),

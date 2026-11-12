@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/content_audit_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -247,6 +248,9 @@ func SyncOptions(frequency int) {
 func validateOptionValue(key string, value string) error {
 	if key == legacyAccessTokenRetireAtKey {
 		return errLegacyRetireAtReadOnly
+	}
+	if content_audit_setting.IsOption(key) {
+		return common.NewMessage("Content audit settings must be saved from the content audit settings page")
 	}
 	if err := operation_setting.ValidateQuotaOption(key, value); err != nil {
 		return err
@@ -724,6 +728,10 @@ func updateOptionMap(key string, value string) (err error) {
 
 // handleConfigUpdate 处理分层配置更新，返回是否已处理
 func handleConfigUpdate(key, value string) bool {
+	if content_audit_setting.IsOption(key) {
+		content_audit_setting.ApplyOption(key, value)
+		return true
+	}
 	if key == operation_setting.ToolPriceOptionKey {
 		operation_setting.LoadToolPricesFromJSONString(value)
 		return true

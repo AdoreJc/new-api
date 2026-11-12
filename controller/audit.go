@@ -52,6 +52,10 @@ var auditContentTemplates = map[string]string{
 	"option.passkey_domains_blocked":   "Passkey domain change blocked: ${domains}; affected ${known}; unknown ${unknown}",
 	"option.passkey_domains_failed":    "Passkey domain update failed",
 
+	"content_audit.config_update":      "Updated content audit settings (version ${config_version}, enabled ${enabled}, ${endpoint_count} guard endpoints)",
+	"content_audit.event_delete":       "Deleted content audit event ${id}",
+	"content_audit.event_batch_delete": "Batch deleted ${count} content audit events",
+
 	"channel.create":             "Created channel ${name} (type ${type}, count ${count})",
 	"channel.update":             "Updated channel ${name} (ID: ${id})",
 	"channel.delete":             "Deleted channel ${name} (ID: ${id})",

@@ -505,6 +505,12 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'custom_oauth.create': 'Created a custom OAuth provider',
   'custom_oauth.update': 'Updated a custom OAuth provider',
   'custom_oauth.delete': 'Deleted a custom OAuth provider',
+  // Content audit
+  'content_audit.config_update':
+    'Updated content audit settings (version {{config_version}})',
+  'content_audit.event_delete': 'Deleted content audit event (ID: {{id}})',
+  'content_audit.event_batch_delete':
+    'Batch deleted {{count}} content audit events',
   // Performance / cache
   'performance.clear_disk_cache': 'Cleared disk cache',
   'performance.gc': 'Triggered garbage collection',

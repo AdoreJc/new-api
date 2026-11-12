@@ -30,6 +30,7 @@ import {
   PlugZap,
   Radio,
   ServerCog,
+  ShieldAlert,
   Settings,
   ShieldCheck,
   Ticket,
@@ -97,6 +98,12 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             title: t('Audit Logs'),
             url: '/usage-logs/audit',
             icon: ClipboardList,
+          },
+          {
+            title: t('Content Audit Events'),
+            url: '/usage-logs/content-audit',
+            icon: ShieldAlert,
+            requiredRole: ROLE.SUPER_ADMIN,
           },
           {
             title: t('Task Logs'),
