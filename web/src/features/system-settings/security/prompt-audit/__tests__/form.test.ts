@@ -38,6 +38,8 @@ const response: PromptAuditConfigResponse = {
     worker_count: 2,
     queue_capacity: 1024,
     max_chunks_per_request: 8,
+    scan_scope: 'all',
+    strict_jailbreak_mapping: true,
     endpoints: [
       {
         id: 'kept',
@@ -98,6 +100,36 @@ describe('prompt audit settings form', () => {
   ])('rejects %s', (_name, patch) => {
     const values = { ...toPromptAuditFormValues(response), ...patch }
     expect(promptAuditFormSchema.safeParse(values).success).toBe(false)
+  })
+
+  it('keeps the saved scan scope and jailbreak mapping when saving', () => {
+    const values = toPromptAuditFormValues(response)
+    expect(values.scan_scope).toBe('all')
+    expect(values.strict_jailbreak_mapping).toBe(true)
+
+    const request = toPromptAuditConfigRequest(
+      { ...values, scan_scope: 'user', strict_jailbreak_mapping: false },
+      response.config
+    )
+
+    expect(request.config.scan_scope).toBe('user')
+    expect(request.config.strict_jailbreak_mapping).toBe(false)
+  })
+
+  it('reads settings saved before the scan options as the new defaults', () => {
+    const legacy = {
+      ...response,
+      config: {
+        ...response.config,
+        scan_scope: undefined,
+        strict_jailbreak_mapping: undefined,
+      },
+    } as unknown as PromptAuditConfigResponse
+
+    const values = toPromptAuditFormValues(legacy)
+
+    expect(values.scan_scope).toBe('latest_user')
+    expect(values.strict_jailbreak_mapping).toBe(false)
   })
 
   it('accepts a group prefix pattern', () => {

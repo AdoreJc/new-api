@@ -85,6 +85,33 @@ it('lists known categories with their selection and unknown ones last', () => {
   ).toEqual([])
 })
 
+async function openDialog(shown: PromptAuditEvent) {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <PromptAuditEventDialog event={shown} />
+    </QueryClientProvider>
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Details' }))
+  return screen.findByRole('dialog', { name: 'Prompt audit event' })
+}
+
+it('shows which chunk and roles triggered the finding', async () => {
+  const dialog = await openDialog({
+    ...event,
+    hit_chunks:
+      '[{"index":2,"roles":["system","agent_context"],"decision":"flag","categories":["jailbreak"]}]',
+  })
+  expect(within(dialog).getByText('Triggered by')).toBeVisible()
+  expect(
+    within(dialog).getByText('Chunk 2 (System, Agent context): Flagged')
+  ).toBeVisible()
+})
+
+it('omits the trigger row for events recorded before it existed', async () => {
+  const dialog = await openDialog({ ...event, hit_chunks: undefined })
+  expect(within(dialog).queryByText('Triggered by')).not.toBeInTheDocument()
+})
+
 it('loads the full prompt only after the viewer asks for it', async () => {
   const get = vi.spyOn(api, 'get').mockResolvedValue({
     data: {

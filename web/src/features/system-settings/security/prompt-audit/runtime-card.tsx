@@ -34,6 +34,10 @@ const RUNTIME_FIELDS: Array<{ key: keyof PromptAuditRuntime; label: string }> =
     { key: 'skipped', label: 'Out of scope' },
     { key: 'skipped_too_large', label: 'Skipped (body too large)' },
     { key: 'skipped_no_text', label: 'Skipped (no text)' },
+    {
+      key: 'skipped_agent_context_only',
+      label: 'Skipped (agent context only)',
+    },
     { key: 'passed', label: 'Passed' },
     { key: 'flagged', label: 'Flagged' },
     { key: 'critical', label: 'Critical' },

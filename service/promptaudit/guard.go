@@ -85,6 +85,18 @@ type guardResult struct {
 	LatencyMS         int
 	// Incomplete marks findings kept after a later chunk failed to scan.
 	Incomplete bool
+	// Hits locates every chunk the Guard did not pass.
+	Hits []chunkHit
+}
+
+// chunkHit records where a finding came from without storing its text: the
+// chunk's 1-based position in scan order (1 is the start of the latest user
+// turn) and the roles whose text the chunk contains.
+type chunkHit struct {
+	Index      int      `json:"index"`
+	Roles      []string `json:"roles"`
+	Decision   string   `json:"decision"`
+	Categories []string `json:"categories,omitempty"`
 }
 
 func normalizeCategory(value string) string {
@@ -98,10 +110,12 @@ func normalizeCategory(value string) string {
 }
 
 // parseQwen3Guard reads the "Safety:" and "Categories:" lines of a Qwen3Guard
-// answer. Safe allows; Controversial warns, except jailbreak, PII and
-// self-harm which are critical; Unsafe is critical when an enabled or unknown
-// category matched (or none was named), otherwise a high-risk warning.
-func parseQwen3Guard(content string, enabledScanners []string) (*guardResult, error) {
+// answer. Safe allows; Controversial warns, except PII and self-harm which are
+// critical, and jailbreak which is critical only with strictJailbreak (coding
+// agent system prompts are often judged a controversial jailbreak); Unsafe is
+// critical when an enabled or unknown category matched (or none was named),
+// otherwise a high-risk warning.
+func parseQwen3Guard(content string, enabledScanners []string, strictJailbreak bool) (*guardResult, error) {
 	var safety, categoryLine string
 	for line := range strings.SplitSeq(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
 		line = strings.TrimSpace(line)
@@ -149,7 +163,7 @@ func parseQwen3Guard(content string, enabledScanners []string) (*guardResult, er
 	case "controversial":
 		result.Decision, result.RiskLevel, result.Action = DecisionFlag, RiskMedium, ActionWarn
 		if slices.ContainsFunc(result.MatchedScanners, func(category string) bool {
-			return category == "jailbreak" || category == "pii" || category == "suicide_and_self_harm"
+			return (category == "jailbreak" && strictJailbreak) || category == "pii" || category == "suicide_and_self_harm"
 		}) {
 			result.Decision, result.RiskLevel, result.Action = DecisionCritical, RiskCritical, ActionBlock
 		}
@@ -216,28 +230,35 @@ func aggregateResults(results []*guardResult) *guardResult {
 	return aggregated
 }
 
-// splitScanText cuts the text at the priority separator into the latest user
-// turn and the rest of the transcript, then each into chunks of at most limit
-// runes. Chunk boundaries of the rest start from its beginning, so a resent
-// conversation keeps the same chunks for its unchanged history.
-func splitScanText(value string, limit int) (latest []string, rest []string) {
-	head, tail, _ := strings.Cut(value, prioritySeparator)
-	return splitRunes(head, limit), splitRunes(tail, limit)
+// scanChunk is one Guard input and the roles of the text it covers.
+type scanChunk struct {
+	text  string
+	roles []string
 }
 
-func splitRunes(value string, limit int) []string {
-	runes := []rune(value)
-	chunks := make([]string, 0, len(runes)/limit+1)
+// chunks cuts the part into chunks of at most limit runes. Boundaries start
+// from the beginning, so a resent conversation keeps the same chunks for its
+// unchanged history.
+func (p scanPart) chunks(limit int) []scanChunk {
+	runes := []rune(p.text)
+	chunks := make([]scanChunk, 0, len(runes)/limit+1)
 	for start := 0; start < len(runes); start += limit {
-		chunks = append(chunks, string(runes[start:min(start+limit, len(runes))]))
+		end := min(start+limit, len(runes))
+		roles := make([]string, 0, 1)
+		for _, span := range p.spans {
+			if span.start < end && span.end > start && !slices.Contains(roles, span.role) {
+				roles = append(roles, span.role)
+			}
+		}
+		chunks = append(chunks, scanChunk{text: string(runes[start:end]), roles: roles})
 	}
 	return chunks
 }
 
 // scanOrder lists the chunks to scan: the latest user turn first, then the
 // rest of the transcript from newest to oldest.
-func scanOrder(latest, rest []string) []string {
-	ordered := make([]string, 0, len(latest)+len(rest))
+func scanOrder(latest, rest []scanChunk) []scanChunk {
+	ordered := make([]scanChunk, 0, len(latest)+len(rest))
 	ordered = append(ordered, latest...)
 	for index := len(rest) - 1; index >= 0; index-- {
 		ordered = append(ordered, rest[index])
@@ -336,11 +357,11 @@ func (g *guardClient) httpClient(endpoint prompt_audit_setting.Endpoint) *http.C
 }
 
 // scan sends one chunk to one endpoint.
-func (g *guardClient) scan(ctx context.Context, endpoint prompt_audit_setting.Endpoint, token, chunk string, scanners []string) (*guardResult, error) {
-	return scanWith(ctx, g.httpClient(endpoint), endpoint, token, chunk, scanners)
+func (g *guardClient) scan(ctx context.Context, endpoint prompt_audit_setting.Endpoint, token, chunk string, config *prompt_audit_setting.Config) (*guardResult, error) {
+	return scanWith(ctx, g.httpClient(endpoint), endpoint, token, chunk, config.Scanners, config.StrictJailbreakMapping)
 }
 
-func scanWith(ctx context.Context, client *http.Client, endpoint prompt_audit_setting.Endpoint, token, chunk string, scanners []string) (*guardResult, error) {
+func scanWith(ctx context.Context, client *http.Client, endpoint prompt_audit_setting.Endpoint, token, chunk string, scanners []string, strictJailbreak bool) (*guardResult, error) {
 	payload, err := common.Marshal(map[string]any{
 		"model":       endpoint.Model,
 		"messages":    []map[string]string{{"role": "user", "content": chunk}},
@@ -387,7 +408,7 @@ func scanWith(ctx context.Context, client *http.Client, endpoint prompt_audit_se
 	if err := common.Unmarshal(body, &envelope); err != nil || len(envelope.Choices) == 0 {
 		return nil, &guardError{Code: errorCodeInvalidResponse, Cause: err}
 	}
-	result, err := parseQwen3Guard(envelope.Choices[0].Message.Content, scanners)
+	result, err := parseQwen3Guard(envelope.Choices[0].Message.Content, scanners, strictJailbreak)
 	if err != nil {
 		return nil, err
 	}
@@ -403,7 +424,7 @@ func (g *guardClient) scanChunk(ctx context.Context, snapshot *prompt_audit_sett
 	for attempt := 0; ; attempt++ {
 		var lastErr error
 		for index, endpoint := range endpoints {
-			result, err := g.scan(ctx, endpoint, snapshot.Tokens[endpoint.ID], chunk, snapshot.Config.Scanners)
+			result, err := g.scan(ctx, endpoint, snapshot.Tokens[endpoint.ID], chunk, &snapshot.Config)
 			if err == nil {
 				return result, nil
 			}
@@ -432,7 +453,7 @@ func (g *guardClient) scanChunk(ctx context.Context, snapshot *prompt_audit_sett
 // to oldest. Chunks judged safe recently are skipped, and at most
 // MaxChunksPerRequest chunks go to the Guard; the rest are left unscanned and
 // counted. It stops at the first chunk that would block.
-func (g *guardClient) evaluate(ctx context.Context, snapshot *prompt_audit_setting.Snapshot, scanText string, retryDelays []time.Duration, metrics *Metrics) (*guardResult, error) {
+func (g *guardClient) evaluate(ctx context.Context, snapshot *prompt_audit_setting.Snapshot, latest, rest scanPart, retryDelays []time.Duration, metrics *Metrics) (*guardResult, error) {
 	endpoints := snapshot.Config.EnabledEndpoints()
 	if len(endpoints) == 0 {
 		return nil, &guardError{Code: errorCodeUnavailable}
@@ -442,12 +463,13 @@ func (g *guardClient) evaluate(ctx context.Context, snapshot *prompt_audit_setti
 		inputLimit = min(inputLimit, endpoint.InputLimit)
 	}
 	started := time.Now()
-	chunks := scanOrder(splitScanText(scanText, inputLimit))
+	chunks := scanOrder(latest.chunks(inputLimit), rest.chunks(inputLimit))
 	budget := snapshot.Config.MaxChunksPerRequest
 	results := make([]*guardResult, 0, min(len(chunks), budget))
+	var hits []chunkHit
 	scanned := 0
 	for index, chunk := range chunks {
-		key := safeChunkKey(snapshot.Config.ConfigVersion, chunk)
+		key := safeChunkKey(snapshot.Config.ConfigVersion, chunk.text)
 		if g.safeChunks.has(key, started) {
 			metrics.chunksCached.Add(1)
 			continue
@@ -457,20 +479,22 @@ func (g *guardClient) evaluate(ctx context.Context, snapshot *prompt_audit_setti
 			break
 		}
 		scanned++
-		result, err := g.scanChunk(ctx, snapshot, endpoints, chunk, retryDelays, metrics)
+		result, err := g.scanChunk(ctx, snapshot, endpoints, chunk.text, retryDelays, metrics)
 		if err != nil {
 			// Keep what earlier chunks found instead of losing it with the error.
 			if !slices.ContainsFunc(results, func(r *guardResult) bool { return r.Decision != DecisionPass }) {
 				return nil, err
 			}
 			partial := aggregateResults(results)
-			partial.ChunkTotal, partial.ChunksScanned, partial.Incomplete = len(chunks), scanned, true
+			partial.ChunkTotal, partial.ChunksScanned, partial.Incomplete, partial.Hits = len(chunks), scanned, true, hits
 			partial.LatencyMS = int(time.Since(started).Milliseconds())
 			return partial, err
 		}
 		results = append(results, result)
 		if result.Decision == DecisionPass {
 			g.safeChunks.add(key, time.Now())
+		} else {
+			hits = append(hits, chunkHit{Index: index + 1, Roles: chunk.roles, Decision: result.Decision, Categories: result.Categories})
 		}
 		if result.Action == ActionBlock {
 			break
@@ -479,6 +503,7 @@ func (g *guardClient) evaluate(ctx context.Context, snapshot *prompt_audit_setti
 	aggregated := aggregateResults(results)
 	aggregated.ChunkTotal = len(chunks)
 	aggregated.ChunksScanned = scanned
+	aggregated.Hits = hits
 	aggregated.LatencyMS = int(time.Since(started).Milliseconds())
 	return aggregated, nil
 }

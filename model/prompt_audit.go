@@ -40,7 +40,11 @@ type PromptAuditEvent struct {
 	ChunkTotal        int    `json:"chunk_total"`
 	ChunksScanned     int    `json:"chunks_scanned"`
 	// ScanIncomplete marks findings kept although a later chunk failed to scan.
-	ScanIncomplete  bool   `json:"scan_incomplete"`
+	ScanIncomplete bool `json:"scan_incomplete"`
+	// HitChunks is a JSON list of the chunks that were not passed: their
+	// position in scan order, the roles of their text, decision and categories.
+	// It never holds prompt text.
+	HitChunks       string `json:"hit_chunks" gorm:"type:text"`
 	LatencyMs       int    `json:"latency_ms"`
 	PromptHash      string `json:"prompt_hash" gorm:"type:varchar(64);index"`
 	RedactedPreview string `json:"redacted_preview" gorm:"type:varchar(512)"`

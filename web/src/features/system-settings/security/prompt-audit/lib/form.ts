@@ -40,6 +40,40 @@ export const PROMPT_AUDIT_SCANNER_LABELS: Record<string, string> = {
 
 export const DEFAULT_GUARD_MODEL = 'sileader/qwen3guard:0.6b'
 
+/** What is sent to the Guard, with English i18n keys. */
+export const PROMPT_AUDIT_SCAN_SCOPES = [
+  {
+    value: 'latest_user',
+    label: 'Latest user message',
+    description:
+      'Only the newest user input. Agent system prompts, tool output and earlier turns are not scanned.',
+  },
+  {
+    value: 'user',
+    label: 'All user messages',
+    description:
+      'Every user message in the conversation, without system, developer, assistant or tool text.',
+  },
+  {
+    value: 'all',
+    label: 'Entire conversation',
+    description:
+      'Every client text, including system prompts, assistant replies and tool output. Agent prompts are often flagged as jailbreaks.',
+  },
+] as const
+
+export type PromptAuditScanScope =
+  (typeof PROMPT_AUDIT_SCAN_SCOPES)[number]['value']
+
+const DEFAULT_SCAN_SCOPE: PromptAuditScanScope = 'latest_user'
+
+function toScanScope(value: string | undefined): PromptAuditScanScope {
+  return (
+    PROMPT_AUDIT_SCAN_SCOPES.find((scope) => scope.value === value)?.value ??
+    DEFAULT_SCAN_SCOPE
+  )
+}
+
 const endpointSchema = z.object({
   id: z.string().min(1),
   name: z.string().max(128),
@@ -67,6 +101,8 @@ export const promptAuditFormSchema = z
     worker_count: z.coerce.number().int().min(1).max(8),
     queue_capacity: z.coerce.number().int().min(1).max(10000),
     max_chunks_per_request: z.coerce.number().int().min(1).max(100),
+    scan_scope: z.enum(['latest_user', 'user', 'all']),
+    strict_jailbreak_mapping: z.boolean(),
     endpoints: z.array(endpointSchema).max(8),
   })
   .superRefine((values, context) => {
@@ -135,6 +171,9 @@ export function toPromptAuditFormValues(
     worker_count: config.worker_count,
     queue_capacity: config.queue_capacity,
     max_chunks_per_request: config.max_chunks_per_request || 8,
+    // Settings saved before these options existed read as the defaults.
+    scan_scope: toScanScope(config.scan_scope),
+    strict_jailbreak_mapping: config.strict_jailbreak_mapping ?? false,
     endpoints: (config.endpoints ?? []).map((endpoint) => ({
       ...endpoint,
       has_token: response.has_token?.[endpoint.id] ?? false,
@@ -174,6 +213,8 @@ export function toPromptAuditConfigRequest(
       worker_count: values.worker_count,
       queue_capacity: values.queue_capacity,
       max_chunks_per_request: values.max_chunks_per_request,
+      scan_scope: values.scan_scope,
+      strict_jailbreak_mapping: values.strict_jailbreak_mapping,
       endpoints: values.endpoints.map((endpoint) => ({
         id: endpoint.id,
         name: endpoint.name.trim(),

@@ -49,6 +49,8 @@ export type PromptAuditEvent = {
   chunk_total: number
   chunks_scanned: number
   scan_incomplete: boolean
+  /** JSON list of the chunks that were not passed; never prompt text. */
+  hit_chunks?: string
   latency_ms: number
   prompt_hash: string
   redacted_preview: string

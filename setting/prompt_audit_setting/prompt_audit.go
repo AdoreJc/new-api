@@ -39,7 +39,17 @@ const (
 	DefaultMaxChunks  = 8
 	MaxMaxChunks      = 100
 	DefaultGuardModel = "sileader/qwen3guard:0.6b"
+
+	// Scan scopes choose which extracted text is sent to the Guard. Stored
+	// prompts and hashes always cover the whole request.
+	ScanScopeLatestUser = "latest_user"
+	ScanScopeUser       = "user"
+	ScanScopeAll        = "all"
+	DefaultScanScope    = ScanScopeLatestUser
 )
+
+// ScanScopes lists the valid scan scopes in display order.
+var ScanScopes = []string{ScanScopeLatestUser, ScanScopeUser, ScanScopeAll}
 
 // ScannerIDs are the Qwen3Guard risk categories in display order.
 var ScannerIDs = []string{
@@ -78,11 +88,17 @@ type Config struct {
 	QueueCapacity   int      `json:"queue_capacity"`
 	// MaxChunksPerRequest limits how many chunks of one request are sent to
 	// the Guard; chunks recently judged safe do not count.
-	MaxChunksPerRequest int        `json:"max_chunks_per_request"`
-	Endpoints           []Endpoint `json:"endpoints"`
-	ConfigVersion       int64      `json:"config_version"`
-	UpdatedAt           int64      `json:"updated_at"`
-	UpdatedBy           int        `json:"updated_by"`
+	MaxChunksPerRequest int `json:"max_chunks_per_request"`
+	// ScanScope is latest_user (only the newest user message), user (every
+	// user message) or all (system, developer, assistant and tool text too).
+	ScanScope string `json:"scan_scope"`
+	// StrictJailbreakMapping records a Controversial jailbreak verdict as
+	// critical, as before; by default it is a flagged warning.
+	StrictJailbreakMapping bool       `json:"strict_jailbreak_mapping"`
+	Endpoints              []Endpoint `json:"endpoints"`
+	ConfigVersion          int64      `json:"config_version"`
+	UpdatedAt              int64      `json:"updated_at"`
+	UpdatedBy              int        `json:"updated_by"`
 }
 
 // Snapshot is the immutable runtime view: configuration plus Guard tokens.
@@ -108,6 +124,7 @@ func DefaultConfig() Config {
 		WorkerCount:         DefaultWorkerCount,
 		QueueCapacity:       DefaultQueueCapacity,
 		MaxChunksPerRequest: DefaultMaxChunks,
+		ScanScope:           DefaultScanScope,
 		Endpoints:           []Endpoint{},
 	}
 }
@@ -168,6 +185,7 @@ func ParseTokens(value string) map[string]string {
 
 var (
 	ErrInvalidMode          = common.NewMessage("Prompt audit mode is invalid")
+	ErrInvalidScanScope     = common.NewMessage("Prompt audit scan scope is invalid")
 	ErrGroupsRequired       = common.NewMessage("Select at least one group or audit all groups")
 	ErrInvalidGroup         = common.NewMessage("Prompt audit group names are invalid")
 	ErrInvalidScanner       = common.NewMessage("Prompt audit risk categories are invalid")
@@ -184,6 +202,12 @@ func (c *Config) Normalize() error {
 	}
 	if c.Mode != ModeAsync {
 		return ErrInvalidMode
+	}
+	if c.ScanScope == "" {
+		c.ScanScope = DefaultScanScope
+	}
+	if !slices.Contains(ScanScopes, c.ScanScope) {
+		return ErrInvalidScanScope
 	}
 	groups := make([]string, 0, len(c.Groups))
 	for _, group := range c.Groups {
