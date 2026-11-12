@@ -83,6 +83,8 @@ type guardResult struct {
 	ChunkTotal        int
 	ChunksScanned     int
 	LatencyMS         int
+	// Incomplete marks findings kept after a later chunk failed to scan.
+	Incomplete bool
 }
 
 func normalizeCategory(value string) string {
@@ -457,7 +459,14 @@ func (g *guardClient) evaluate(ctx context.Context, snapshot *prompt_audit_setti
 		scanned++
 		result, err := g.scanChunk(ctx, snapshot, endpoints, chunk, retryDelays, metrics)
 		if err != nil {
-			return nil, err
+			// Keep what earlier chunks found instead of losing it with the error.
+			if !slices.ContainsFunc(results, func(r *guardResult) bool { return r.Decision != DecisionPass }) {
+				return nil, err
+			}
+			partial := aggregateResults(results)
+			partial.ChunkTotal, partial.ChunksScanned, partial.Incomplete = len(chunks), scanned, true
+			partial.LatencyMS = int(time.Since(started).Milliseconds())
+			return partial, err
 		}
 		results = append(results, result)
 		if result.Decision == DecisionPass {

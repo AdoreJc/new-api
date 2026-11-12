@@ -48,6 +48,7 @@ export type PromptAuditEvent = {
   config_version: number
   chunk_total: number
   chunks_scanned: number
+  scan_incomplete: boolean
   latency_ms: number
   prompt_hash: string
   redacted_preview: string

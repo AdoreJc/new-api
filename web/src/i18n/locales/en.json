@@ -7730,6 +7730,7 @@
     "Guard calls per request": "Guard calls per request",
     "Chunks skipped (recently safe)": "Chunks skipped (recently safe)",
     "Chunks over the per-request limit": "Chunks over the per-request limit",
-    "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms"
+    "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms",
+    "Scan incomplete: a later chunk could not be scanned; these are the findings so far": "Scan incomplete: a later chunk could not be scanned; these are the findings so far"
   }
 }

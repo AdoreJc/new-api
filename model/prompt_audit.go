@@ -39,11 +39,13 @@ type PromptAuditEvent struct {
 	ConfigVersion     int64  `json:"config_version"`
 	ChunkTotal        int    `json:"chunk_total"`
 	ChunksScanned     int    `json:"chunks_scanned"`
-	LatencyMs         int    `json:"latency_ms"`
-	PromptHash        string `json:"prompt_hash" gorm:"type:varchar(64);index"`
-	RedactedPreview   string `json:"redacted_preview" gorm:"type:varchar(512)"`
-	PromptLength      int    `json:"prompt_length"`
-	MessageCount      int    `json:"message_count"`
+	// ScanIncomplete marks findings kept although a later chunk failed to scan.
+	ScanIncomplete  bool   `json:"scan_incomplete"`
+	LatencyMs       int    `json:"latency_ms"`
+	PromptHash      string `json:"prompt_hash" gorm:"type:varchar(64);index"`
+	RedactedPreview string `json:"redacted_preview" gorm:"type:varchar(512)"`
+	PromptLength    int    `json:"prompt_length"`
+	MessageCount    int    `json:"message_count"`
 	// FullPrompt is longtext on MySQL: a 64K-character prompt can exceed the
 	// 65535-byte TEXT limit there.
 	FullPrompt LongText `json:"full_prompt,omitempty"`

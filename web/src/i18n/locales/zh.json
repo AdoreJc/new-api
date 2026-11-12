@@ -7730,6 +7730,7 @@
     "Guard calls per request": "每个请求的 Guard 调用上限",
     "Chunks skipped (recently safe)": "跳过的块（近期已判定安全）",
     "Chunks over the per-request limit": "超出单请求上限的块",
-    "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "共 {{chunks}} 段，扫描 {{scanned}} 段，耗时 {{ms}} 毫秒"
+    "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "共 {{chunks}} 段，扫描 {{scanned}} 段，耗时 {{ms}} 毫秒",
+    "Scan incomplete: a later chunk could not be scanned; these are the findings so far": "扫描未完成：后续部分扫描失败，以下为已得到的结果"
   }
 }

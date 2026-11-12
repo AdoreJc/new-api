@@ -7730,6 +7730,7 @@
     "Guard calls per request": "Вызовов Guard на запрос",
     "Chunks skipped (recently safe)": "Пропущено фрагментов (недавно признаны безопасными)",
     "Chunks over the per-request limit": "Фрагментов сверх лимита на запрос",
-    "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "Проверено {{scanned}} из {{chunks}} фрагментов за {{ms}} мс"
+    "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "Проверено {{scanned}} из {{chunks}} фрагментов за {{ms}} мс",
+    "Scan incomplete: a later chunk could not be scanned; these are the findings so far": "Проверка не завершена: следующий фрагмент проверить не удалось; ниже уже полученные результаты"
   }
 }

@@ -7730,6 +7730,7 @@
     "Guard calls per request": "Appels Guard par requête",
     "Chunks skipped (recently safe)": "Segments ignorés (récemment jugés sûrs)",
     "Chunks over the per-request limit": "Segments au-delà de la limite par requête",
-    "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "{{scanned}} segments analysés sur {{chunks}} en {{ms}} ms"
+    "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "{{scanned}} segments analysés sur {{chunks}} en {{ms}} ms",
+    "Scan incomplete: a later chunk could not be scanned; these are the findings so far": "Analyse incomplète : un segment suivant n'a pas pu être analysé ; voici les constats obtenus"
   }
 }

@@ -110,6 +110,13 @@ export function PromptAuditEventDialog(props: { event: PromptAuditEvent }) {
             ms: event.latency_ms,
           })}
         />
+        {event.scan_incomplete && (
+          <p className='text-destructive text-xs'>
+            {t(
+              'Scan incomplete: a later chunk could not be scanned; these are the findings so far'
+            )}
+          </p>
+        )}
       </DetailSection>
       <DetailSection label={t('Request')}>
         <DetailRow

@@ -156,9 +156,14 @@ func (s *Service) enqueueRelay(c *gin.Context, info *relaycommon.RelayInfo) {
 	}
 	// Reserve capacity first and roll back, so concurrent requests cannot
 	// overshoot the item or byte limits.
-	if s.depth.Add(1) > int64(snapshot.Config.QueueCapacity) || s.queuedBytes.Add(size) > maxQueuedBytes {
+	if s.depth.Add(1) > int64(snapshot.Config.QueueCapacity) {
 		s.depth.Add(-1)
+		s.metrics.dropped.Add(1)
+		return
+	}
+	if s.queuedBytes.Add(size) > maxQueuedBytes {
 		s.queuedBytes.Add(-size)
+		s.depth.Add(-1)
 		s.metrics.dropped.Add(1)
 		return
 	}
@@ -278,6 +283,8 @@ func (s *Service) process(ctx context.Context, item *job) {
 		return
 	}
 	s.metrics.scanned.Add(1)
+	// A failed scan can still return the findings of chunks scanned before
+	// the failure; those are recorded and marked incomplete.
 	result, err := s.guard.evaluate(ctx, snapshot, prompt.ScanText, s.retryDelays, &s.metrics)
 	if err != nil {
 		s.metrics.failed.Add(1)
@@ -286,7 +293,9 @@ func (s *Service) process(ctx context.Context, item *job) {
 			s.metrics.timeouts.Add(1)
 		}
 		s.logScanFailure(item.event.RequestId, err)
-		return
+		if result == nil {
+			return
+		}
 	}
 	s.metrics.latencyTotalMS.Add(int64(result.LatencyMS))
 	for current := s.metrics.latencyMaxMS.Load(); int64(result.LatencyMS) > current &&
@@ -310,6 +319,7 @@ func (s *Service) process(ctx context.Context, item *job) {
 	event.GuardEndpointId, event.ScannerVersion = result.GuardEndpointID, result.ScannerVersion
 	event.ConfigVersion = snapshot.Config.ConfigVersion
 	event.ChunkTotal, event.ChunksScanned, event.LatencyMs = result.ChunkTotal, result.ChunksScanned, result.LatencyMS
+	event.ScanIncomplete = result.Incomplete
 	event.PromptHash, event.RedactedPreview = prompt.Hash, prompt.Preview
 	event.PromptLength, event.MessageCount = prompt.Length, prompt.MessageCount
 	if snapshot.Config.StoreFullPrompt {

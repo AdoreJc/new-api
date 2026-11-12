@@ -599,3 +599,53 @@ func TestEventInsertFitsColumnLimits(t *testing.T) {
 	assert.Len(t, []rune(saved.ModelName), 255)
 	assert.Len(t, saved.Username, 64)
 }
+
+func TestDroppedRequestsKeepQueuedBytesAccurate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	config := enabledConfig("http://127.0.0.1:1")
+	config.QueueCapacity = 1
+	useConfig(t, config, nil)
+	const body = `{"messages":[{"role":"user","content":"hello"}]}`
+
+	s := newService()
+	s.enqueueRelay(relayContext(body), chatInfo("default"))
+	for range 5 {
+		s.enqueueRelay(relayContext(body), chatInfo("default"))
+	}
+	assert.Equal(t, int64(5), s.metrics.dropped.Load())
+	assert.Equal(t, int64(len(body)), s.queuedBytes.Load(), "drops on a full queue leave the byte count alone")
+	assert.Equal(t, int64(1), s.depth.Load())
+
+	s.release(<-s.queue)
+	assert.Zero(t, s.queuedBytes.Load())
+	assert.Zero(t, s.depth.Load())
+}
+
+func TestFindingsSurviveALaterChunkFailure(t *testing.T) {
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) > 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		guardAnswer("Safety: Controversial\nCategories: Politically Sensitive Topics")(w, r)
+	}))
+	t.Cleanup(server.Close)
+	config := enabledConfig(server.URL)
+	require.NoError(t, config.Normalize())
+	snapshot := &prompt_audit_setting.Snapshot{Config: config, Tokens: map[string]string{}}
+
+	var metrics Metrics
+	var client guardClient
+	result, err := client.evaluate(context.Background(), snapshot, "latest"+prioritySeparator+"history", []time.Duration{time.Millisecond}, &metrics)
+	require.Error(t, err)
+	require.NotNil(t, result, "the flagged first chunk is kept")
+	assert.Equal(t, DecisionFlag, result.Decision)
+	assert.True(t, result.Incomplete)
+	assert.Equal(t, 2, result.ChunksScanned)
+
+	calls.Store(1) // every call fails from now on
+	none, err := client.evaluate(context.Background(), snapshot, "only"+prioritySeparator+"chunks", nil, &metrics)
+	require.Error(t, err)
+	assert.Nil(t, none, "a failure with nothing found yet returns no result")
+}

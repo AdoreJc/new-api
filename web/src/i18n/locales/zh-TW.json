@@ -7730,6 +7730,7 @@
     "Guard calls per request": "每個請求的 Guard 呼叫上限",
     "Chunks skipped (recently safe)": "略過的區塊（近期已判定安全）",
     "Chunks over the per-request limit": "超出單請求上限的區塊",
-    "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "共 {{chunks}} 段，掃描 {{scanned}} 段，耗時 {{ms}} 毫秒"
+    "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "共 {{chunks}} 段，掃描 {{scanned}} 段，耗時 {{ms}} 毫秒",
+    "Scan incomplete: a later chunk could not be scanned; these are the findings so far": "掃描未完成：後續部分掃描失敗，以下為已得到的結果"
   }
 }
