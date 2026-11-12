@@ -149,6 +149,19 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/subscription/admin/user_subscriptions/:id/invalidate":     accessTokenScopeRule("billing:write"),
 	"DELETE /api/subscription/admin/user_subscriptions/:id":              accessTokenScopeRule("billing:write"),
 
+	// router/api-router.go: /api/prompt_audit (root only). Events hold users'
+	// original prompts, so they are reachable from a browser session only.
+	"GET /api/prompt_audit/config":                   accessTokenScopeRule("option:read"),
+	"PUT /api/prompt_audit/config":                   accessTokenScopeRule("option:write"),
+	"POST /api/prompt_audit/endpoints/probe":         accessTokenScopeRule("option:write"),
+	"GET /api/prompt_audit/runtime":                  accessTokenScopeRule("option:read"),
+	"GET /api/prompt_audit/events":                   accessTokenSessionRule,
+	"GET /api/prompt_audit/events/:id":               accessTokenSessionRule,
+	"DELETE /api/prompt_audit/events/:id":            accessTokenSessionRule,
+	"POST /api/prompt_audit/events/batch-delete":     accessTokenSessionRule,
+	"POST /api/prompt_audit/events/delete-preview":   accessTokenSessionRule,
+	"POST /api/prompt_audit/events/delete-by-filter": accessTokenSessionRule,
+
 	// router/api-router.go: /api/option
 	"GET /api/option/":                                           accessTokenScopeRule("option:read"),
 	"GET /api/option/request_policy":                             accessTokenScopeRule("option:read"),

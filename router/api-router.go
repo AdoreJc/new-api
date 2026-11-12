@@ -216,6 +216,21 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/subscription/epay/notify", controller.SubscriptionEpayNotify)
 		apiRouter.GET("/subscription/epay/return", controller.SubscriptionEpayReturn)
 		apiRouter.POST("/subscription/epay/return", anonymousRequestBodyLimit, controller.SubscriptionEpayReturn)
+		// Prompt audit exposes users' original prompts, so the whole group is root-only.
+		promptAuditRoute := apiRouter.Group("/prompt_audit")
+		promptAuditRoute.Use(middleware.RootAuth())
+		{
+			promptAuditRoute.GET("/config", controller.GetPromptAuditConfig)
+			promptAuditRoute.PUT("/config", controller.UpdatePromptAuditConfig)
+			promptAuditRoute.POST("/endpoints/probe", middleware.CriticalRateLimit(), controller.ProbePromptAuditEndpoint)
+			promptAuditRoute.GET("/runtime", controller.GetPromptAuditRuntime)
+			promptAuditRoute.GET("/events", controller.GetPromptAuditEvents)
+			promptAuditRoute.GET("/events/:id", controller.GetPromptAuditEvent)
+			promptAuditRoute.DELETE("/events/:id", controller.DeletePromptAuditEvent)
+			promptAuditRoute.POST("/events/batch-delete", controller.BatchDeletePromptAuditEvents)
+			promptAuditRoute.POST("/events/delete-preview", controller.PreviewPromptAuditEventDeletion)
+			promptAuditRoute.POST("/events/delete-by-filter", controller.DeletePromptAuditEventsByFilter)
+		}
 		optionRoute := apiRouter.Group("/option")
 		optionRoute.Use(middleware.RootAuth())
 		{

@@ -491,6 +491,8 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'user.oauth_unbind': 'Removed an OAuth binding for the user',
   // System settings
   'option.update': 'Updated system setting {{key}}',
+  'prompt_audit.event_view': 'Viewed prompt audit event {{id}}',
+  'prompt_audit.events_delete': 'Deleted {{count}} prompt audit events',
   'option.passkey_domains':
     'Updated Passkey domains: removed {{domains}}; affected {{known}}; unknown {{unknown}}',
   'option.passkey_domains_confirmed':
