@@ -5839,6 +5839,8 @@
     "Selected when creating a token and used as the default billing group for API calls.": "建立令牌時選擇，用作 API 呼叫的預設收費分組。",
     "Selecting a plugin fills its declared models and default base URL.": "選擇外掛後將自動填入其宣告的模型和預設 Base URL。",
     "Self-Use Mode": "自用模式",
+    "Subscription usage-limit headers": "訂閱額度回應標頭",
+    "Return the bound account usage-limit headers to users served by their subscription binding": "向由訂閱綁定提供服務的使用者返回其綁定帳戶的額度回應標頭",
     "Send": "發送",
     "Send a request": "發送請求",
     "Send chat completions to the OpenAI-compatible /v1/chat/completions instead of the native Ollama /api/chat": "將對話補全請求傳送至 OpenAI 相容的 /v1/chat/completions，而不是 Ollama 原生的 /api/chat",
