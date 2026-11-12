@@ -114,3 +114,8 @@ subscription_usage.passive_sample: "sampled from relayed responses at {{.Sampled
 subscription_usage.subscription: "{{.Provider}} subscription"
 subscription_usage.upstream_status: "upstream returned status {{.Status}}"
 subscription_usage.unavailable: "usage is unavailable right now"
+content_moderation.blocked: "This request was blocked by content moderation. Please revise your input and try again."
+email.content_moderation.hit_subject: "{{.SystemName}} — Content policy notice"
+email.content_moderation.hit_body: "A recent request from your account was flagged by automated content moderation ({{.Count}} flagged in the last {{.Hours}} hours). Repeated flagged requests may lead to the account being disabled. If you believe this is a mistake, contact the administrator."
+email.content_moderation.disabled_subject: "{{.SystemName}} — Account disabled"
+email.content_moderation.disabled_body: "Your account has been disabled after {{.Count}} requests were flagged by automated content moderation within {{.Hours}} hours. Contact the administrator to review the decision."

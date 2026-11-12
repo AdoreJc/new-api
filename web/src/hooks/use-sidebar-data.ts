@@ -32,6 +32,7 @@ import {
   ServerCog,
   Settings,
   ShieldAlert,
+  ShieldBan,
   ShieldCheck,
   Ticket,
   User,
@@ -174,6 +175,12 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             title: t('Prompt Audit'),
             url: '/usage-logs/prompt-audit',
             icon: ShieldAlert,
+            requiredRole: ROLE.SUPER_ADMIN,
+          },
+          {
+            title: t('Content Moderation'),
+            url: '/usage-logs/content-moderation',
+            icon: ShieldBan,
             requiredRole: ROLE.SUPER_ADMIN,
           },
           {
