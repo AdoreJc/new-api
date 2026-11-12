@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import { Fragment, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -50,6 +50,7 @@ import { Switch } from '@/components/ui/switch'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import {
+  SettingsControlChildren,
   SettingsForm,
   SettingsFormGrid,
   SettingsSwitchContent,
@@ -195,25 +196,52 @@ function PromptAuditForm(props: {
             saveLabel='Save prompt audit settings'
           />
           {SWITCHES.map((item) => (
-            <FormField
-              key={item.name}
-              control={form.control}
-              name={item.name}
-              render={({ field }) => (
-                <SettingsSwitchItem>
-                  <SettingsSwitchContent>
-                    <FormLabel>{t(item.label)}</FormLabel>
-                    <FormDescription>{t(item.description)}</FormDescription>
-                  </SettingsSwitchContent>
-                  <FormControl>
-                    <Switch
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                    />
-                  </FormControl>
-                </SettingsSwitchItem>
+            <Fragment key={item.name}>
+              <FormField
+                control={form.control}
+                name={item.name}
+                render={({ field }) => (
+                  <SettingsSwitchItem>
+                    <SettingsSwitchContent>
+                      <FormLabel>{t(item.label)}</FormLabel>
+                      <FormDescription>{t(item.description)}</FormDescription>
+                    </SettingsSwitchContent>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </SettingsSwitchItem>
+                )}
+              />
+              {item.name === 'all_groups' && !allGroups && (
+                <SettingsControlChildren>
+                  <FormField
+                    control={form.control}
+                    name='groups'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Audited groups')}</FormLabel>
+                        <FormControl>
+                          <TagInput
+                            value={field.value ?? []}
+                            onChange={field.onChange}
+                            placeholder={t('Group name, or a prefix ending in *')}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t(
+                            'Press Enter after each group. A trailing * matches a prefix, for example claude-ch* for all Claude subscription groups.'
+                          )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </SettingsControlChildren>
               )}
-            />
+            </Fragment>
           ))}
           <FormField
             control={form.control}
@@ -253,30 +281,6 @@ function PromptAuditForm(props: {
               </FormItem>
             )}
           />
-          {!allGroups && (
-            <FormField
-              control={form.control}
-              name='groups'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Audited groups')}</FormLabel>
-                  <FormControl>
-                    <TagInput
-                      value={field.value ?? []}
-                      onChange={field.onChange}
-                      placeholder={t('Group name, or a prefix ending in *')}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    {t(
-                      'Press Enter after each group. A trailing * matches a prefix, for example claude-ch* for all Claude subscription groups.'
-                    )}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          )}
           <FormField
             control={form.control}
             name='scanners'

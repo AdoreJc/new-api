@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
@@ -29,7 +30,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-it('shows the saved switch values once the settings load', async () => {
+function mockSavedConfig(config: { all_groups: boolean; groups: string[] }) {
   vi.spyOn(api, 'get').mockImplementation(async (url: string) => ({
     data: url.endsWith('/config')
       ? {
@@ -38,8 +39,8 @@ it('shows the saved switch values once the settings load', async () => {
             config: {
               enabled: true,
               mode: 'async_audit',
-              all_groups: false,
-              groups: ['claude-ch*'],
+              all_groups: config.all_groups,
+              groups: config.groups,
               scanners: ['jailbreak'],
               store_full_prompt: false,
               retention_days: 30,
@@ -57,6 +58,9 @@ it('shows the saved switch values once the settings load', async () => {
         }
       : { success: true, data: {} },
   }))
+}
+
+function renderSection() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -65,6 +69,11 @@ it('shows the saved switch values once the settings load', async () => {
       <PromptAuditSection />
     </QueryClientProvider>
   )
+}
+
+it('shows the saved switch values once the settings load', async () => {
+  mockSavedConfig({ all_groups: false, groups: ['claude-ch*'] })
+  renderSection()
 
   const enabled = await screen.findByRole('switch', {
     name: 'Enable prompt audit',
@@ -79,4 +88,33 @@ it('shows the saved switch values once the settings load', async () => {
     })
   ).toHaveAttribute('aria-checked', 'false')
   expect(screen.getByText('claude-ch*')).toBeVisible()
+})
+
+it('shows the group input right below the all groups switch when it is turned off', async () => {
+  mockSavedConfig({ all_groups: true, groups: [] })
+  const user = userEvent.setup()
+  renderSection()
+  const allGroups = await screen.findByRole('switch', {
+    name: 'Audit all groups',
+  })
+  expect(
+    screen.queryByPlaceholderText('Group name, or a prefix ending in *')
+  ).not.toBeInTheDocument()
+
+  await user.click(allGroups)
+
+  const groupsInput = screen.getByPlaceholderText(
+    'Group name, or a prefix ending in *'
+  )
+  const nextSwitch = screen.getByRole('switch', {
+    name: 'Store the full prompt of flagged requests',
+  })
+  expect(
+    allGroups.compareDocumentPosition(groupsInput) &
+      Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy()
+  expect(
+    groupsInput.compareDocumentPosition(nextSwitch) &
+      Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy()
 })
