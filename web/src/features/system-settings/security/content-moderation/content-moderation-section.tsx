@@ -303,7 +303,9 @@ function ContentModerationForm(props: {
                           <TagInput
                             value={field.value ?? []}
                             onChange={field.onChange}
-                            placeholder={t('Group name, or a prefix ending in *')}
+                            placeholder={t(
+                              'Group name, or a prefix ending in *'
+                            )}
                           />
                         </FormControl>
                         <FormMessage />
