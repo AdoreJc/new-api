@@ -123,6 +123,7 @@ export type ContentModerationRuntime = {
   emails_failed: number
   recorded: number
   record_failed: number
+  disposal_dropped: number
   latency_avg_ms: number
   latency_max_ms: number
   sync_avg_ms: number

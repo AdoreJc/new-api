@@ -7910,6 +7910,8 @@
     "The default list is the sensitive words list; edit it in the sensitive words settings": "Список default — это список чувствительных слов; изменяйте его в настройках чувствительных слов",
     "Keyword list not found": "Список ключевых слов не найден",
     "Saved content moderation keyword list {{name}} ({{count}} keywords)": "Сохранён список ключевых слов модерации {{name}} ({{count}} слов)",
-    "Deleted content moderation keyword list {{name}}": "Удалён список ключевых слов модерации {{name}}"
+    "Deleted content moderation keyword list {{name}}": "Удалён список ключевых слов модерации {{name}}",
+    "Flagged events lost before counting": "Помеченные события, потерянные до подсчёта",
+    "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.": "В режиме блокировки неотвечающий API может добавить до {{ms}} мс к каждому проверяемому запросу: (повторы + 1) × тайм-аут плюс короткие паузы между повторами. После этого запрос пропускается."
   }
 }

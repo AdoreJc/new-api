@@ -77,6 +77,11 @@ export function ContentModerationEngineFields(props: {
     onError: (error) => handleServerError(error),
   })
   const storedKeys = props.form.watch('stored_keys')
+  const retries = Number(props.form.watch('retry_count')) || 0
+  const timeoutMs = Number(props.form.watch('timeout_ms')) || 0
+  // Each attempt may take the full timeout; retry n waits n × 100 ms first.
+  const worstCaseMs =
+    (retries + 1) * timeoutMs + (100 * retries * (retries + 1)) / 2
   const removedKeys = props.form.watch('removed_keys')
 
   return (
@@ -144,6 +149,12 @@ export function ContentModerationEngineFields(props: {
           />
         ))}
       </SettingsFormGrid>
+      <p className='text-muted-foreground text-xs'>
+        {t(
+          'In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.',
+          { ms: worstCaseMs }
+        )}
+      </p>
       <FormField
         control={props.form.control}
         name='include_images'

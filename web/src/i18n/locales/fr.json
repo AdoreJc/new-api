@@ -7910,6 +7910,8 @@
     "The default list is the sensitive words list; edit it in the sensitive words settings": "La liste default est la liste des mots sensibles ; modifiez-la dans les paramètres des mots sensibles",
     "Keyword list not found": "Liste de mots-clés introuvable",
     "Saved content moderation keyword list {{name}} ({{count}} keywords)": "Liste de mots-clés de modération {{name}} enregistrée ({{count}} mots-clés)",
-    "Deleted content moderation keyword list {{name}}": "Liste de mots-clés de modération {{name}} supprimée"
+    "Deleted content moderation keyword list {{name}}": "Liste de mots-clés de modération {{name}} supprimée",
+    "Flagged events lost before counting": "Signalements perdus avant comptage",
+    "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.": "En mode blocage, une API qui ne répond pas peut ajouter jusqu'à {{ms}} ms à chaque requête vérifiée : (nouvelles tentatives + 1) × délai, plus de courtes attentes entre les tentatives. La requête est ensuite autorisée."
   }
 }

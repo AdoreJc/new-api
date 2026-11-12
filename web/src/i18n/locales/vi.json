@@ -7910,6 +7910,8 @@
     "The default list is the sensitive words list; edit it in the sensitive words settings": "Danh sách default là danh sách từ nhạy cảm; hãy sửa trong cài đặt từ nhạy cảm",
     "Keyword list not found": "Không tìm thấy danh sách từ khóa",
     "Saved content moderation keyword list {{name}} ({{count}} keywords)": "Đã lưu danh sách từ khóa kiểm duyệt {{name}} ({{count}} từ khóa)",
-    "Deleted content moderation keyword list {{name}}": "Đã xóa danh sách từ khóa kiểm duyệt {{name}}"
+    "Deleted content moderation keyword list {{name}}": "Đã xóa danh sách từ khóa kiểm duyệt {{name}}",
+    "Flagged events lost before counting": "Sự kiện bị gắn cờ mất trước khi đếm",
+    "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.": "Ở chế độ chặn, API không phản hồi có thể làm mỗi yêu cầu được kiểm tra chậm thêm tối đa {{ms}} ms: (số lần thử lại + 1) × thời gian chờ, cộng các khoảng chờ ngắn giữa các lần thử. Sau đó yêu cầu được cho qua."
   }
 }

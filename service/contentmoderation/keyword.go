@@ -55,6 +55,10 @@ func (s *Service) matchKeyword(text string, lists []string) (string, bool) {
 // reloadKeywords rebuilds the automatons when the stored lists changed since
 // the last build. It is cheap when nothing changed: one summary query.
 func (s *Service) reloadKeywords(force bool) error {
+	// One build at a time: a reload that read the lists earlier can never
+	// store its result over a newer one.
+	s.keywordMu.Lock()
+	defer s.keywordMu.Unlock()
 	version, err := model.ContentModerationKeywordListsVersion()
 	if err != nil {
 		return err

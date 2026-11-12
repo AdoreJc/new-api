@@ -7910,6 +7910,8 @@
     "The default list is the sensitive words list; edit it in the sensitive words settings": "default リストは機密語リストです。機密語の設定で編集してください",
     "Keyword list not found": "キーワードリストが見つかりません",
     "Saved content moderation keyword list {{name}} ({{count}} keywords)": "コンテンツモデレーションのキーワードリスト {{name}} を保存しました（{{count}} 件）",
-    "Deleted content moderation keyword list {{name}}": "コンテンツモデレーションのキーワードリスト {{name}} を削除しました"
+    "Deleted content moderation keyword list {{name}}": "コンテンツモデレーションのキーワードリスト {{name}} を削除しました",
+    "Flagged events lost before counting": "カウント前に失われた検出イベント",
+    "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.": "ブロックモードでは、API が応答しない場合、チェック対象の各リクエストに最大 {{ms}} ms 追加されます：(再試行回数 + 1) × タイムアウト＋再試行間の短い待機。その後リクエストは許可されます。"
   }
 }

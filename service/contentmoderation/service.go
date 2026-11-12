@@ -52,36 +52,42 @@ const (
 	cleanupInterval     = time.Hour
 	cleanupEvery        = 24 * time.Hour
 	hitEmailInterval    = time.Hour
-	maxHitEmailUsers    = 10000
+	disposalQueueWait   = 2 * time.Second
+	// maxFlaggedHashes bounds the hash blocklist; the oldest go first.
+	maxFlaggedHashes = 100000
+	maxHitEmailUsers = 10000
 )
 
 // Metrics are process-local counters reset on restart.
 type Metrics struct {
-	checked        atomic.Int64
-	skipped        atomic.Int64
-	tooLarge       atomic.Int64
-	empty          atomic.Int64
-	sampledOut     atomic.Int64
-	noKeys         atomic.Int64
-	enqueued       atomic.Int64
-	dropped        atomic.Int64
-	passed         atomic.Int64
-	flagged        atomic.Int64
-	blocked        atomic.Int64
-	hashBlocked    atomic.Int64
-	keywordHits    atomic.Int64
-	failed         atomic.Int64
-	timeouts       atomic.Int64
-	calls          atomic.Int64
-	autoDisabled   atomic.Int64
-	emailsSent     atomic.Int64
-	emailsFailed   atomic.Int64
-	recorded       atomic.Int64
-	recordFailed   atomic.Int64
-	latencyTotalMS atomic.Int64
-	latencyMaxMS   atomic.Int64
-	syncTotalMS    atomic.Int64
-	syncChecks     atomic.Int64
+	checked      atomic.Int64
+	skipped      atomic.Int64
+	tooLarge     atomic.Int64
+	empty        atomic.Int64
+	sampledOut   atomic.Int64
+	noKeys       atomic.Int64
+	enqueued     atomic.Int64
+	dropped      atomic.Int64
+	passed       atomic.Int64
+	flagged      atomic.Int64
+	blocked      atomic.Int64
+	hashBlocked  atomic.Int64
+	keywordHits  atomic.Int64
+	failed       atomic.Int64
+	timeouts     atomic.Int64
+	calls        atomic.Int64
+	autoDisabled atomic.Int64
+	emailsSent   atomic.Int64
+	emailsFailed atomic.Int64
+	recorded     atomic.Int64
+	recordFailed atomic.Int64
+	// disposalDropped counts flagged events lost before disposal, so their
+	// violations were not counted.
+	disposalDropped atomic.Int64
+	latencyTotalMS  atomic.Int64
+	latencyMaxMS    atomic.Int64
+	syncTotalMS     atomic.Int64
+	syncChecks      atomic.Int64
 }
 
 // request is one input with the relay metadata needed for its event.
@@ -101,7 +107,10 @@ type record struct {
 	event   *model.ContentModerationEvent
 	email   string
 	dispose bool
-	config  content_moderation_setting.Config
+	// rememberHash adds the input hash to the blocklist; only inputs the
+	// engine flagged are remembered, never keyword hits.
+	rememberHash bool
+	config       content_moderation_setting.Config
 }
 
 // Service owns the check queue, workers, recorder and the hash blocklist.
@@ -117,7 +126,8 @@ type Service struct {
 	startOnce   sync.Once
 	lastCleanup atomic.Int64
 
-	keywords atomic.Pointer[keywordIndex]
+	keywords  atomic.Pointer[keywordIndex]
+	keywordMu sync.Mutex
 
 	hashMu     sync.RWMutex
 	hashes     map[string]struct{}
@@ -129,6 +139,10 @@ type Service struct {
 	lastFailureLog     atomic.Int64
 	suppressedFailures atomic.Int64
 
+	// disposalWait is how long an event that needs disposal waits for room
+	// in a full recorder buffer.
+	disposalWait time.Duration
+
 	now func() time.Time
 }
 
@@ -139,6 +153,8 @@ func newService() *Service {
 		hashes:    map[string]struct{}{},
 		lastEmail: map[int]time.Time{},
 		now:       time.Now,
+
+		disposalWait: disposalQueueWait,
 	}
 	s.engine.now = s.now
 	return s
@@ -237,8 +253,28 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 		s.metrics.skipped.Add(1)
 		return nil
 	}
-	input := ExtractInput(protocol, body)
-	if input.Empty() {
+	var input Input
+	keywordText := ""
+	useKeywords := config.KeywordMode != content_moderation_setting.KeywordModeAPIOnly
+	multipartPrompt := ""
+	if protocol == ProtocolImages {
+		// Image edits send their prompt as a multipart form field.
+		multipartPrompt = MultipartPrompt(c.Request.Header.Get("Content-Type"), body)
+	}
+	if multipartPrompt != "" {
+		semantic := collector{}
+		semantic.addText(multipartPrompt)
+		input.Text, keywordText = joinParts(semantic.parts), joinParts([]string{multipartPrompt})
+		if runes := []rune(input.Text); len(runes) > maxInputRunes {
+			input.Text = string(runes[:maxInputRunes])
+		}
+	} else {
+		input = ExtractInput(protocol, body)
+		if useKeywords {
+			keywordText = ExtractKeywordText(protocol, body)
+		}
+	}
+	if input.Empty() && keywordText == "" {
 		s.metrics.empty.Add(1)
 		return nil
 	}
@@ -275,6 +311,41 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 	}
 	blocking := decision.Action == ActionBlock
 
+	// Keyword stage, matched against the reminder-preserving text:
+	// keyword_only decides here without an engine call; keyword_and_api sends
+	// only inputs with a keyword on to the engine, whatever the sample rate.
+	// A keyword hit never enters the hash blocklist, so editing a list takes
+	// effect for inputs it matched before.
+	keywordHit := false
+	if useKeywords {
+		list, hit := s.matchKeyword(keywordText, config.KeywordLists)
+		if !hit {
+			return nil
+		}
+		s.metrics.keywordHits.Add(1)
+		keywordHit = true
+		item.event.KeywordList = list
+		if config.KeywordMode == content_moderation_setting.KeywordModeKeywordOnly {
+			s.metrics.flagged.Add(1)
+			event := item.event
+			event.CreatedAt = s.now().Unix()
+			event.Action, event.Flagged, event.HighestCategory, event.HighestScore = model.ContentModerationActionAllow, true, model.ContentModerationKeywordCategory, 1
+			event.InputExcerpt = Excerpt(keywordText)
+			if blocking {
+				event.Action = model.ContentModerationActionKeywordBlock
+			}
+			s.enqueueRecord(&record{event: &event, email: info.UserEmail, dispose: decision.Action != ActionRecordOnly, config: config.Clone()})
+			if blocking {
+				return s.blockError(c)
+			}
+			return nil
+		}
+	}
+	if input.Empty() {
+		s.metrics.empty.Add(1)
+		return nil
+	}
+
 	if config.HashBlocklistEnabled && s.hashListed(item.hash) {
 		s.metrics.hashBlocked.Add(1)
 		event := item.event
@@ -289,35 +360,6 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 			return s.blockError(c)
 		}
 		return nil
-	}
-
-	// Keyword stage: keyword_only decides here without an engine call;
-	// keyword_and_api sends only inputs with a keyword on to the engine,
-	// whatever the sample rate, and the engine decides.
-	keywordHit := false
-	if config.KeywordMode != content_moderation_setting.KeywordModeAPIOnly {
-		list, hit := s.matchKeyword(input.Text, config.KeywordLists)
-		if !hit {
-			return nil
-		}
-		s.metrics.keywordHits.Add(1)
-		keywordHit = true
-		item.event.KeywordList = list
-		if config.KeywordMode == content_moderation_setting.KeywordModeKeywordOnly {
-			s.metrics.flagged.Add(1)
-			event := item.event
-			event.CreatedAt = s.now().Unix()
-			event.Action, event.Flagged, event.HighestCategory, event.HighestScore = model.ContentModerationActionAllow, true, model.ContentModerationKeywordCategory, 1
-			event.InputExcerpt = Excerpt(input.Text)
-			if blocking {
-				event.Action = model.ContentModerationActionKeywordBlock
-			}
-			s.enqueueRecord(&record{event: &event, email: info.UserEmail, dispose: decision.Action != ActionRecordOnly, config: config.Clone()})
-			if blocking {
-				return s.blockError(c)
-			}
-			return nil
-		}
 	}
 	if !keywordHit && !sampled(item.hash, decision.SampleRate) {
 		s.metrics.sampledOut.Add(1)
@@ -485,7 +527,7 @@ func (s *Service) check(ctx context.Context, snapshot *content_moderation_settin
 	if config.HashBlocklistEnabled && dispose {
 		s.addHash(item.hash)
 	}
-	s.enqueueRecord(&record{event: &event, email: email, dispose: dispose, config: config.Clone()})
+	s.enqueueRecord(&record{event: &event, email: email, dispose: dispose, rememberHash: dispose, config: config.Clone()})
 	return blocking
 }
 
@@ -510,12 +552,27 @@ func (s *Service) logFailure(requestID string, err error) {
 		requestID, err.Error(), s.suppressedFailures.Swap(0)))
 }
 
+// enqueueRecord hands an event to the recorder. A full buffer drops plain
+// events at once; an event that needs disposal waits briefly first, and if
+// it still cannot be queued the loss is counted as disposal_dropped, because
+// it means a violation was not counted.
 func (s *Service) enqueueRecord(item *record) {
 	select {
 	case s.records <- item:
+		return
 	default:
-		s.metrics.recordFailed.Add(1)
 	}
+	if item.dispose {
+		timer := time.NewTimer(s.disposalWait)
+		defer timer.Stop()
+		select {
+		case s.records <- item:
+			return
+		case <-timer.C:
+		}
+		s.metrics.disposalDropped.Add(1)
+	}
+	s.metrics.recordFailed.Add(1)
 }
 
 // recorder stores events. Plain events are written in batches; events that
@@ -562,7 +619,7 @@ func (s *Service) recorder(ctx context.Context) {
 // mails the user when configured, and stores the event.
 func (s *Service) dispose(item *record) {
 	event, config := item.event, &item.config
-	if event.InputHash != "" && config.HashBlocklistEnabled {
+	if item.rememberHash && event.InputHash != "" && config.HashBlocklistEnabled {
 		if err := model.AddContentModerationFlaggedHash(event.InputHash, event.CreatedAt); err != nil {
 			common.SysError(common.LogText("failed to store a content moderation hash: %s", err.Error()))
 		}
@@ -741,13 +798,16 @@ func (s *Service) maintenanceLoop(ctx context.Context) {
 	defer hashTicker.Stop()
 	defer cleanupTicker.Stop()
 	for {
+		// Lists and the blocklist are loaded whenever the settings use them,
+		// independent of the global mode, because a replaced ScopePolicy may
+		// moderate requests while the global mode is off.
 		snapshot := content_moderation_setting.Current()
-		if snapshot.Config.Mode != content_moderation_setting.ModeOff && snapshot.Config.KeywordMode != content_moderation_setting.KeywordModeAPIOnly {
+		if snapshot.Config.KeywordMode != content_moderation_setting.KeywordModeAPIOnly || len(snapshot.Config.KeywordLists) > 0 {
 			if err := s.reloadKeywords(false); err != nil {
 				common.SysError(common.LogText("failed to load content moderation keyword lists: %s", err.Error()))
 			}
 		}
-		if snapshot.Config.Mode != content_moderation_setting.ModeOff && snapshot.Config.HashBlocklistEnabled && !s.hashLoaded.Load() {
+		if snapshot.Config.HashBlocklistEnabled && !s.hashLoaded.Load() {
 			if err := s.refreshHashes(); err != nil {
 				common.SysError(common.LogText("failed to load the content moderation hash blocklist: %s", err.Error()))
 			}
@@ -757,7 +817,7 @@ func (s *Service) maintenanceLoop(ctx context.Context) {
 			return
 		case <-hashTicker.C:
 			s.engine.forget(snapshot.Keys)
-			if snapshot.Config.Mode == content_moderation_setting.ModeOff || !snapshot.Config.HashBlocklistEnabled {
+			if !snapshot.Config.HashBlocklistEnabled {
 				s.hashLoaded.Store(false)
 				continue
 			}
@@ -776,14 +836,20 @@ func (s *Service) maintenanceLoop(ctx context.Context) {
 	}
 }
 
-// cleanup deletes events past their retention. It also runs while moderation
-// is off so stored excerpts still expire.
+// cleanup deletes events past their retention, and blocklisted hashes older
+// than the flagged-event retention or beyond the blocklist size limit. It
+// also runs while moderation is off so stored excerpts still expire.
 func (s *Service) cleanup() (int64, error) {
 	config := content_moderation_setting.Current().Config
 	now := s.now()
-	return model.CleanupContentModerationEvents(
-		now.Add(-time.Duration(config.HitRetentionDays)*24*time.Hour).Unix(),
+	hitBefore := now.Add(-time.Duration(config.HitRetentionDays) * 24 * time.Hour).Unix()
+	deleted, err := model.CleanupContentModerationEvents(hitBefore,
 		now.Add(-time.Duration(config.NonHitRetentionDays)*24*time.Hour).Unix())
+	if err != nil {
+		return deleted, err
+	}
+	hashes, err := model.CleanupContentModerationFlaggedHashes(hitBefore, maxFlaggedHashes)
+	return deleted + hashes, err
 }
 
 // RuntimeStatus is the operational view shown to administrators.
@@ -818,6 +884,7 @@ type RuntimeStatus struct {
 	EmailsFailed     int64       `json:"emails_failed"`
 	Recorded         int64       `json:"recorded"`
 	RecordFailed     int64       `json:"record_failed"`
+	DisposalDropped  int64       `json:"disposal_dropped"`
 	LatencyAvgMS     int64       `json:"latency_avg_ms"`
 	LatencyMaxMS     int64       `json:"latency_max_ms"`
 	SyncAvgMS        int64       `json:"sync_avg_ms"`
@@ -842,7 +909,7 @@ func (s *Service) runtime() RuntimeStatus {
 		Enqueued: m.enqueued.Load(), Dropped: m.dropped.Load(), Passed: m.passed.Load(), Flagged: m.flagged.Load(),
 		Blocked: m.blocked.Load(), HashBlocked: m.hashBlocked.Load(), KeywordHits: m.keywordHits.Load(), Failed: m.failed.Load(), Timeouts: m.timeouts.Load(),
 		Calls: m.calls.Load(), AutoDisabled: m.autoDisabled.Load(), EmailsSent: m.emailsSent.Load(),
-		EmailsFailed: m.emailsFailed.Load(), Recorded: m.recorded.Load(), RecordFailed: m.recordFailed.Load(),
+		EmailsFailed: m.emailsFailed.Load(), Recorded: m.recorded.Load(), RecordFailed: m.recordFailed.Load(), DisposalDropped: m.disposalDropped.Load(),
 		LatencyMaxMS: m.latencyMaxMS.Load(), Keys: s.engine.keyStatuses(snapshot.Keys),
 	}
 	if completed := status.Passed + status.Flagged; completed > 0 {

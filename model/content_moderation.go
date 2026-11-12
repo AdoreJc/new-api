@@ -57,8 +57,8 @@ type ContentModerationEvent struct {
 	CategoryScores string `json:"category_scores" gorm:"type:text"`
 	Thresholds     string `json:"thresholds" gorm:"type:text"`
 	InputHash      string `json:"input_hash" gorm:"type:varchar(64);index"`
-	// KeywordList names the keyword list that matched; the keyword itself is
-	// never stored.
+	// KeywordList names the keyword list that matched. No field holds the
+	// matched keyword itself; InputExcerpt is the usual redacted excerpt.
 	KeywordList    string `json:"keyword_list" gorm:"type:varchar(64)"`
 	InputExcerpt   string `json:"input_excerpt" gorm:"type:text"`
 	InputLength    int    `json:"input_length"`
@@ -105,6 +105,9 @@ type ContentModerationKeywordList struct {
 	Name      string   `json:"name" gorm:"type:varchar(64);uniqueIndex"`
 	Words     LongText `json:"words"`
 	UpdatedAt int64    `json:"updated_at" gorm:"bigint"`
+	// Revision grows by one on every save, so changes within the same second
+	// are still told apart.
+	Revision int64 `json:"revision"`
 }
 
 // ListContentModerationKeywordLists returns every stored list by name.
@@ -116,10 +119,19 @@ func ListContentModerationKeywordLists() ([]*ContentModerationKeywordList, error
 
 // SaveContentModerationKeywordList creates or replaces a list.
 func SaveContentModerationKeywordList(name string, words []string, updatedAt int64) error {
-	list := ContentModerationKeywordList{Name: name}
-	return DB.Where(ContentModerationKeywordList{Name: name}).
-		Assign(map[string]any{"words": LongText(strings.Join(words, "\n")), "updated_at": updatedAt}).
-		FirstOrCreate(&list).Error
+	joined := LongText(strings.Join(words, "\n"))
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var existing ContentModerationKeywordList
+		if err := lockForUpdate(tx).Where("name = ?", name).Limit(1).Find(&existing).Error; err != nil {
+			return err
+		}
+		if existing.Id == 0 {
+			return tx.Create(&ContentModerationKeywordList{Name: name, Words: joined, UpdatedAt: updatedAt, Revision: 1}).Error
+		}
+		return tx.Model(&ContentModerationKeywordList{}).Where("id = ?", existing.Id).Updates(map[string]any{
+			"words": joined, "updated_at": updatedAt, "revision": gorm.Expr("COALESCE(revision, 0) + 1"),
+		}).Error
+	})
 }
 
 func DeleteContentModerationKeywordList(name string) (int64, error) {
@@ -128,16 +140,17 @@ func DeleteContentModerationKeywordList(name string) (int64, error) {
 }
 
 // ContentModerationKeywordListsVersion summarizes the stored lists so a node
-// can tell, with one small query, whether its matchers are stale.
+// can tell, with one small query, whether its matchers are stale. Every save
+// raises the revision sum; a delete changes the count and the id sum.
 func ContentModerationKeywordListsVersion() (string, error) {
 	var summary struct {
-		Total int64
-		Last  int64
-		Ids   int64
+		Total     int64
+		Revisions int64
+		Ids       int64
 	}
 	err := DB.Model(&ContentModerationKeywordList{}).
-		Select("COUNT(*) AS total, COALESCE(MAX(updated_at), 0) AS last, COALESCE(SUM(id), 0) AS ids").Scan(&summary).Error
-	return fmt.Sprintf("%d/%d/%d", summary.Total, summary.Last, summary.Ids), err
+		Select("COUNT(*) AS total, COALESCE(SUM(revision), 0) AS revisions, COALESCE(SUM(id), 0) AS ids").Scan(&summary).Error
+	return fmt.Sprintf("%d/%d/%d", summary.Total, summary.Revisions, summary.Ids), err
 }
 
 // ContentModerationEventFilter narrows event listing and filtered deletion.
@@ -191,8 +204,11 @@ func (f ContentModerationEventFilter) apply(tx *gorm.DB) *gorm.DB {
 	}
 	if keyword := strings.TrimSpace(f.Keyword); keyword != "" {
 		// LOWER on both sides keeps PostgreSQL case-insensitive like MySQL/SQLite.
-		pattern := "%" + strings.ToLower(keyword) + "%"
-		tx = tx.Where("LOWER(request_id) LIKE ? OR LOWER(username) LIKE ? OR LOWER(token_name) LIKE ? OR LOWER(input_excerpt) LIKE ? OR LOWER(model_name) LIKE ?",
+		// '!' escapes the wildcards so a typed % or _ matches itself; a
+		// backslash escape would read differently on MySQL and PostgreSQL.
+		escaped := strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(strings.ToLower(keyword))
+		pattern := "%" + escaped + "%"
+		tx = tx.Where("LOWER(request_id) LIKE ? ESCAPE '!' OR LOWER(username) LIKE ? ESCAPE '!' OR LOWER(token_name) LIKE ? ESCAPE '!' OR LOWER(input_excerpt) LIKE ? ESCAPE '!' OR LOWER(model_name) LIKE ? ESCAPE '!'",
 			pattern, pattern, pattern, pattern, pattern)
 	}
 	if f.StartTime > 0 {
@@ -361,6 +377,38 @@ func ListContentModerationFlaggedHashes() ([]string, error) {
 func DeleteContentModerationFlaggedHash(inputHash string) (int64, error) {
 	result := DB.Where("input_hash = ?", inputHash).Delete(&ContentModerationFlaggedHash{})
 	return result.RowsAffected, result.Error
+}
+
+// CleanupContentModerationFlaggedHashes deletes hashes recorded before the
+// cutoff, then the oldest ones beyond maxRows, in batches of oldest first.
+func CleanupContentModerationFlaggedHashes(before int64, maxRows int64) (int64, error) {
+	var deleted int64
+	for {
+		var total, stale int64
+		if err := DB.Model(&ContentModerationFlaggedHash{}).Count(&total).Error; err != nil {
+			return deleted, err
+		}
+		if err := DB.Model(&ContentModerationFlaggedHash{}).Where("created_at < ?", before).Count(&stale).Error; err != nil {
+			return deleted, err
+		}
+		batch := min(max(stale, total-maxRows), contentModerationDeleteBatchSize)
+		if batch <= 0 {
+			return deleted, nil
+		}
+		var hashes []string
+		if err := DB.Model(&ContentModerationFlaggedHash{}).Order("created_at").Order("input_hash").
+			Limit(int(batch)).Pluck("input_hash", &hashes).Error; err != nil {
+			return deleted, err
+		}
+		if len(hashes) == 0 {
+			return deleted, nil
+		}
+		result := DB.Where("input_hash IN ?", hashes).Delete(&ContentModerationFlaggedHash{})
+		deleted += result.RowsAffected
+		if result.Error != nil {
+			return deleted, result.Error
+		}
+	}
 }
 
 // ClearContentModerationFlaggedHashes deletes the whole blocklist.

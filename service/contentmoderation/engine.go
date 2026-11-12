@@ -132,7 +132,13 @@ func newHTTPClient(timeout time.Duration) *http.Client {
 		ResponseHeaderTimeout: timeout,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 	}
-	return &http.Client{Transport: transport, Timeout: timeout}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   timeout,
+		// A redirect is answered as an error status; it is never followed, so
+		// the Authorization header only goes to the configured address.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }
 
 // httpClient returns the shared client, replacing it (and closing its idle

@@ -7910,6 +7910,8 @@
     "The default list is the sensitive words list; edit it in the sensitive words settings": "default 词表即敏感词列表，请在敏感词设置中编辑",
     "Keyword list not found": "未找到关键词词表",
     "Saved content moderation keyword list {{name}} ({{count}} keywords)": "保存了内容审计关键词词表 {{name}}（{{count}} 个关键词）",
-    "Deleted content moderation keyword list {{name}}": "删除了内容审计关键词词表 {{name}}"
+    "Deleted content moderation keyword list {{name}}": "删除了内容审计关键词词表 {{name}}",
+    "Flagged events lost before counting": "计数前丢失的命中事件",
+    "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.": "拦截模式下，审计 API 无响应时，每个受审请求最多增加 {{ms}} 毫秒：(重试次数 + 1) × 超时，再加重试之间的短暂等待。之后请求会被放行。"
   }
 }

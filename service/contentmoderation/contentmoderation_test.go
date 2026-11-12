@@ -1,8 +1,10 @@
 package contentmoderation
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -691,9 +693,14 @@ func TestKeywordModes(t *testing.T) {
 		assert.Equal(t, "spam", events[0].KeywordList)
 		assert.Equal(t, model.ContentModerationKeywordCategory, events[0].HighestCategory)
 		assert.Equal(t, 1, events[0].ViolationCount, "keyword blocks count toward disabling")
-		encoded, err := common.Marshal(events[0])
+		// No field holds the matched keyword: apart from the redacted input
+		// excerpt (kept as for every flagged event), it appears nowhere.
+		assert.Contains(t, strings.ToLower(events[0].InputExcerpt), "buynow")
+		withoutExcerpt := *events[0]
+		withoutExcerpt.InputExcerpt = ""
+		encoded, err := common.Marshal(withoutExcerpt)
 		require.NoError(t, err)
-		assert.NotContains(t, string(encoded), `"buynow"`, "the matched keyword is not stored as such")
+		assert.NotContains(t, strings.ToLower(string(encoded)), "buynow")
 	})
 
 	t.Run("keyword_and_api sends only keyword hits to the engine, which decides", func(t *testing.T) {
@@ -775,4 +782,231 @@ func TestConfigScopePolicy(t *testing.T) {
 	}
 	useConfig(t, content_moderation_setting.DefaultConfig(), nil)
 	assert.Equal(t, Decision{}, policy.Decide(Subject{UserID: 1, Group: "vip-1", Model: "m"}), "off")
+}
+
+// reminderBody builds a request whose latest user message has the given text
+// blocks, in the shape of the protocol.
+func reminderBody(t *testing.T, protocol string, texts []string) []byte {
+	t.Helper()
+	blocks := make([]map[string]string, 0, len(texts))
+	for _, text := range texts {
+		blocks = append(blocks, map[string]string{"type": "text", "text": text})
+	}
+	message := map[string]any{"role": "user", "content": blocks}
+	var body any
+	switch protocol {
+	case ProtocolGemini:
+		body = map[string]any{"contents": []any{map[string]any{"role": "user", "parts": blocks}}}
+	case ProtocolResponses:
+		body = map[string]any{"input": []any{message}}
+	case ProtocolImages:
+		body = map[string]any{"prompt": strings.Join(texts, "\n")}
+	default:
+		body = map[string]any{"messages": []any{message}}
+	}
+	encoded, err := common.Marshal(body)
+	require.NoError(t, err)
+	return encoded
+}
+
+func reminderInfo(protocol string) *relaycommon.RelayInfo {
+	info := chatInfo(7)
+	switch protocol {
+	case ProtocolClaude:
+		info.RelayFormat, info.RequestURLPath = types.RelayFormatClaude, "/v1/messages"
+	case ProtocolResponses:
+		info.RelayFormat, info.RequestURLPath = types.RelayFormatOpenAIResponses, "/v1/responses"
+	case ProtocolGemini:
+		info.RelayFormat, info.RequestURLPath = types.RelayFormatGemini, "/v1beta/models/g:generateContent"
+	case ProtocolImages:
+		info.RelayFormat, info.RequestURLPath = types.RelayFormatOpenAIImage, "/v1/images/generations"
+	}
+	return info
+}
+
+// TestKeywordsSeeTextNextToReminders: the engine never receives text parts
+// that carry a reminder block, but keywords are matched against them, so a
+// keyword cannot hide before, after, beside or inside a reminder.
+func TestKeywordsSeeTextNextToReminders(t *testing.T) {
+	setupDB(t)
+	require.NoError(t, i18n.Init())
+	useSensitiveWords(t, "")
+	const word = "今晚打老虎"
+	server := newModerationServer(t, okStatus, scoreBy("never-flagged"))
+	require.NoError(t, model.SaveContentModerationKeywordList("tiger", []string{word}, 100))
+
+	cases := map[string][]string{
+		"plain":    {word},
+		"prefix":   {"<system-reminder>context</system-reminder> " + word},
+		"suffix":   {word + " <system-reminder>context</system-reminder>"},
+		"separate": {"<system-reminder>context</system-reminder>", word},
+		"inside":   {"<system-reminder>" + word + "</system-reminder>"},
+	}
+	modes := []string{content_moderation_setting.KeywordModeKeywordOnly, content_moderation_setting.KeywordModeAPIOnly, content_moderation_setting.KeywordModeKeywordAndAPI}
+	for _, protocol := range []string{ProtocolClaude, ProtocolChat, ProtocolResponses, ProtocolGemini, ProtocolImages} {
+		for name, texts := range cases {
+			body := reminderBody(t, protocol, texts)
+			wantSemantic := ""
+			if name == "plain" || (name == "separate" && protocol != ProtocolImages) {
+				wantSemantic = word
+			}
+			require.Equal(t, wantSemantic, ExtractInput(protocol, body).Text, protocol+"/"+name)
+			require.Contains(t, ExtractKeywordText(protocol, body), word, protocol+"/"+name)
+
+			for _, mode := range modes {
+				t.Run(protocol+"/"+name+"/"+mode, func(t *testing.T) {
+					config := moderationConfig(content_moderation_setting.ModePreBlock, server.URL)
+					config.KeywordMode, config.HashBlocklistEnabled = mode, true
+					if mode != content_moderation_setting.KeywordModeAPIOnly {
+						config.KeywordLists = []string{"tiger"}
+					}
+					useConfig(t, config, []string{"k1"})
+					require.NoError(t, model.DB.Where("1 = 1").Delete(&model.ContentModerationEvent{}).Error)
+					s := newService()
+					require.NoError(t, s.reloadKeywords(true))
+					server.calls.Store(0)
+					server.mu.Lock()
+					server.inputs = nil
+					server.mu.Unlock()
+
+					c, _ := relayContext(string(body))
+					apiErr := s.checkRelay(c, reminderInfo(protocol))
+					drainRecords(s)
+					wantCalls := int64(0)
+					if wantSemantic != "" && mode != content_moderation_setting.KeywordModeKeywordOnly {
+						wantCalls = 1
+					}
+					assert.Equal(t, wantCalls, server.calls.Load())
+					if wantCalls == 1 {
+						assert.Contains(t, server.inputs[0], `"input":"`+wantSemantic+`"`, "the engine gets the reminder-free text")
+					}
+					switch mode {
+					case content_moderation_setting.KeywordModeKeywordOnly:
+						require.NotNil(t, apiErr)
+						events, _, err := model.ListContentModerationEvents(model.ContentModerationEventFilter{}, 0, 10)
+						require.NoError(t, err)
+						require.Len(t, events, 1)
+						assert.Equal(t, model.ContentModerationActionKeywordBlock, events[0].Action)
+						assert.Equal(t, "tiger", events[0].KeywordList)
+						hashes, err := model.ListContentModerationFlaggedHashes()
+						require.NoError(t, err)
+						assert.Empty(t, hashes, "keyword hits never enter the hash blocklist")
+					case content_moderation_setting.KeywordModeAPIOnly:
+						assert.Nil(t, apiErr)
+						assert.Zero(t, s.metrics.keywordHits.Load())
+					default:
+						assert.Nil(t, apiErr, "the engine did not flag the input")
+						assert.Equal(t, int64(1), s.metrics.keywordHits.Load())
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestKeywordTextSkipsWhatIsNotTheLatestUserMessage(t *testing.T) {
+	for _, test := range []struct{ protocol, body string }{
+		{ProtocolClaude, `{"messages":[{"role":"user","content":"old"},{"role":"user","content":[{"type":"tool_result","content":"今晚打老虎"}]}]}`},
+		{ProtocolClaude, `{"messages":[{"role":"user","content":"old"},{"role":"assistant","content":"今晚打老虎"}]}`},
+		{ProtocolChat, `{"messages":[{"role":"user","content":"old"},{"role":"tool","content":"今晚打老虎"}]}`},
+		{ProtocolResponses, `{"input":[{"role":"user","content":"old"},{"type":"function_call_output","output":"今晚打老虎"}]}`},
+		{ProtocolGemini, `{"contents":[{"role":"user","parts":[{"text":"old"}]},{"role":"model","parts":[{"text":"今晚打老虎"}]}]}`},
+	} {
+		assert.Empty(t, ExtractKeywordText(test.protocol, []byte(test.body)), test.body)
+	}
+}
+
+func TestMultipartImageEditPrompt(t *testing.T) {
+	setupDB(t)
+	require.NoError(t, i18n.Init())
+	server := newModerationServer(t, okStatus, scoreBy("attack"))
+	useConfig(t, moderationConfig(content_moderation_setting.ModePreBlock, server.URL), []string{"k1"})
+	s := newService()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	file, err := writer.CreateFormFile("image", "a.png")
+	require.NoError(t, err)
+	_, _ = file.Write([]byte("\x89PNG not really"))
+	require.NoError(t, writer.WriteField("prompt", "an attack scene"))
+	require.NoError(t, writer.Close())
+	assert.Equal(t, "an attack scene", MultipartPrompt(writer.FormDataContentType(), body.Bytes()))
+	assert.Empty(t, MultipartPrompt("application/json", body.Bytes()))
+
+	c, _ := relayContext(body.String())
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	info := reminderInfo(ProtocolImages)
+	info.RequestURLPath = "/v1/images/edits"
+	require.NotNil(t, s.checkRelay(c, info), "the prompt of a multipart image edit is moderated")
+	assert.Equal(t, int64(1), server.calls.Load())
+}
+
+func TestEngineNeverFollowsRedirects(t *testing.T) {
+	var leaked atomic.Int64
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			leaked.Add(1)
+		}
+	}))
+	t.Cleanup(target.Close)
+	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/v1/moderations", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(redirecting.Close)
+	config := moderationConfig(content_moderation_setting.ModePreBlock, redirecting.URL)
+	require.NoError(t, config.Normalize())
+	_, _, err := (&engine{now: time.Now}).moderate(context.Background(), &content_moderation_setting.Snapshot{Config: config, Keys: []string{"k1"}}, Input{Text: "x"})
+	var engineErr *engineError
+	require.ErrorAs(t, err, &engineErr)
+	assert.Equal(t, http.StatusTemporaryRedirect, engineErr.HTTPStatus)
+	assert.Zero(t, leaked.Load(), "the key is never sent to the redirect target")
+}
+
+func TestDisposalLossIsCounted(t *testing.T) {
+	s := newService()
+	s.records = make(chan *record) // no recorder is reading
+	s.disposalWait = 10 * time.Millisecond
+	s.enqueueRecord(&record{event: &model.ContentModerationEvent{}, dispose: true})
+	s.enqueueRecord(&record{event: &model.ContentModerationEvent{}})
+	assert.Equal(t, int64(1), s.metrics.disposalDropped.Load())
+	assert.Equal(t, int64(2), s.metrics.recordFailed.Load())
+	assert.Equal(t, int64(1), s.runtime().DisposalDropped)
+}
+
+func TestKeywordListVersionChangesWithinOneSecond(t *testing.T) {
+	setupDB(t)
+	require.NoError(t, model.SaveContentModerationKeywordList("spam", []string{"a"}, 100))
+	first, err := model.ContentModerationKeywordListsVersion()
+	require.NoError(t, err)
+	require.NoError(t, model.SaveContentModerationKeywordList("spam", []string{"b"}, 100))
+	second, err := model.ContentModerationKeywordListsVersion()
+	require.NoError(t, err)
+	assert.NotEqual(t, first, second, "a second save in the same second is still a new version")
+}
+
+func TestHashBlocklistRetentionAndLimit(t *testing.T) {
+	setupDB(t)
+	for index, createdAt := range []int64{10, 20, 300, 400, 500} {
+		require.NoError(t, model.AddContentModerationFlaggedHash(strings.Repeat(strconv.Itoa(index), 64), createdAt))
+	}
+	deleted, err := model.CleanupContentModerationFlaggedHashes(100, 2)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), deleted, "two are past retention, one more is over the limit")
+	hashes, err := model.ListContentModerationFlaggedHashes()
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{strings.Repeat("3", 64), strings.Repeat("4", 64)}, hashes, "the newest are kept")
+}
+
+func TestKeywordSearchTreatsWildcardsLiterally(t *testing.T) {
+	setupDB(t)
+	_, err := model.CreateContentModerationEvents([]*model.ContentModerationEvent{
+		{InputExcerpt: "100% sure", CreatedAt: 1}, {InputExcerpt: "1000 sure", CreatedAt: 1},
+		{InputExcerpt: "a_b", CreatedAt: 1}, {InputExcerpt: "axb", CreatedAt: 1},
+	})
+	require.NoError(t, err)
+	for keyword, want := range map[string]int64{"100%": 1, "a_b": 1, "sure": 2} {
+		_, total, err := model.ListContentModerationEvents(model.ContentModerationEventFilter{Keyword: keyword}, 0, 10)
+		require.NoError(t, err)
+		assert.Equal(t, want, total, keyword)
+	}
 }

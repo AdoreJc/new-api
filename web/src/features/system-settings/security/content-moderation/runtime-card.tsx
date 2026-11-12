@@ -62,6 +62,10 @@ const RUNTIME_FIELDS: Array<{
   { key: 'emails_failed', label: 'Notices failed' },
   { key: 'recorded', label: 'Events recorded' },
   { key: 'record_failed', label: 'Events not recorded' },
+  {
+    key: 'disposal_dropped',
+    label: 'Flagged events lost before counting',
+  },
   { key: 'hash_blocklist', label: 'Hashes in blocklist' },
   { key: 'sync_avg_ms', label: 'Average added latency (ms)' },
   { key: 'latency_avg_ms', label: 'Average API time (ms)' },

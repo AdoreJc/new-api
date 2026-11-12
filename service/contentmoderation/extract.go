@@ -1,8 +1,12 @@
 package contentmoderation
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
+	"mime"
+	"mime/multipart"
 	"regexp"
 	"strings"
 
@@ -28,6 +32,8 @@ const (
 	// maxImageDataURLBytes skips inline images the engine would reject anyway.
 	maxImageDataURLBytes = 12 << 20
 	maxExcerptRunes      = 240
+	// maxPromptFieldBytes bounds the multipart prompt field that is read.
+	maxPromptFieldBytes = 256 << 10
 )
 
 // Input is the latest user message prepared for moderation.
@@ -52,23 +58,76 @@ func (in Input) Hash() string {
 	return hex.EncodeToString(digest.Sum(nil))
 }
 
-// collector gathers text parts and images. Client-injected reminder blocks
-// (for example <system-reminder>) are not the user's own words and are
-// skipped.
+// collector gathers text parts and images. Text parts carrying a
+// client-injected reminder block (<system-reminder>) are not the user's own
+// words and are skipped for the engine; keepReminders keeps them, for the
+// keyword check.
 type collector struct {
-	parts  []string
-	images []string
+	parts         []string
+	images        []string
+	keepReminders bool
 }
 
 // ExtractInput returns only the latest user message of a request body: its
 // text (whitespace collapsed, capped at 12000 characters) and at most one
 // image. A conversation whose last message is not from the user (a tool
-// result or an assistant prefill) yields nothing.
+// result or an assistant prefill) yields nothing. Text parts carrying a
+// reminder block are left out.
 func ExtractInput(protocol string, body []byte) Input {
-	if len(body) == 0 || !gjson.ValidBytes(body) {
-		return Input{}
+	c := collectLatestUserMessage(protocol, body, false)
+	text := joinParts(c.parts)
+	if runes := []rune(text); len(runes) > maxInputRunes {
+		text = string(runes[:maxInputRunes])
 	}
-	var c collector
+	images := make([]string, 0, maxImages)
+	for _, image := range c.images {
+		if len(images) == maxImages {
+			break
+		}
+		if len(image) <= maxImageDataURLBytes {
+			images = append(images, image)
+		}
+	}
+	return Input{Text: text, Images: images}
+}
+
+// ExtractKeywordText returns the text the keyword lists are matched against:
+// the same latest user message as ExtractInput, but with text parts that
+// carry a reminder block kept and without the length cap, so a keyword
+// cannot hide next to a reminder.
+func ExtractKeywordText(protocol string, body []byte) string {
+	return joinParts(collectLatestUserMessage(protocol, body, true).parts)
+}
+
+func joinParts(parts []string) string {
+	return strings.Join(strings.Fields(strings.Join(parts, "\n")), " ")
+}
+
+// MultipartPrompt reads the "prompt" field of a multipart/form-data body,
+// which is how image edit requests send their prompt.
+func MultipartPrompt(contentType string, body []byte) string {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil || mediaType != "multipart/form-data" || params["boundary"] == "" {
+		return ""
+	}
+	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
+	for {
+		part, err := reader.NextPart()
+		if err != nil {
+			return ""
+		}
+		if part.FormName() == "prompt" && part.FileName() == "" {
+			value, _ := io.ReadAll(io.LimitReader(part, maxPromptFieldBytes))
+			return string(value)
+		}
+	}
+}
+
+func collectLatestUserMessage(protocol string, body []byte, keepReminders bool) collector {
+	c := collector{keepReminders: keepReminders}
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return c
+	}
 	switch protocol {
 	case ProtocolClaude:
 		c.lastClaudeUserMessage(gjson.GetBytes(body, "messages"))
@@ -91,29 +150,12 @@ func ExtractInput(protocol string, body []byte) Input {
 			c.addText(prompt.String())
 		}
 	}
-	text := strings.Join(strings.Fields(strings.Join(c.parts, "\n")), " ")
-	if runes := []rune(text); len(runes) > maxInputRunes {
-		text = string(runes[:maxInputRunes])
-	}
-	images := make([]string, 0, maxImages)
-	for _, image := range c.images {
-		if len(images) == maxImages {
-			break
-		}
-		if len(image) <= maxImageDataURLBytes {
-			images = append(images, image)
-		}
-	}
-	return Input{Text: text, Images: images}
-}
-
-func isReminder(text string) bool {
-	return strings.Contains(text, "<system-reminder>")
+	return c
 }
 
 func (c *collector) addText(text string) {
 	text = strings.TrimSpace(text)
-	if text == "" || isReminder(text) {
+	if text == "" || (!c.keepReminders && strings.Contains(text, "<system-reminder>")) {
 		return
 	}
 	c.parts = append(c.parts, text)
@@ -152,7 +194,7 @@ func (c *collector) lastChatUserMessage(messages gjson.Result) {
 	if len(items) == 0 || role(items[len(items)-1]) != "user" {
 		return
 	}
-	var candidate collector
+	candidate := collector{keepReminders: c.keepReminders}
 	candidate.content(items[len(items)-1].Get("content"))
 	c.keepIfNonEmpty(&candidate)
 }
@@ -169,7 +211,7 @@ func (c *collector) lastClaudeUserMessage(messages gjson.Result) {
 	if last < 0 || role(items[last]) != "user" {
 		return
 	}
-	var candidate collector
+	candidate := collector{keepReminders: c.keepReminders}
 	candidate.content(items[last].Get("content"))
 	c.keepIfNonEmpty(&candidate)
 }
@@ -198,7 +240,7 @@ func (c *collector) responsesUserItem(item gjson.Result) {
 	if itemType != "" && itemType != "message" && itemType != "input_text" && itemType != "input_image" {
 		return
 	}
-	var candidate collector
+	candidate := collector{keepReminders: c.keepReminders}
 	candidate.content(item.Get("content"))
 	if itemType == "input_text" || itemType == "input_image" {
 		candidate.content(item)
@@ -215,7 +257,7 @@ func (c *collector) lastGeminiContent(contents gjson.Result) {
 	if itemRole := role(last); itemRole != "" && itemRole != "user" {
 		return
 	}
-	var candidate collector
+	candidate := collector{keepReminders: c.keepReminders}
 	last.Get("parts").ForEach(func(_, part gjson.Result) bool {
 		candidate.addText(part.Get("text").String())
 		candidate.addImageData(part.Get("inline_data.mime_type").String(), part.Get("inline_data.data").String())
