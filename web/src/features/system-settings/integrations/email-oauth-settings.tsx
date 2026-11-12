@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { ExternalLink } from 'lucide-react'
 import { useState } from 'react'
 import { useFormContext, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -40,12 +41,22 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { useStatus } from '@/hooks/use-status'
 import { handleServerError } from '@/lib/handle-server-error'
 
+import { OAuthSetupGuide } from '../components/oauth-setup-guide'
 import {
   EMAIL_OAUTH_CALLBACK_PATH,
   revokeEmailOAuthAuthorization,
   startEmailOAuthAuthorization,
 } from './email-oauth-api'
 import type { EmailFormValues } from './email-settings-schema'
+
+// Where each provider issues the Client ID and client secret.
+const EMAIL_OAUTH_CONSOLE_URLS = {
+  googleCredentials: 'https://console.cloud.google.com/apis/credentials',
+  gmailApi:
+    'https://console.cloud.google.com/apis/library/gmail.googleapis.com',
+  microsoftApps:
+    'https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade',
+}
 
 type EmailOAuthSettingsProps = {
   isSaving: boolean
@@ -113,6 +124,24 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
       queryClient.invalidateQueries({ queryKey: ['system-options'] }),
   })
   const busy = props.isSaving || authorize.isPending || revoke.isPending
+  const consoleLinks =
+    oauthProvider === 'microsoft'
+      ? [
+          {
+            label: t('Get a Client ID and client secret'),
+            href: EMAIL_OAUTH_CONSOLE_URLS.microsoftApps,
+          },
+        ]
+      : [
+          {
+            label: t('Get a Client ID and client secret'),
+            href: EMAIL_OAUTH_CONSOLE_URLS.googleCredentials,
+          },
+          {
+            label: t('Enable the Gmail API'),
+            href: EMAIL_OAUTH_CONSOLE_URLS.gmailApi,
+          },
+        ]
 
   let authorizeHint = t(
     'Opens the provider sign-in page. Sign in with the mailbox that sends email.'
@@ -171,6 +200,33 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
           </FormItem>
         )}
       />
+      <OAuthSetupGuide
+        title={t('Setup guide')}
+        description={
+          oauthProvider === 'microsoft'
+            ? t(
+                'In Microsoft Entra, register an app, add a Web platform with the redirect URI below, create a client secret under Certificates & secrets, and add the delegated Microsoft Graph permissions Mail.Send, User.Read and offline_access. A single-tenant app (the default) needs its Directory (tenant) ID in Tenant below; use common only for multi-tenant or personal-account apps.'
+              )
+            : t(
+                'In Google Cloud Console, enable the Gmail API, then create an OAuth client ID of type Web application with the redirect URI below. On the OAuth consent screen, choose Internal for Google Workspace; with External, add the sending mailbox as a test user or publish the app, because while in Testing other accounts are denied and refresh tokens expire after 7 days.'
+              )
+        }
+      >
+        <div className='flex flex-wrap gap-x-4 gap-y-1'>
+          {consoleLinks.map((link) => (
+            <a
+              key={link.href}
+              href={link.href}
+              target='_blank'
+              rel='noopener noreferrer'
+              className='text-primary inline-flex w-fit items-center gap-1 underline underline-offset-3 hover:no-underline'
+            >
+              {link.label}
+              <ExternalLink className='size-3' aria-hidden='true' />
+            </a>
+          ))}
+        </div>
+      </OAuthSetupGuide>
       <FormField
         control={form.control}
         name='EmailOAuthClientId'
@@ -199,7 +255,7 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
                 {...field}
                 autoComplete='new-password'
                 disabled={busy}
-                placeholder={t('Enter new token to update')}
+                placeholder={t('Enter new secret to update')}
               />
             </FormControl>
             <FormDescription>

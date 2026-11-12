@@ -56,6 +56,9 @@ export function SettingsFormGrid(props: SettingsFormGridProps) {
         'grid min-w-0 gap-x-5 gap-y-6 lg:grid-cols-2',
         'lg:[&>[data-settings-form-span=full]]:col-span-2',
         '[&>[data-slot=form-item]]:min-w-0',
+        // A field shorter than its row neighbour (no description) must not
+        // stretch its label and input rows; keep them at the top.
+        '[&>[data-slot=form-item]]:content-start',
         'lg:[&>[data-slot=form-item]:has(textarea)]:col-span-2',
         'lg:[&>[data-slot=form-item]:has([data-slot=switch])]:col-span-2',
         props.className
@@ -190,6 +193,9 @@ export function SettingsForm({ className, ...props }: ComponentProps<'form'>) {
         'lg:[&>[data-settings-form-span=full]]:col-span-2',
         'lg:[&>[data-slot=alert]]:col-span-2',
         '[&>[data-slot=form-item]]:min-w-0',
+        // A field shorter than its row neighbour (no description) must not
+        // stretch its label and input rows; keep them at the top.
+        '[&>[data-slot=form-item]]:content-start',
         'lg:[&>[data-slot=form-item]:has(textarea)]:col-span-2',
         'lg:[&>[data-slot=form-item]:has([data-slot=switch])]:col-span-2',
         className

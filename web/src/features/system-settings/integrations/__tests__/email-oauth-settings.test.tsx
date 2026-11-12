@@ -127,6 +127,53 @@ describe('OAuth mailbox settings', () => {
     )
   })
 
+  it.each([
+    [
+      'Gmail / Google Workspace',
+      /choose Internal for Google Workspace; with External, add the sending mailbox as a test user or publish the app/,
+      [
+        [
+          'Get a Client ID and client secret',
+          'https://console.cloud.google.com/apis/credentials',
+        ],
+        [
+          'Enable the Gmail API',
+          'https://console.cloud.google.com/apis/library/gmail.googleapis.com',
+        ],
+      ],
+    ],
+    [
+      'Outlook / Microsoft 365',
+      /delegated Microsoft Graph permissions.*A single-tenant app \(the default\) needs its Directory \(tenant\) ID in Tenant below/,
+      [
+        [
+          'Get a Client ID and client secret',
+          'https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade',
+        ],
+      ],
+    ],
+  ])(
+    'guides the %s app setup and links to its console',
+    async (service, steps, expected) => {
+      const user = renderEmail({ EmailProvider: 'oauth' })
+      await user.click(screen.getByRole('radio', { name: service }))
+      expect(screen.getByText(steps)).toBeVisible()
+      expect(screen.getByLabelText('Client secret')).toHaveAttribute(
+        'placeholder',
+        'Enter new secret to update'
+      )
+      const links = screen
+        .getAllByRole('link')
+        .filter((link) => link.getAttribute('target') === '_blank')
+      expect(
+        links.map((link) => [link.textContent, link.getAttribute('href')])
+      ).toEqual(expected)
+      for (const link of links) {
+        expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+      }
+    }
+  )
+
   it('requires a Client ID and secret before saving the OAuth method', async () => {
     const request = vi.spyOn(api, 'put')
     const user = renderEmail()
