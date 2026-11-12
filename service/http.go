@@ -27,7 +27,8 @@ func CloseResponseBodyGracefully(httpResponse *http.Response) {
 // should be copied to the client response. It returns false for Content-Length
 // (managed separately) and X-Oneapi-Request-Id (to preserve the local instance
 // ID). When the upstream header is X-Oneapi-Request-Id, the value is captured
-// into the Gin context for later logging.
+// into the Gin context for later logging. A subscription OAuth channel passes
+// only the headers in subscriptionOAuthResponseHeaders.
 func ShouldCopyUpstreamHeader(c *gin.Context, k string, v []string) bool {
 	if strings.EqualFold(k, "Content-Length") {
 		return false
@@ -37,6 +38,10 @@ func ShouldCopyUpstreamHeader(c *gin.Context, k string, v []string) bool {
 			c.Set(common.UpstreamRequestIdKey, v[0])
 		}
 		return false
+	}
+	if c != nil && isSubscriptionOAuthChannel(c) {
+		_, allowed := subscriptionOAuthResponseHeaders[strings.ToLower(k)]
+		return allowed
 	}
 	return true
 }
@@ -60,6 +65,7 @@ func IOCopyBytesGracefully(c *gin.Context, src *http.Response, data []byte) {
 			c.Writer.Header().Set(k, v[0])
 		}
 	}
+	WriteSubscriptionLimitHeaders(c)
 
 	// set Content-Length header manually BEFORE calling WriteHeader
 	c.Writer.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))

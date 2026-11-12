@@ -13,8 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -723,4 +725,125 @@ func TestSetEventStreamHeadersBoundsStreamWritesByBudget(t *testing.T) {
 	require.NotEmpty(t, recorder.deadlines)
 	assert.False(t, recorder.deadlines[0].Before(before.Add(streamWriteTimeout+450*time.Second)))
 	assert.Contains(t, recorder.Body.String(), "data: AAAA")
+}
+
+// Subscription OAuth channels pass only generic upstream headers to clients;
+// the bound account's usage-limit headers reach only the user its binding
+// serves, on the bound single-account channel, while the site option is on.
+func TestSubscriptionOAuthResponseHeaders(t *testing.T) {
+	claudeUpstream := http.Header{
+		"Content-Type": {"application/json"},
+		"Request-Id":   {"req_1"},
+		"Anthropic-Ratelimit-Unified-5h-Utilization": {"0.42"},
+		"Anthropic-Ratelimit-Unified-7d-Reset":       {"1760000000"},
+		"Anthropic-Ratelimit-Unified-Status":         {"allowed"},
+		"Anthropic-Ratelimit-Tokens-Remaining":       {"100"},
+		"Anthropic-Organization-Id":                  {"org-1"},
+		"Retry-After":                                {"30"},
+		"Cf-Ray":                                     {"ray-1"},
+	}
+	codexUpstream := http.Header{
+		"Content-Type":                    {"text/event-stream"},
+		"X-Codex-Turn-State":              {"turn-1"},
+		"X-Reasoning-Included":            {"true"},
+		"X-Codex-Primary-Used-Percent":    {"12"},
+		"X-Codex-Secondary-Reset-At":      {"1760000000"},
+		"X-Codex-Primary-Limit-Name":      {"5h"},
+		"X-Codex-Credits-Balance":         {"3"},
+		"X-Codex-Rate-Limit-Reached-Type": {"primary"},
+		"X-Codex-Plan-Type":               {"plus"},
+		"X-Codex-Active-Limit":            {"codex"},
+		"Openai-Organization":             {"org-2"},
+		"Chatgpt-Account-Id":              {"acct-1"},
+	}
+	claudeLimits := []string{"Anthropic-Ratelimit-Unified-5h-Utilization", "Anthropic-Ratelimit-Unified-7d-Reset", "Anthropic-Ratelimit-Unified-Status", "Retry-After"}
+	codexLimits := []string{"X-Codex-Primary-Used-Percent", "X-Codex-Secondary-Reset-At", "X-Codex-Primary-Limit-Name", "X-Codex-Credits-Balance", "X-Codex-Rate-Limit-Reached-Type"}
+	neverForOAuth := []string{"Anthropic-Ratelimit-Tokens-Remaining", "Anthropic-Organization-Id", "Cf-Ray", "X-Codex-Plan-Type", "X-Codex-Active-Limit", "Openai-Organization", "Chatgpt-Account-Id"}
+
+	const boundChannel = 7
+	bound := func() *relaycommon.SubscriptionRoute { return &relaycommon.SubscriptionRoute{ChannelId: boundChannel} }
+	tests := []struct {
+		name        string
+		channelType int
+		channelId   int
+		multiKey    bool
+		route       *relaycommon.SubscriptionRoute
+		optionOff   bool
+		wantLimits  bool
+	}{
+		{name: "unbound", channelId: boundChannel},
+		{name: "bound on its channel", channelId: boundChannel, route: bound(), wantLimits: true},
+		{name: "bound on another channel", channelId: boundChannel + 1, route: bound()},
+		{name: "bound after fallback", channelId: boundChannel, route: &relaycommon.SubscriptionRoute{ChannelId: boundChannel, FellBack: true}},
+		{name: "bound multi-key", channelId: boundChannel, multiKey: true, route: bound()},
+		{name: "bound option off", channelId: boundChannel, route: bound(), optionOff: true},
+	}
+	for _, channelType := range []int{constant.ChannelTypeClaudeOAuth, constant.ChannelTypeCodex} {
+		upstreamHeaders, limits := claudeUpstream, claudeLimits
+		if channelType == constant.ChannelTypeCodex {
+			upstreamHeaders, limits = codexUpstream, codexLimits
+		}
+		for _, tt := range tests {
+			for _, stream := range []bool{false, true} {
+				t.Run(fmt.Sprintf("type=%d %s stream=%v", channelType, tt.name, stream), func(t *testing.T) {
+					previous := operation_setting.SubscriptionRateLimitHeaderPassthrough
+					operation_setting.SubscriptionRateLimitHeaderPassthrough = !tt.optionOff
+					t.Cleanup(func() { operation_setting.SubscriptionRateLimitHeaderPassthrough = previous })
+
+					recorder := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(recorder)
+					c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+					common.SetContextKey(c, constant.ContextKeyChannelType, channelType)
+					common.SetContextKey(c, constant.ContextKeyChannelId, tt.channelId)
+					common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, tt.multiKey)
+					if tt.route != nil {
+						common.SetContextKey(c, constant.ContextKeySubscriptionRoute, tt.route)
+					}
+					upstream := &http.Response{StatusCode: http.StatusOK, Header: upstreamHeaders.Clone()}
+					service.RecordSubscriptionLimitHeaders(c, upstream.Header)
+
+					if stream {
+						copyCodexSSEHeaders(c, upstream)
+					} else {
+						service.IOCopyBytesGracefully(c, upstream, []byte("{}"))
+					}
+					got := c.Writer.Header()
+
+					for _, name := range limits {
+						if tt.wantLimits {
+							assert.Equal(t, upstreamHeaders.Get(name), got.Get(name), name)
+						} else {
+							assert.Empty(t, got.Values(name), name)
+						}
+					}
+					for _, name := range neverForOAuth {
+						assert.Empty(t, got.Values(name), name)
+					}
+					if channelType == constant.ChannelTypeCodex {
+						assert.Equal(t, "turn-1", got.Get("X-Codex-Turn-State"))
+						assert.Equal(t, "true", got.Get("X-Reasoning-Included"))
+					}
+					if !stream {
+						assert.Equal(t, upstreamHeaders.Get("Content-Type"), got.Get("Content-Type"))
+					}
+				})
+			}
+		}
+	}
+
+	t.Run("anthropic api key channel keeps passing upstream headers", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeAnthropic)
+		common.SetContextKey(c, constant.ContextKeyChannelId, boundChannel)
+		common.SetContextKey(c, constant.ContextKeySubscriptionRoute, bound())
+		upstream := &http.Response{StatusCode: http.StatusOK, Header: claudeUpstream.Clone()}
+
+		service.IOCopyBytesGracefully(c, upstream, []byte("{}"))
+
+		for name := range claudeUpstream {
+			assert.Equal(t, claudeUpstream.Get(name), recorder.Header().Get(name), name)
+		}
+	})
 }

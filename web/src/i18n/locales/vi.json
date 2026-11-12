@@ -5839,6 +5839,8 @@
     "Selected when creating a token and used as the default billing group for API calls.": "Được chọn khi tạo token và dùng làm nhóm tính phí mặc định cho các lệnh gọi API.",
     "Selecting a plugin fills its declared models and default base URL.": "Chọn plugin sẽ điền các model đã khai báo và Base URL mặc định.",
     "Self-Use Mode": "Chế độ tự sử dụng",
+    "Subscription usage-limit headers": "Header giới hạn sử dụng gói đăng ký",
+    "Return the bound account usage-limit headers to users served by their subscription binding": "Trả về header giới hạn sử dụng của tài khoản liên kết cho người dùng được phục vụ qua liên kết gói đăng ký",
     "Send": "Gửi",
     "Send a request": "Gửi yêu cầu",
     "Send chat completions to the OpenAI-compatible /v1/chat/completions instead of the native Ollama /api/chat": "Gửi yêu cầu chat completions tới /v1/chat/completions tương thích OpenAI thay vì /api/chat gốc của Ollama",
