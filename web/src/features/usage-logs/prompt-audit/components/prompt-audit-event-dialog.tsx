@@ -33,7 +33,9 @@ import {
 import { getPromptAuditEvent, type PromptAuditEvent } from '../api'
 import {
   PROMPT_AUDIT_DECISION_LABELS,
+  PROMPT_AUDIT_ROLE_LABELS,
   promptAuditCategories,
+  promptAuditHitChunks,
 } from '../lib/event-format'
 
 export function PromptAuditEventDialog(props: { event: PromptAuditEvent }) {
@@ -50,6 +52,7 @@ export function PromptAuditEventDialog(props: { event: PromptAuditEvent }) {
   })
   const event = props.event
   const categories = promptAuditCategories(event)
+  const hitChunks = promptAuditHitChunks(event)
   return (
     <Dialog
       open={open}
@@ -110,6 +113,24 @@ export function PromptAuditEventDialog(props: { event: PromptAuditEvent }) {
             ms: event.latency_ms,
           })}
         />
+        {hitChunks.length > 0 && (
+          <DetailRow
+            label={t('Triggered by')}
+            value={hitChunks
+              .map((hit) =>
+                t('Chunk {{index}} ({{roles}}): {{decision}}', {
+                  index: hit.index,
+                  roles: hit.roles
+                    .map((role) => t(PROMPT_AUDIT_ROLE_LABELS[role] ?? role))
+                    .join(', '),
+                  decision: t(
+                    PROMPT_AUDIT_DECISION_LABELS[hit.decision] ?? hit.decision
+                  ),
+                })
+              )
+              .join('; ')}
+          />
+        )}
         {event.scan_incomplete && (
           <p className='text-destructive text-xs'>
             {t(

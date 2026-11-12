@@ -63,6 +63,51 @@ export function promptAuditCategories(
   return [...known, ...unknown]
 }
 
+export type PromptAuditHitChunk = {
+  index: number
+  roles: string[]
+  decision: string
+}
+
+/** Reads where the findings came from; older events have none. */
+export function promptAuditHitChunks(
+  event: Pick<PromptAuditEvent, 'hit_chunks'>
+): PromptAuditHitChunk[] {
+  if (!event.hit_chunks) return []
+  try {
+    const parsed: unknown = JSON.parse(event.hit_chunks)
+    if (!Array.isArray(parsed)) return []
+    return parsed.flatMap((item: unknown) => {
+      if (typeof item !== 'object' || item === null) return []
+      const hit = item as Record<string, unknown>
+      if (typeof hit.index !== 'number') return []
+      return [
+        {
+          index: hit.index,
+          roles: Array.isArray(hit.roles)
+            ? hit.roles.filter(
+                (role): role is string => typeof role === 'string'
+              )
+            : [],
+          decision: typeof hit.decision === 'string' ? hit.decision : '',
+        },
+      ]
+    })
+  } catch {
+    return []
+  }
+}
+
+/** Message roles with English i18n keys. */
+export const PROMPT_AUDIT_ROLE_LABELS: Record<string, string> = {
+  user: 'User',
+  system: 'System',
+  developer: 'Developer',
+  assistant: 'Assistant',
+  tool: 'Tool',
+  agent_context: 'Agent context',
+}
+
 export const PROMPT_AUDIT_DECISION_LABELS: Record<string, string> = {
   critical: 'Critical',
   flag: 'Flagged',

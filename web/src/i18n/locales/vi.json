@@ -7732,6 +7732,23 @@
     "Chunks skipped (recently safe)": "Đoạn bỏ qua (gần đây đã xác định an toàn)",
     "Chunks over the per-request limit": "Đoạn vượt giới hạn mỗi yêu cầu",
     "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "Đã quét {{scanned}}/{{chunks}} đoạn trong {{ms}} ms",
-    "Scan incomplete: a later chunk could not be scanned; these are the findings so far": "Quét chưa hoàn tất: không quét được đoạn tiếp theo; dưới đây là kết quả đã có"
+    "Scan incomplete: a later chunk could not be scanned; these are the findings so far": "Quét chưa hoàn tất: không quét được đoạn tiếp theo; dưới đây là kết quả đã có",
+    "Scan scope": "Phạm vi quét",
+    "Latest user message": "Tin nhắn người dùng mới nhất",
+    "All user messages": "Tất cả tin nhắn người dùng",
+    "Entire conversation": "Toàn bộ cuộc hội thoại",
+    "Only the newest user input. Agent system prompts, tool output and earlier turns are not scanned.": "Chỉ nội dung người dùng nhập mới nhất. Không quét prompt hệ thống của agent, đầu ra công cụ và các lượt trước.",
+    "Every user message in the conversation, without system, developer, assistant or tool text.": "Mọi tin nhắn người dùng trong cuộc hội thoại, không gồm văn bản system, developer, assistant hay công cụ.",
+    "Every client text, including system prompts, assistant replies and tool output. Agent prompts are often flagged as jailbreaks.": "Mọi văn bản từ client, gồm prompt hệ thống, phản hồi của trợ lý và đầu ra công cụ. Prompt của agent thường bị đánh dấu là jailbreak.",
+    "Stored prompts always cover the whole request.": "Prompt được lưu luôn bao gồm toàn bộ yêu cầu.",
+    "Treat controversial jailbreak results as critical": "Coi kết quả jailbreak gây tranh cãi là nghiêm trọng",
+    "Off by default: a controversial jailbreak verdict is recorded as flagged, because coding agent prompts often get it. Unsafe results are not affected.": "Mặc định tắt: kết quả jailbreak gây tranh cãi được ghi là đã đánh dấu, vì prompt của agent lập trình thường nhận kết quả này. Không ảnh hưởng kết quả không an toàn.",
+    "Triggered by": "Kích hoạt bởi",
+    "Chunk {{index}} ({{roles}}): {{decision}}": "Khối {{index}} ({{roles}}): {{decision}}",
+    "Developer": "Nhà phát triển",
+    "Assistant": "Trợ lý",
+    "Tool": "Công cụ",
+    "Agent context": "Ngữ cảnh agent",
+    "Skipped (agent context only)": "Bỏ qua (chỉ ngữ cảnh agent)"
   }
 }

@@ -38,6 +38,14 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { handleServerError } from '@/lib/handle-server-error'
 
@@ -56,6 +64,7 @@ import {
 } from './api'
 import { PromptAuditEndpointFields } from './endpoint-fields'
 import {
+  PROMPT_AUDIT_SCAN_SCOPES,
   PROMPT_AUDIT_SCANNER_LABELS,
   promptAuditFormSchema,
   toPromptAuditConfigRequest,
@@ -85,6 +94,12 @@ const SWITCHES = [
     label: 'Store the full prompt of flagged requests',
     description:
       'Turn off to keep only a redacted preview and a hash. Only the root user can view full prompts.',
+  },
+  {
+    name: 'strict_jailbreak_mapping',
+    label: 'Treat controversial jailbreak results as critical',
+    description:
+      'Off by default: a controversial jailbreak verdict is recorded as flagged, because coding agent prompts often get it. Unsafe results are not affected.',
   },
 ] as const
 
@@ -158,6 +173,10 @@ function PromptAuditForm(props: {
   })
   const onSubmit = form.handleSubmit((values) => save.mutate(values))
   const allGroups = form.watch('all_groups')
+  const scanScope = form.watch('scan_scope')
+  const scanScopeDescription = PROMPT_AUDIT_SCAN_SCOPES.find(
+    (scope) => scope.value === scanScope
+  )?.description
 
   return (
     <SettingsSection title={t('Prompt Audit')}>
@@ -196,6 +215,44 @@ function PromptAuditForm(props: {
               )}
             />
           ))}
+          <FormField
+            control={form.control}
+            name='scan_scope'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Scan scope')}</FormLabel>
+                <Select
+                  items={PROMPT_AUDIT_SCAN_SCOPES.map((scope) => ({
+                    value: scope.value,
+                    label: t(scope.label),
+                  }))}
+                  onValueChange={field.onChange}
+                  value={field.value}
+                >
+                  <FormControl>
+                    <SelectTrigger aria-label={t('Scan scope')}>
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {PROMPT_AUDIT_SCAN_SCOPES.map((scope) => (
+                        <SelectItem key={scope.value} value={scope.value}>
+                          {t(scope.label)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FormDescription>
+                  {scanScopeDescription
+                    ? `${t(scanScopeDescription)} ${t('Stored prompts always cover the whole request.')}`
+                    : t('Stored prompts always cover the whole request.')}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
           {!allGroups && (
             <FormField
               control={form.control}

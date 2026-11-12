@@ -7732,6 +7732,23 @@
     "Chunks skipped (recently safe)": "Пропущено фрагментов (недавно признаны безопасными)",
     "Chunks over the per-request limit": "Фрагментов сверх лимита на запрос",
     "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "Проверено {{scanned}} из {{chunks}} фрагментов за {{ms}} мс",
-    "Scan incomplete: a later chunk could not be scanned; these are the findings so far": "Проверка не завершена: следующий фрагмент проверить не удалось; ниже уже полученные результаты"
+    "Scan incomplete: a later chunk could not be scanned; these are the findings so far": "Проверка не завершена: следующий фрагмент проверить не удалось; ниже уже полученные результаты",
+    "Scan scope": "Область проверки",
+    "Latest user message": "Последнее сообщение пользователя",
+    "All user messages": "Все сообщения пользователя",
+    "Entire conversation": "Весь диалог",
+    "Only the newest user input. Agent system prompts, tool output and earlier turns are not scanned.": "Только последний ввод пользователя. Системные промпты агентов, вывод инструментов и прежние ходы не проверяются.",
+    "Every user message in the conversation, without system, developer, assistant or tool text.": "Каждое сообщение пользователя в диалоге, без текста system, developer, assistant и инструментов.",
+    "Every client text, including system prompts, assistant replies and tool output. Agent prompts are often flagged as jailbreaks.": "Весь текст клиента, включая системные промпты, ответы ассистента и вывод инструментов. Промпты агентов часто помечаются как jailbreak.",
+    "Stored prompts always cover the whole request.": "Сохраняемые промпты всегда содержат весь запрос.",
+    "Treat controversial jailbreak results as critical": "Считать спорные результаты jailbreak критическими",
+    "Off by default: a controversial jailbreak verdict is recorded as flagged, because coding agent prompts often get it. Unsafe results are not affected.": "По умолчанию выключено: спорный вердикт jailbreak записывается как помеченный, потому что промпты агентов для программирования часто его получают. На небезопасные результаты не влияет.",
+    "Triggered by": "Источник срабатывания",
+    "Chunk {{index}} ({{roles}}): {{decision}}": "Фрагмент {{index}} ({{roles}}): {{decision}}",
+    "Developer": "Разработчик",
+    "Assistant": "Ассистент",
+    "Tool": "Инструмент",
+    "Agent context": "Контекст агента",
+    "Skipped (agent context only)": "Пропущено (только контекст агента)"
   }
 }

@@ -40,23 +40,26 @@ const (
 
 // Metrics are process-local counters reset on restart.
 type Metrics struct {
-	enqueued       atomic.Int64
-	dropped        atomic.Int64
-	skipped        atomic.Int64
-	tooLarge       atomic.Int64
-	noText         atomic.Int64
-	scanned        atomic.Int64
-	passed         atomic.Int64
-	flagged        atomic.Int64
-	critical       atomic.Int64
-	failed         atomic.Int64
-	timeouts       atomic.Int64
-	failovers      atomic.Int64
-	retries        atomic.Int64
-	recorded       atomic.Int64
-	recordFailed   atomic.Int64
-	latencyTotalMS atomic.Int64
-	latencyMaxMS   atomic.Int64
+	enqueued atomic.Int64
+	dropped  atomic.Int64
+	skipped  atomic.Int64
+	tooLarge atomic.Int64
+	noText   atomic.Int64
+	// agentContextOnly counts requests whose in-scope user text was only
+	// agent wrappers, so nothing was sent to the Guard.
+	agentContextOnly atomic.Int64
+	scanned          atomic.Int64
+	passed           atomic.Int64
+	flagged          atomic.Int64
+	critical         atomic.Int64
+	failed           atomic.Int64
+	timeouts         atomic.Int64
+	failovers        atomic.Int64
+	retries          atomic.Int64
+	recorded         atomic.Int64
+	recordFailed     atomic.Int64
+	latencyTotalMS   atomic.Int64
+	latencyMaxMS     atomic.Int64
 	// chunksCached counts chunks skipped because they were recently found safe;
 	// chunksOverBudget counts chunks left unscanned by the per-request limit.
 	chunksCached     atomic.Int64
@@ -277,7 +280,11 @@ func (s *Service) process(ctx context.Context, item *job) {
 		s.metrics.skipped.Add(1)
 		return
 	}
-	prompt, err := extractPromptSnapshot(item.protocol, item.body)
+	prompt, err := extractPromptSnapshot(item.protocol, item.body, snapshot.Config.ScanScope)
+	if errors.Is(err, errAgentContextOnly) {
+		s.metrics.agentContextOnly.Add(1)
+		return
+	}
 	if err != nil {
 		s.metrics.noText.Add(1)
 		return
@@ -285,7 +292,7 @@ func (s *Service) process(ctx context.Context, item *job) {
 	s.metrics.scanned.Add(1)
 	// A failed scan can still return the findings of chunks scanned before
 	// the failure; those are recorded and marked incomplete.
-	result, err := s.guard.evaluate(ctx, snapshot, prompt.ScanText, s.retryDelays, &s.metrics)
+	result, err := s.guard.evaluate(ctx, snapshot, prompt.Latest, prompt.Rest, s.retryDelays, &s.metrics)
 	if err != nil {
 		s.metrics.failed.Add(1)
 		var guardErr *guardError
@@ -320,6 +327,7 @@ func (s *Service) process(ctx context.Context, item *job) {
 	event.ConfigVersion = snapshot.Config.ConfigVersion
 	event.ChunkTotal, event.ChunksScanned, event.LatencyMs = result.ChunkTotal, result.ChunksScanned, result.LatencyMS
 	event.ScanIncomplete = result.Incomplete
+	event.HitChunks = encodeHits(result.Hits)
 	event.PromptHash, event.RedactedPreview = prompt.Hash, prompt.Preview
 	event.PromptLength, event.MessageCount = prompt.Length, prompt.MessageCount
 	if snapshot.Config.StoreFullPrompt {
@@ -350,6 +358,17 @@ func encodeList(values []string) string {
 		return "[]"
 	}
 	encoded, err := common.Marshal(values)
+	if err != nil {
+		return "[]"
+	}
+	return string(encoded)
+}
+
+func encodeHits(hits []chunkHit) string {
+	if len(hits) == 0 {
+		return "[]"
+	}
+	encoded, err := common.Marshal(hits)
 	if err != nil {
 		return "[]"
 	}
@@ -433,6 +452,7 @@ type RuntimeStatus struct {
 	Skipped          int64  `json:"skipped"`
 	SkippedTooLarge  int64  `json:"skipped_too_large"`
 	SkippedNoText    int64  `json:"skipped_no_text"`
+	SkippedAgentOnly int64  `json:"skipped_agent_context_only"`
 	Scanned          int64  `json:"scanned"`
 	Passed           int64  `json:"passed"`
 	Flagged          int64  `json:"flagged"`
@@ -460,7 +480,7 @@ func (s *Service) runtime() RuntimeStatus {
 		QueueDepth: s.depth.Load(), QueueCapacity: config.QueueCapacity,
 		QueuedBytes: s.queuedBytes.Load(), QueuedBytesLimit: maxQueuedBytes, QueueInMemory: true,
 		Enqueued: m.enqueued.Load(), Dropped: m.dropped.Load(), Skipped: m.skipped.Load(),
-		SkippedTooLarge: m.tooLarge.Load(), SkippedNoText: m.noText.Load(), Scanned: m.scanned.Load(),
+		SkippedTooLarge: m.tooLarge.Load(), SkippedNoText: m.noText.Load(), SkippedAgentOnly: m.agentContextOnly.Load(), Scanned: m.scanned.Load(),
 		Passed: m.passed.Load(), Flagged: m.flagged.Load(), Critical: m.critical.Load(),
 		Failed: m.failed.Load(), Timeouts: m.timeouts.Load(), Failovers: m.failovers.Load(),
 		Retries: m.retries.Load(), Recorded: m.recorded.Load(), RecordFailed: m.recordFailed.Load(),
@@ -487,7 +507,7 @@ func Probe(ctx context.Context, endpoint prompt_audit_setting.Endpoint, token st
 	// A throwaway client: probing arbitrary addresses must not grow the cache.
 	client := newHTTPClient(endpoint)
 	defer client.CloseIdleConnections()
-	result, err := scanWith(ctx, client, endpoint, token, "Hello", prompt_audit_setting.ScannerIDs)
+	result, err := scanWith(ctx, client, endpoint, token, "Hello", prompt_audit_setting.ScannerIDs, false)
 	probe := ProbeResult{LatencyMS: time.Since(started).Milliseconds()}
 	if err != nil {
 		probe.Error = err.Error()
