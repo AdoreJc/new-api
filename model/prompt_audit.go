@@ -202,6 +202,8 @@ func (f PromptAuditEventFilter) KeywordPattern() (*regexp.Regexp, error) {
 
 const promptAuditDeleteBatchSize = 500
 
+var promptAuditLikeEscaper = strings.NewReplacer("!", "!!", "%", "!%", "_", "!_")
+
 // apply adds the SQL conditions. A keyword that is matched by scanning is
 // left to scanPromptAuditEvents; callers must not delete with such a filter.
 func (f PromptAuditEventFilter) apply(tx *gorm.DB) *gorm.DB {
@@ -237,11 +239,14 @@ func (f PromptAuditEventFilter) apply(tx *gorm.DB) *gorm.DB {
 				return tx.Where("1 = 0")
 			}
 			// LOWER on both sides keeps PostgreSQL case-insensitive like MySQL/SQLite.
-			pattern := "%" + strings.ToLower(keyword) + "%"
+			// % and _ are escaped so the keyword is a literal substring, as
+			// it is when full_prompt is scanned; '!' avoids the backslash,
+			// which MySQL and PostgreSQL quote differently.
+			pattern := "%" + promptAuditLikeEscaper.Replace(strings.ToLower(keyword)) + "%"
 			conditions := make([]string, 0, len(fields))
 			args := make([]any, 0, len(fields))
 			for _, field := range fields {
-				conditions = append(conditions, "LOWER("+field+") LIKE ?")
+				conditions = append(conditions, "LOWER("+field+") LIKE ? ESCAPE '!'")
 				args = append(args, pattern)
 			}
 			tx = tx.Where(strings.Join(conditions, " OR "), args...)
@@ -302,6 +307,12 @@ func ListPromptAuditEvents(filter PromptAuditEventFilter, offset, limit int) ([]
 	return events, total, err
 }
 
+// Rows read per scan batch; tests lower them to exercise several batches.
+var (
+	promptAuditScanBatchRows           = 1000
+	promptAuditScanFullPromptBatchRows = 100
+)
+
 // Defaults for one scanned search request.
 const (
 	PromptAuditScanDefaultMaxRows = 20000
@@ -358,8 +369,9 @@ func (e *PromptAuditEvent) searchText(field string) string {
 // pattern. The other filters run in SQL; the remaining rows are read newest
 // first in id batches (keyset, below cursor when it is set), with only id and
 // the searched columns, and matched in Go. It stops once limit events match,
-// MaxRows rows were read or the deadline passed, and always reads at least one
-// row so a continued search makes progress.
+// MaxRows rows were read or the deadline passed. Every batch read is bounded
+// by the deadline; when it passes NextCursor is the last id read, or the
+// given cursor when none was, so continuing never skips a row.
 func ScanPromptAuditEvents(ctx context.Context, filter PromptAuditEventFilter, cursor int64, limit int, limits PromptAuditScanLimits) (*PromptAuditScanPage, error) {
 	if err := filter.Validate(); err != nil {
 		return nil, err
@@ -377,9 +389,9 @@ func ScanPromptAuditEvents(ctx context.Context, filter PromptAuditEventFilter, c
 	}
 	limit = max(limit, 1)
 	// Full prompts can be 64K characters each, so read fewer per batch.
-	batchSize := 1000
+	batchSize := promptAuditScanBatchRows
 	if slices.Contains(fields, PromptAuditKeywordFieldFullPrompt) {
-		batchSize = 100
+		batchSize = promptAuditScanFullPromptBatchRows
 	}
 	columns := append([]string{"id"}, fields...)
 	page := &PromptAuditScanPage{Items: []*PromptAuditEvent{}}
@@ -387,12 +399,22 @@ func ScanPromptAuditEvents(ctx context.Context, filter PromptAuditEventFilter, c
 scan:
 	for {
 		size := min(batchSize, limits.MaxRows-page.Scanned)
-		query := filter.apply(DB.WithContext(ctx).Model(&PromptAuditEvent{})).Select(columns)
+		query := filter.apply(DB.Model(&PromptAuditEvent{})).Select(columns)
 		if cursor > 0 {
 			query = query.Where("id < ?", cursor)
 		}
+		// Each batch read ends at the deadline; a read cut off by it ends the
+		// page like a spent budget, so the search continues from cursor.
+		batchCtx, cancel := context.WithDeadline(ctx, limits.Deadline)
 		var rows []*PromptAuditEvent
-		if err := query.Order("id desc").Limit(size).Find(&rows).Error; err != nil {
+		err := query.WithContext(batchCtx).Order("id desc").Limit(size).Find(&rows).Error
+		timedOut := batchCtx.Err() != nil && ctx.Err() == nil
+		cancel()
+		if err != nil && timedOut {
+			page.Truncated, page.NextCursor, page.StopReason = true, cursor, PromptAuditScanStopTimeBudget
+			break
+		}
+		if err != nil {
 			return nil, err
 		}
 		for i, row := range rows {
@@ -458,6 +480,7 @@ func (f PromptAuditEventFilter) DeletionHash(snapshotMaxId int64) (string, error
 	if mode == "" {
 		mode = PromptAuditKeywordModePlain
 	}
+	slices.Sort(fields)
 	if keyword == "" {
 		fields, mode = nil, ""
 	}

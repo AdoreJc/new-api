@@ -51,21 +51,24 @@ it('scans only regex searches and searches that include full prompts', () => {
   ).toBe(false)
 })
 
-it('accepts RE2 inline flags and reports invalid or overlong patterns', () => {
+it('accepts RE2-only syntax and reports invalid or overlong patterns', () => {
   expect(promptAuditRegexProblem('(?i)secret\\d+')).toBeNull()
+  expect(promptAuditRegexProblem('(?P<word>secret)')).toBeNull()
+  expect(promptAuditRegexProblem('begin(?s).*end')).toBeNull()
+  expect(promptAuditRegexProblem('(?i:secret) code')).toBeNull()
   expect(promptAuditRegexProblem('(unclosed')).toBe('invalid')
   expect(promptAuditRegexProblem('a'.repeat(513))).toBe('too_long')
   expect(promptAuditRegexProblem('')).toBeNull()
 })
 
-it('shows an RE2 syntax hint under an invalid regex', () => {
+it('shows an RE2 syntax hint under a regex the browser cannot parse', () => {
   render(
     <PromptAuditKeywordOptions
       draft={{ keyword: '(unclosed', keyword_mode: 'regex' }}
       onChange={vi.fn()}
     />
   )
-  expect(screen.getByRole('alert')).toHaveTextContent('RE2')
+  expect(screen.getByRole('status')).toHaveTextContent('RE2')
 })
 
 it('turning regex off clears the case sensitive setting', async () => {
@@ -107,6 +110,30 @@ it('a truncated scan offers to continue below the last id read', async () => {
   expect(
     screen.queryByRole('button', { name: 'Back to newest' })
   ).not.toBeInTheDocument()
+})
+
+it('a scan that timed out before any row offers to retry from its cursor', async () => {
+  const onContinue = vi.fn()
+  render(
+    <PromptAuditScanStatus
+      page={{
+        items: [],
+        truncated: true,
+        next_cursor: 0,
+        scanned: 0,
+        stop_reason: 'time_budget',
+      }}
+      continued={false}
+      loading={false}
+      onContinue={onContinue}
+      onRestart={vi.fn()}
+    />
+  )
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'The search ran out of time before reading any event.'
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Continue search' }))
+  expect(onContinue).toHaveBeenCalledWith(0)
 })
 
 it('a finished scan offers no continuation', () => {

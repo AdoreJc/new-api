@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -322,13 +321,6 @@ func TestPromptAuditRegexSearchContinuesFromCursor(t *testing.T) {
 	assert.Equal(t, model.PromptAuditScanStopPageFull, body.Data.StopReason)
 	assert.Equal(t, events[4].Id, body.Data.NextCursor)
 
-	page, err := model.ScanPromptAuditEvents(context.Background(), model.PromptAuditEventFilter{Keyword: "zzz", KeywordMode: "regex"}, 0, 10,
-		model.PromptAuditScanLimits{MaxRows: 100, Deadline: time.Now().Add(-time.Second)})
-	require.NoError(t, err)
-	assert.True(t, page.Truncated)
-	assert.Equal(t, model.PromptAuditScanStopTimeBudget, page.StopReason)
-	assert.Equal(t, 1, page.Scanned, "a spent budget still reads one row so continuing makes progress")
-	assert.Equal(t, events[4].Id, page.NextCursor)
 }
 
 func TestPromptAuditFilteredDeletionRejectsScannedSearches(t *testing.T) {
@@ -438,6 +430,36 @@ func TestPromptAuditFilteredDeletionNeedsAMatchingUnexpiredPreview(t *testing.T)
 	encoded, err := common.Marshal(logs)
 	require.NoError(t, err)
 	assert.NotContains(t, string(encoded), "ship order", "deleted prompt text is never logged")
+}
+
+func TestPromptAuditDeletionRejectsLegacyAndOutOfRangeRequests(t *testing.T) {
+	identity := setupPromptAuditTest(t)
+	events := seedPromptAuditSearchEvents(t)
+
+	legacy := securityEnrollmentRequest(http.MethodPost, "/api/prompt_audit/events/delete-by-filter",
+		`{"filter":{"decision":"flag"},"max_id":`+strconv.FormatInt(events[4].Id, 10)+`}`, "", identity, DeletePromptAuditEventsByFilter)
+	assert.Equal(t, http.StatusBadRequest, legacy.Code, "the old {filter,max_id} request has no confirmation")
+	assert.Contains(t, legacy.Body.String(), "Preview the deletion before confirming it")
+
+	tooMany := make([]string, 501)
+	for i := range tooMany {
+		tooMany[i] = strconv.Itoa(i + 1)
+	}
+	for _, body := range []string{`{"ids":[]}`, `{}`, `{"ids":[` + strings.Join(tooMany, ",") + `]}`} {
+		response := securityEnrollmentRequest(http.MethodPost, "/api/prompt_audit/events/batch-delete", body, "", identity, BatchDeletePromptAuditEvents)
+		assert.Equal(t, http.StatusBadRequest, response.Code, body[:min(len(body), 20)])
+		assert.Contains(t, response.Body.String(), "Select between 1 and 500 events")
+	}
+	assert.Equal(t, int64(5), promptAuditEventCount(t), "rejected requests delete nothing")
+
+	ids := make([]string, 500)
+	for i := range ids {
+		ids[i] = strconv.FormatInt(events[0].Id+int64(i)*1000, 10)
+	}
+	ids[0] = strconv.FormatInt(events[0].Id, 10)
+	response := securityEnrollmentRequest(http.MethodPost, "/api/prompt_audit/events/batch-delete", `{"ids":[`+strings.Join(ids, ",")+`]}`, "", identity, BatchDeletePromptAuditEvents)
+	assert.Contains(t, response.Body.String(), `"deleted":1`, "500 ids are accepted; only existing ones are deleted")
+	assert.Equal(t, int64(4), promptAuditEventCount(t))
 }
 
 func TestPromptAuditFilteredDeletionDeletesInBatches(t *testing.T) {

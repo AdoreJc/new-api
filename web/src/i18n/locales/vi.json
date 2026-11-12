@@ -7935,7 +7935,6 @@
     "Search fields: all but full prompt": "Trường tìm kiếm: tất cả trừ prompt đầy đủ",
     "Searching full prompts is recorded in the audit log, including the search pattern and time range.": "Việc tìm kiếm trong prompt đầy đủ được ghi vào nhật ký kiểm toán, bao gồm mẫu tìm kiếm và khoảng thời gian.",
     "The search pattern is longer than {{max}} characters": "Mẫu tìm kiếm dài hơn {{max}} ký tự",
-    "This does not look like a valid regular expression.": "Đây có vẻ không phải là biểu thức chính quy hợp lệ.",
     "Patterns use RE2 syntax: no lookaround or backreferences.": "Mẫu dùng cú pháp RE2: không hỗ trợ lookaround hay tham chiếu ngược.",
     "Scanned {{rows}} events, up to #{{id}}.": "Đã quét {{rows}} sự kiện, đến #{{id}}.",
     "Scanned {{rows}} events. The search reached the oldest event.": "Đã quét {{rows}} sự kiện. Tìm kiếm đã đến sự kiện cũ nhất.",
@@ -7954,6 +7953,8 @@
     "No filters are set: every event up to this preview is deleted.": "Chưa đặt bộ lọc: mọi sự kiện tính đến lần xem trước này sẽ bị xóa.",
     "The deletion preview expired. Preview the deletion again": "Bản xem trước xóa đã hết hạn. Hãy xem trước lại",
     "The filters changed after the preview. Preview the deletion again": "Bộ lọc đã thay đổi sau khi xem trước. Hãy xem trước lại",
-    "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.": "Xóa {{count}} sự kiện khớp với bộ lọc đang áp dụng? Các sự kiện ghi sau lần xem trước này được giữ lại. Không thể hoàn tác."
+    "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.": "Xóa {{count}} sự kiện khớp với bộ lọc đang áp dụng? Các sự kiện ghi sau lần xem trước này được giữ lại. Không thể hoàn tác.",
+    "This may not be a valid regular expression. The server checks it when you search.": "Đây có thể không phải biểu thức chính quy hợp lệ. Máy chủ sẽ kiểm tra khi tìm kiếm.",
+    "The search ran out of time before reading any event.": "Tìm kiếm đã hết thời gian trước khi đọc được sự kiện nào."
   }
 }

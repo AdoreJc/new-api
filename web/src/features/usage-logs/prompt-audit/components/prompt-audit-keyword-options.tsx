@@ -104,12 +104,14 @@ export function PromptAuditKeywordOptions(
         </p>
       )}
       {problem && (
-        <p role='alert' className='text-destructive text-xs'>
+        <p role='status' className='text-muted-foreground text-xs'>
           {problem === 'too_long'
             ? t('The search pattern is longer than {{max}} characters', {
                 max: PROMPT_AUDIT_KEYWORD_MAX_LENGTH,
               })
-            : t('This does not look like a valid regular expression.')}{' '}
+            : t(
+                'This may not be a valid regular expression. The server checks it when you search.'
+              )}{' '}
           {t('Patterns use RE2 syntax: no lookaround or backreferences.')}
         </p>
       )}

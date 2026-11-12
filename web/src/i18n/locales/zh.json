@@ -7935,7 +7935,6 @@
     "Search fields: all but full prompt": "搜索字段：除完整提示词外的全部字段",
     "Searching full prompts is recorded in the audit log, including the search pattern and time range.": "搜索完整提示词会记入审计日志，包括搜索表达式和时间范围。",
     "The search pattern is longer than {{max}} characters": "搜索表达式超过 {{max}} 个字符",
-    "This does not look like a valid regular expression.": "这看起来不是有效的正则表达式。",
     "Patterns use RE2 syntax: no lookaround or backreferences.": "使用 RE2 语法：不支持环视和反向引用。",
     "Scanned {{rows}} events, up to #{{id}}.": "已扫描 {{rows}} 条事件，扫描到 #{{id}}。",
     "Scanned {{rows}} events. The search reached the oldest event.": "已扫描 {{rows}} 条事件，已搜索到最早的事件。",
@@ -7954,6 +7953,8 @@
     "No filters are set: every event up to this preview is deleted.": "未设置任何条件：将删除截至本次预览的所有事件。",
     "The deletion preview expired. Preview the deletion again": "删除预览已过期，请重新预览",
     "The filters changed after the preview. Preview the deletion again": "预览后筛选条件已改变，请重新预览",
-    "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.": "删除符合当前筛选条件的 {{count}} 条事件？预览之后新记录的事件会保留。此操作无法撤销。"
+    "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.": "删除符合当前筛选条件的 {{count}} 条事件？预览之后新记录的事件会保留。此操作无法撤销。",
+    "This may not be a valid regular expression. The server checks it when you search.": "这可能不是有效的正则表达式，搜索时以服务端检查为准。",
+    "The search ran out of time before reading any event.": "搜索在读取任何事件前已超时。"
   }
 }

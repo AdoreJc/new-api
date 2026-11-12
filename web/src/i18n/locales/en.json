@@ -7935,7 +7935,6 @@
     "Search fields: all but full prompt": "Search fields: all but full prompt",
     "Searching full prompts is recorded in the audit log, including the search pattern and time range.": "Searching full prompts is recorded in the audit log, including the search pattern and time range.",
     "The search pattern is longer than {{max}} characters": "The search pattern is longer than {{max}} characters",
-    "This does not look like a valid regular expression.": "This does not look like a valid regular expression.",
     "Patterns use RE2 syntax: no lookaround or backreferences.": "Patterns use RE2 syntax: no lookaround or backreferences.",
     "Scanned {{rows}} events, up to #{{id}}.": "Scanned {{rows}} events, up to #{{id}}.",
     "Scanned {{rows}} events. The search reached the oldest event.": "Scanned {{rows}} events. The search reached the oldest event.",
@@ -7954,6 +7953,8 @@
     "No filters are set: every event up to this preview is deleted.": "No filters are set: every event up to this preview is deleted.",
     "The deletion preview expired. Preview the deletion again": "The deletion preview expired. Preview the deletion again",
     "The filters changed after the preview. Preview the deletion again": "The filters changed after the preview. Preview the deletion again",
-    "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.": "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone."
+    "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.": "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.",
+    "This may not be a valid regular expression. The server checks it when you search.": "This may not be a valid regular expression. The server checks it when you search.",
+    "The search ran out of time before reading any event.": "The search ran out of time before reading any event."
   }
 }

@@ -42,23 +42,28 @@ export function PromptAuditScanStatus(props: PromptAuditScanStatusProps) {
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const scanned = formatNumber(props.page.scanned ?? 0, locale)
   const nextCursor = props.page.next_cursor ?? 0
+  // A read cut off by the time budget before any row returns the cursor it
+  // started from; continuing retries from there.
+  let statusText = t('Scanned {{rows}} events, up to #{{id}}.', {
+    rows: scanned,
+    id: nextCursor,
+  })
+  if (!props.page.truncated) {
+    statusText = t(
+      'Scanned {{rows}} events. The search reached the oldest event.',
+      { rows: scanned }
+    )
+  } else if ((props.page.scanned ?? 0) === 0) {
+    statusText = t('The search ran out of time before reading any event.')
+  }
 
   return (
     <div
       role='status'
       className='text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-2 py-2 text-sm'
     >
-      <span>
-        {props.page.truncated && nextCursor > 0
-          ? t('Scanned {{rows}} events, up to #{{id}}.', {
-              rows: scanned,
-              id: nextCursor,
-            })
-          : t('Scanned {{rows}} events. The search reached the oldest event.', {
-              rows: scanned,
-            })}
-      </span>
-      {props.page.truncated && nextCursor > 0 && (
+      <span>{statusText}</span>
+      {props.page.truncated && (
         <Button
           type='button'
           size='sm'

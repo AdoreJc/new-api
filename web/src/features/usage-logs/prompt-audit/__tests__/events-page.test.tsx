@@ -166,6 +166,26 @@ it('selected rows are deleted through the batch endpoint', async () => {
   })
 })
 
+it('a regex the browser cannot parse is still searched so the server decides', async () => {
+  const { get } = renderPage([auditEvent(9, 'alice')])
+  await screen.findByText('alice')
+  await userEvent.click(screen.getByRole('switch', { name: 'Regex' }))
+  await userEvent.type(
+    screen.getByRole('textbox', { name: 'Search user, key, model or preview' }),
+    '(?P<word>secret)'
+  )
+
+  await userEvent.click(screen.getByRole('button', { name: 'Search' }))
+  await vi.waitFor(() =>
+    expect(get).toHaveBeenCalledWith('/api/prompt_audit/events', {
+      params: expect.objectContaining({
+        keyword: '(?P<word>secret)',
+        keyword_mode: 'regex',
+      }),
+    })
+  )
+})
+
 it('select all on the page selects every row for batch deletion', async () => {
   renderPage([auditEvent(9, 'alice'), auditEvent(8, 'bob')])
   await screen.findByText('alice')

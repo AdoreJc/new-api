@@ -57,10 +57,11 @@ export function isScannedPromptAuditSearch(
 }
 
 /**
- * A rough browser-side check of a regex search pattern; the server's RE2
- * compile result is authoritative. Leading inline flags such as (?i) are
- * valid RE2 that JavaScript rejects, so they are removed before checking.
- * Returns the problem, or null when the pattern looks valid.
+ * A rough browser-side hint about a regex search pattern. It never blocks a
+ * search: the server's RE2 compile result is authoritative. RE2 syntax that
+ * JavaScript lacks is rewritten first: inline flags such as (?i), (?s) or
+ * (?i:...) anywhere in the pattern, and named groups written (?P<name>...).
+ * Returns the likely problem, or null when the pattern looks valid.
  */
 export function promptAuditRegexProblem(
   pattern: string
@@ -71,7 +72,12 @@ export function promptAuditRegexProblem(
     return 'too_long'
   }
   try {
-    new RegExp(trimmed.replace(/^\(\?[imsU]+\)/, ''))
+    new RegExp(
+      trimmed
+        .replaceAll(/\(\?[imsU-]+\)/g, '')
+        .replaceAll(/\(\?[imsU-]+:/g, '(?:')
+        .replaceAll('(?P<', '(?<')
+    )
   } catch {
     return 'invalid'
   }

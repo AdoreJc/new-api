@@ -7935,7 +7935,6 @@
     "Search fields: all but full prompt": "検索フィールド：完全なプロンプト以外のすべて",
     "Searching full prompts is recorded in the audit log, including the search pattern and time range.": "完全なプロンプトの検索は、検索パターンと期間とともに監査ログに記録されます。",
     "The search pattern is longer than {{max}} characters": "検索パターンが {{max}} 文字を超えています",
-    "This does not look like a valid regular expression.": "有効な正規表現ではないようです。",
     "Patterns use RE2 syntax: no lookaround or backreferences.": "パターンは RE2 構文です：先読み・後読みや後方参照は使えません。",
     "Scanned {{rows}} events, up to #{{id}}.": "{{rows}} 件のイベントを #{{id}} までスキャンしました。",
     "Scanned {{rows}} events. The search reached the oldest event.": "{{rows}} 件のイベントをスキャンしました。最も古いイベントまで検索しました。",
@@ -7954,6 +7953,8 @@
     "No filters are set: every event up to this preview is deleted.": "条件が設定されていません：このプレビューまでのすべてのイベントが削除されます。",
     "The deletion preview expired. Preview the deletion again": "削除プレビューの有効期限が切れました。もう一度プレビューしてください",
     "The filters changed after the preview. Preview the deletion again": "プレビュー後に条件が変更されました。もう一度プレビューしてください",
-    "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.": "適用中のフィルターに一致する {{count}} 件のイベントを削除しますか？このプレビュー後に記録されたイベントは残ります。元に戻せません。"
+    "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.": "適用中のフィルターに一致する {{count}} 件のイベントを削除しますか？このプレビュー後に記録されたイベントは残ります。元に戻せません。",
+    "This may not be a valid regular expression. The server checks it when you search.": "有効な正規表現ではない可能性があります。検索時にサーバーが確認します。",
+    "The search ran out of time before reading any event.": "イベントを読み込む前に検索が時間切れになりました。"
   }
 }

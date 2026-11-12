@@ -53,10 +53,7 @@ import { usePromptAuditColumns } from './components/prompt-audit-columns'
 import { PromptAuditFilterSummary } from './components/prompt-audit-filter-summary'
 import { PromptAuditKeywordOptions } from './components/prompt-audit-keyword-options'
 import { PromptAuditScanStatus } from './components/prompt-audit-scan-status'
-import {
-  isScannedPromptAuditSearch,
-  promptAuditRegexProblem,
-} from './lib/keyword-search'
+import { isScannedPromptAuditSearch } from './lib/keyword-search'
 
 const EMPTY_EVENTS: PromptAuditEvent[] = []
 
@@ -151,13 +148,9 @@ export function PromptAuditEvents() {
     },
   })
 
+  // A regex the browser cannot parse is still sent: RE2 accepts syntax that
+  // JavaScript does not, and the server answers 400 for a truly invalid one.
   const apply = (next: PromptAuditEventFilter) => {
-    if (
-      next.keyword_mode === 'regex' &&
-      promptAuditRegexProblem(next.keyword ?? '')
-    ) {
-      return
-    }
     setFilter(next)
     setCursor(undefined)
     table.resetRowSelection()

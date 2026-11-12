@@ -7935,7 +7935,6 @@
     "Search fields: all but full prompt": "Champs de recherche : tous sauf le prompt complet",
     "Searching full prompts is recorded in the audit log, including the search pattern and time range.": "La recherche dans les prompts complets est enregistrée dans le journal d'audit, avec le motif de recherche et la plage horaire.",
     "The search pattern is longer than {{max}} characters": "Le motif de recherche dépasse {{max}} caractères",
-    "This does not look like a valid regular expression.": "Cette expression régulière ne semble pas valide.",
     "Patterns use RE2 syntax: no lookaround or backreferences.": "Les motifs utilisent la syntaxe RE2 : pas de lookaround ni de références arrière.",
     "Scanned {{rows}} events, up to #{{id}}.": "{{rows}} événements analysés, jusqu'à #{{id}}.",
     "Scanned {{rows}} events. The search reached the oldest event.": "{{rows}} événements analysés. La recherche a atteint l'événement le plus ancien.",
@@ -7954,6 +7953,8 @@
     "No filters are set: every event up to this preview is deleted.": "Aucun filtre : tous les événements jusqu'à cet aperçu seront supprimés.",
     "The deletion preview expired. Preview the deletion again": "L'aperçu de suppression a expiré. Relancez l'aperçu",
     "The filters changed after the preview. Preview the deletion again": "Les filtres ont changé depuis l'aperçu. Relancez l'aperçu",
-    "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.": "Supprimer les {{count}} événements correspondant aux filtres appliqués ? Les événements enregistrés après cet aperçu sont conservés. Cette action est irréversible."
+    "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.": "Supprimer les {{count}} événements correspondant aux filtres appliqués ? Les événements enregistrés après cet aperçu sont conservés. Cette action est irréversible.",
+    "This may not be a valid regular expression. The server checks it when you search.": "Ce n'est peut-être pas une expression régulière valide. Le serveur la vérifie lors de la recherche.",
+    "The search ran out of time before reading any event.": "La recherche a manqué de temps avant de lire un événement."
   }
 }

@@ -7935,7 +7935,6 @@
     "Search fields: all but full prompt": "Поля поиска: все, кроме полного промпта",
     "Searching full prompts is recorded in the audit log, including the search pattern and time range.": "Поиск по полным промптам записывается в журнал аудита вместе с шаблоном поиска и временным диапазоном.",
     "The search pattern is longer than {{max}} characters": "Шаблон поиска длиннее {{max}} символов",
-    "This does not look like a valid regular expression.": "Похоже, это недопустимое регулярное выражение.",
     "Patterns use RE2 syntax: no lookaround or backreferences.": "Шаблоны используют синтаксис RE2: без опережающих/ретроспективных проверок и обратных ссылок.",
     "Scanned {{rows}} events, up to #{{id}}.": "Просмотрено событий: {{rows}}, до #{{id}}.",
     "Scanned {{rows}} events. The search reached the oldest event.": "Просмотрено событий: {{rows}}. Поиск дошёл до самого старого события.",
@@ -7954,6 +7953,8 @@
     "No filters are set: every event up to this preview is deleted.": "Фильтры не заданы: будут удалены все события до этого предпросмотра.",
     "The deletion preview expired. Preview the deletion again": "Срок предпросмотра удаления истёк. Выполните предпросмотр снова",
     "The filters changed after the preview. Preview the deletion again": "Фильтры изменились после предпросмотра. Выполните предпросмотр снова",
-    "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.": "Удалить {{count}} событий, подходящих под применённые фильтры? События, записанные после предпросмотра, сохранятся. Это действие нельзя отменить."
+    "Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.": "Удалить {{count}} событий, подходящих под применённые фильтры? События, записанные после предпросмотра, сохранятся. Это действие нельзя отменить.",
+    "This may not be a valid regular expression. The server checks it when you search.": "Возможно, это недопустимое регулярное выражение. Сервер проверит его при поиске.",
+    "The search ran out of time before reading any event.": "Время поиска истекло до чтения первого события."
   }
 }
