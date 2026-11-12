@@ -48,6 +48,7 @@ const event: ContentModerationEvent = {
   category_scores: '{"violence":0.99,"hate":0.1}',
   thresholds: '{"violence":0.95,"hate":0.65}',
   input_hash: 'f'.repeat(64),
+  keyword_list: 'spam',
   input_excerpt: 'do [redacted] now',
   input_length: 20,
   image_count: 0,

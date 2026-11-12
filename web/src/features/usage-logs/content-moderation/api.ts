@@ -46,6 +46,8 @@ export type ContentModerationEvent = {
   /** JSON object of the thresholds in effect. */
   thresholds: string
   input_hash: string
+  /** Name of the keyword list that matched; the keyword is not stored. */
+  keyword_list: string
   input_excerpt: string
   input_length: number
   image_count: number
@@ -160,17 +162,22 @@ export const CONTENT_MODERATION_ACTION_LABELS: Record<string, string> = {
   allow: 'Recorded',
   block: 'Blocked',
   hash_block: 'Blocked (remembered input)',
+  keyword_block: 'Blocked (keyword)',
   error: 'API failed',
 }
 
 /** Parses a stored JSON score map; a malformed value yields no entries. */
-export function parseScores(value: string | undefined): Array<[string, number]> {
+export function parseScores(
+  value: string | undefined
+): Array<[string, number]> {
   if (!value) return []
   try {
     const parsed: unknown = JSON.parse(value)
     if (parsed === null || typeof parsed !== 'object') return []
     return Object.entries(parsed as Record<string, unknown>)
-      .filter((entry): entry is [string, number] => typeof entry[1] === 'number')
+      .filter(
+        (entry): entry is [string, number] => typeof entry[1] === 'number'
+      )
       .sort((left, right) => right[1] - left[1])
   } catch {
     return []

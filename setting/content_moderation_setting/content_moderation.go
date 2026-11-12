@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 )
@@ -25,6 +26,18 @@ const (
 	ModeOff      = "off"
 	ModeObserve  = "observe"
 	ModePreBlock = "pre_block"
+
+	KeywordModeAPIOnly       = "api_only"
+	KeywordModeKeywordOnly   = "keyword_only"
+	KeywordModeKeywordAndAPI = "keyword_and_api"
+
+	// DefaultKeywordList names the built-in list: the global sensitive words
+	// (SensitiveWords option), read in place and never copied.
+	DefaultKeywordList    = "default"
+	MaxKeywordLists       = 50
+	MaxKeywordsPerList    = 10000
+	MaxKeywordRunes       = 200
+	MaxKeywordListNameLen = 64
 
 	ModelFilterAll     = "all"
 	ModelFilterInclude = "include"
@@ -137,6 +150,12 @@ type Config struct {
 	AutoDisableEnabled   bool `json:"auto_disable_enabled"`
 	DisableThreshold     int  `json:"disable_threshold"`
 	ViolationWindowHours int  `json:"violation_window_hours"`
+	// KeywordMode: api_only sends inputs to the engine only; keyword_only
+	// flags inputs that contain a keyword of KeywordLists without any engine
+	// call; keyword_and_api sends only inputs that contain a keyword to the
+	// engine, which makes the decision.
+	KeywordMode  string   `json:"keyword_mode"`
+	KeywordLists []string `json:"keyword_lists"`
 	// AllowlistUserIDs are only recorded: never blocked, mailed or disabled.
 	AllowlistUserIDs []int `json:"allowlist_user_ids"`
 	ConfigVersion    int64 `json:"config_version"`
@@ -175,6 +194,8 @@ func DefaultConfig() Config {
 		NonHitRetentionDays:  DefaultNonHitRetentionDays,
 		DisableThreshold:     DefaultDisableThreshold,
 		ViolationWindowHours: DefaultViolationWindowHrs,
+		KeywordMode:          KeywordModeAPIOnly,
+		KeywordLists:         []string{},
 		AllowlistUserIDs:     []int{},
 	}
 }
@@ -261,6 +282,10 @@ var (
 	ErrInvalidAllowlist   = common.NewMessage("Content moderation allowlist must contain positive user IDs")
 	ErrInvalidBaseURL     = common.NewMessage("Moderation API address must be an http or https URL without credentials, query, or fragment")
 	ErrInvalidAPIKey      = common.NewMessage("Moderation API keys are invalid")
+	ErrInvalidKeywordMode = common.NewMessage("Content moderation keyword mode is invalid")
+	ErrInvalidKeywordList = common.NewMessage("Keyword list names may use letters, digits, dot, dash and underscore, up to 64 characters")
+	ErrKeywordListsNeeded = common.NewMessage("Select at least one keyword list for the keyword mode")
+	ErrInvalidKeywords    = common.NewMessage("A keyword list holds at most 10000 keywords of up to 200 characters each")
 )
 
 // Normalize trims, deduplicates and validates the configuration in place.
@@ -380,7 +405,70 @@ func (c *Config) Normalize() error {
 	}
 	slices.Sort(allowlist)
 	c.AllowlistUserIDs = allowlist
+	if c.KeywordMode == "" {
+		c.KeywordMode = KeywordModeAPIOnly
+	}
+	if c.KeywordMode != KeywordModeAPIOnly && c.KeywordMode != KeywordModeKeywordOnly && c.KeywordMode != KeywordModeKeywordAndAPI {
+		return ErrInvalidKeywordMode
+	}
+	lists := make([]string, 0, len(c.KeywordLists))
+	for _, name := range c.KeywordLists {
+		name = strings.TrimSpace(name)
+		if name == "" || slices.Contains(lists, name) {
+			continue
+		}
+		if !ValidKeywordListName(name) {
+			return ErrInvalidKeywordList
+		}
+		lists = append(lists, name)
+	}
+	if len(lists) > MaxKeywordLists {
+		return ErrInvalidKeywordList
+	}
+	if c.KeywordMode != KeywordModeAPIOnly && len(lists) == 0 {
+		return ErrKeywordListsNeeded
+	}
+	c.KeywordLists = lists
 	return nil
+}
+
+// ValidKeywordListName accepts 1 to 64 letters, digits, '.', '-' and '_'.
+func ValidKeywordListName(name string) bool {
+	if name == "" || len(name) > MaxKeywordListNameLen {
+		return false
+	}
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// NormalizeKeywords splits a list typed one keyword per line, trims it and
+// drops blanks and case-insensitive duplicates, keeping order.
+func NormalizeKeywords(raw string) ([]string, error) {
+	keywords := make([]string, 0)
+	seen := map[string]struct{}{}
+	for line := range strings.SplitSeq(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if utf8.RuneCountInString(line) > MaxKeywordRunes {
+			return nil, ErrInvalidKeywords
+		}
+		key := strings.ToLower(line)
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		keywords = append(keywords, line)
+	}
+	if len(keywords) > MaxKeywordsPerList {
+		return nil, ErrInvalidKeywords
+	}
+	return keywords, nil
 }
 
 // Clone returns a copy that shares no slices or maps with c.
@@ -390,6 +478,7 @@ func (c Config) Clone() Config {
 	clone.ModelFilter.Models = slices.Clone(c.ModelFilter.Models)
 	clone.Thresholds = maps.Clone(c.Thresholds)
 	clone.AllowlistUserIDs = slices.Clone(c.AllowlistUserIDs)
+	clone.KeywordLists = slices.Clone(c.KeywordLists)
 	return clone
 }
 

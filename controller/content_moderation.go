@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service/contentmoderation"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/content_moderation_setting"
 
 	"github.com/gin-gonic/gin"
@@ -141,7 +142,9 @@ func UpdateContentModerationConfig(c *gin.Context) {
 		common.ApiError(c, content_moderation_setting.ErrInvalidAPIKey)
 		return
 	}
-	if config.Mode != content_moderation_setting.ModeOff && len(keys) == 0 {
+	// keyword_only never calls the engine, so it runs without a key.
+	if config.Mode != content_moderation_setting.ModeOff && len(keys) == 0 &&
+		config.KeywordMode != content_moderation_setting.KeywordModeKeywordOnly {
 		common.ApiError(c, errContentModerationKeysRequired)
 		return
 	}
@@ -165,8 +168,125 @@ func UpdateContentModerationConfig(c *gin.Context) {
 		"violation_window_hours": saved.ViolationWindowHours, "record_non_hits": saved.RecordNonHits,
 		"allowlist_added": joinIDs(added), "allowlist_removed": joinIDs(removed),
 		"config_version": saved.ConfigVersion, "key_changes": strings.Join(keyChanges, ","),
+		"keyword_mode": saved.KeywordMode, "keyword_lists": strings.Join(saved.KeywordLists, ","),
 	})
+	if saved.KeywordMode != content_moderation_setting.KeywordModeAPIOnly {
+		contentmoderation.ReloadKeywordLists()
+	}
 	common.ApiSuccess(c, buildContentModerationConfigResponse(saved, keys))
+}
+
+type contentModerationKeywordListView struct {
+	Name      string `json:"name"`
+	Count     int    `json:"count"`
+	UpdatedAt int64  `json:"updated_at"`
+	// Builtin marks the "default" list: the global sensitive words, edited
+	// on the sensitive words settings page.
+	Builtin bool `json:"builtin"`
+}
+
+// GetContentModerationKeywordLists lists the built-in list and the stored
+// lists with their sizes, without the keywords.
+func GetContentModerationKeywordLists(c *gin.Context) {
+	lists, err := model.ListContentModerationKeywordLists()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	views := []contentModerationKeywordListView{{
+		Name: content_moderation_setting.DefaultKeywordList, Count: len(setting.SensitiveWords), Builtin: true,
+	}}
+	for _, list := range lists {
+		words, _ := content_moderation_setting.NormalizeKeywords(string(list.Words))
+		views = append(views, contentModerationKeywordListView{Name: list.Name, Count: len(words), UpdatedAt: list.UpdatedAt})
+	}
+	common.ApiSuccess(c, views)
+}
+
+func contentModerationKeywordListName(c *gin.Context) (string, bool) {
+	name := c.Param("name")
+	if !content_moderation_setting.ValidKeywordListName(name) {
+		common.ApiError(c, content_moderation_setting.ErrInvalidKeywordList)
+		return "", false
+	}
+	if name == content_moderation_setting.DefaultKeywordList {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("The default list is the sensitive words list; edit it in the sensitive words settings"))
+		return "", false
+	}
+	return name, true
+}
+
+// GetContentModerationKeywordList returns one stored list for editing.
+func GetContentModerationKeywordList(c *gin.Context) {
+	name, ok := contentModerationKeywordListName(c)
+	if !ok {
+		return
+	}
+	lists, err := model.ListContentModerationKeywordLists()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	for _, list := range lists {
+		if list.Name == name {
+			common.ApiSuccess(c, gin.H{"name": list.Name, "words": string(list.Words), "updated_at": list.UpdatedAt})
+			return
+		}
+	}
+	common.ApiErrorStatus(c, http.StatusNotFound, common.NewMessage("Keyword list not found"))
+}
+
+// SaveContentModerationKeywordList creates or replaces a list. The audit log
+// records its name and size, never the keywords.
+func SaveContentModerationKeywordList(c *gin.Context) {
+	name, ok := contentModerationKeywordListName(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		Words string `json:"words"`
+	}
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
+	words, err := content_moderation_setting.NormalizeKeywords(request.Words)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	lists, err := model.ListContentModerationKeywordLists()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	exists := slices.ContainsFunc(lists, func(list *model.ContentModerationKeywordList) bool { return list.Name == name })
+	if !exists && len(lists) >= content_moderation_setting.MaxKeywordLists {
+		common.ApiError(c, content_moderation_setting.ErrInvalidKeywordList)
+		return
+	}
+	if err := model.SaveContentModerationKeywordList(name, words, time.Now().Unix()); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	contentmoderation.ReloadKeywordLists()
+	recordManageAudit(c, "content_moderation.keyword_list_save", map[string]any{"name": name, "count": len(words)})
+	common.ApiSuccess(c, contentModerationKeywordListView{Name: name, Count: len(words), UpdatedAt: time.Now().Unix()})
+}
+
+func DeleteContentModerationKeywordList(c *gin.Context) {
+	name, ok := contentModerationKeywordListName(c)
+	if !ok {
+		return
+	}
+	deleted, err := model.DeleteContentModerationKeywordList(name)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	contentmoderation.ReloadKeywordLists()
+	recordManageAudit(c, "content_moderation.keyword_list_delete", map[string]any{"name": name, "count": deleted})
+	common.ApiSuccess(c, gin.H{"deleted": deleted})
 }
 
 // UpdateContentModerationAllowlist adds or removes one user without

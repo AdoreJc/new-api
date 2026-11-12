@@ -20,7 +20,7 @@ import (
 func setupContentModerationTest(t *testing.T) service.AuthIdentity {
 	t.Helper()
 	_, identity := setupSecurityEnrollmentTest(t)
-	require.NoError(t, model.DB.AutoMigrate(&model.ContentModerationEvent{}, &model.ContentModerationFlaggedHash{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.ContentModerationEvent{}, &model.ContentModerationFlaggedHash{}, &model.ContentModerationKeywordList{}))
 	previous := content_moderation_setting.Current()
 	common.OptionMapRWMutex.Lock()
 	previousMap := common.OptionMap
@@ -139,6 +139,10 @@ func TestContentModerationRoutesRequireRoot(t *testing.T) {
 	group.POST("/events/delete-by-filter", DeleteContentModerationEventsByFilter)
 	group.DELETE("/hashes/:hash", DeleteContentModerationHash)
 	group.DELETE("/hashes", ClearContentModerationHashes)
+	group.GET("/keyword_lists", GetContentModerationKeywordLists)
+	group.GET("/keyword_lists/:name", GetContentModerationKeywordList)
+	group.PUT("/keyword_lists/:name", SaveContentModerationKeywordList)
+	group.DELETE("/keyword_lists/:name", DeleteContentModerationKeywordList)
 	send := func(method, path, bearer, body string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(method, path, strings.NewReader(body))
 		if bearer != "" {
@@ -151,7 +155,7 @@ func TestContentModerationRoutesRequireRoot(t *testing.T) {
 
 	admin := sessionFor(common.RoleAdminUser)
 	for _, route := range router.Routes() {
-		path := strings.NewReplacer(":id", "1", ":hash", strings.Repeat("a", 64)).Replace(route.Path)
+		path := strings.NewReplacer(":id", "1", ":hash", strings.Repeat("a", 64), ":name", "spam").Replace(route.Path)
 		for _, bearer := range []string{"", admin} {
 			assert.Contains(t, []int{http.StatusUnauthorized, http.StatusForbidden}, send(route.Method, path, bearer, `{}`).Code, route.Method+" "+route.Path)
 		}
@@ -163,4 +167,18 @@ func TestContentModerationRoutesRequireRoot(t *testing.T) {
 	var audits []model.AuditLog
 	require.NoError(t, model.LOG_DB.Where("action = ?", "content_moderation.allowlist_add").Find(&audits).Error)
 	assert.Len(t, audits, 1, "allowlist changes are audit-logged")
+
+	saved := send(http.MethodPut, "/api/content_moderation/keyword_lists/spam", root, `{"words":"BuyNow\nbuynow\nfree gift\n"}`)
+	require.Contains(t, saved.Body.String(), `"count":2`, saved.Body.String())
+	lists := send(http.MethodGet, "/api/content_moderation/keyword_lists", root, "")
+	assert.Contains(t, lists.Body.String(), `"name":"default"`)
+	assert.Contains(t, lists.Body.String(), `"name":"spam","count":2`)
+	assert.NotContains(t, lists.Body.String(), "BuyNow", "the summary carries no keywords")
+	builtin := send(http.MethodPut, "/api/content_moderation/keyword_lists/default", root, `{"words":"x"}`)
+	assert.Equal(t, http.StatusBadRequest, builtin.Code, "the default list is edited as sensitive words, not here")
+	require.NoError(t, model.LOG_DB.Where("action = ?", "content_moderation.keyword_list_save").Find(&audits).Error)
+	require.Len(t, audits, 1)
+	encoded, err := common.Marshal(audits[0])
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "BuyNow", "the audit log records the list size, not its keywords")
 }

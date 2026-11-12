@@ -249,6 +249,10 @@ func SetApiRouter(router *gin.Engine) {
 			contentModerationRoute.POST("/events/delete-by-filter", controller.DeleteContentModerationEventsByFilter)
 			contentModerationRoute.DELETE("/hashes/:hash", controller.DeleteContentModerationHash)
 			contentModerationRoute.DELETE("/hashes", controller.ClearContentModerationHashes)
+			contentModerationRoute.GET("/keyword_lists", controller.GetContentModerationKeywordLists)
+			contentModerationRoute.GET("/keyword_lists/:name", controller.GetContentModerationKeywordList)
+			contentModerationRoute.PUT("/keyword_lists/:name", controller.SaveContentModerationKeywordList)
+			contentModerationRoute.DELETE("/keyword_lists/:name", controller.DeleteContentModerationKeywordList)
 		}
 		optionRoute := apiRouter.Group("/option")
 		optionRoute.Use(middleware.RootAuth())

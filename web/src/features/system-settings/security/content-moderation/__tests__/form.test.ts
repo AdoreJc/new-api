@@ -48,6 +48,8 @@ const response: ContentModerationConfigResponse = {
     auto_disable_enabled: false,
     disable_threshold: 10,
     violation_window_hours: 720,
+    keyword_mode: 'api_only',
+    keyword_lists: [],
     allowlist_user_ids: [3, 9],
     config_version: 4,
     updated_at: 0,
@@ -90,9 +92,30 @@ describe('content moderation settings form', () => {
     ['a non-numeric allowlist entry', { allowlist: '3, abc' }],
     ['a threshold above 1', { thresholds: { hate: 1.5 } }],
     ['more than 3 days for other records', { non_hit_retention_days: 4 }],
+    [
+      'a keyword mode without any list',
+      { keyword_mode: 'keyword_and_api', keyword_lists: [] },
+    ],
   ])('rejects %s', (_name, patch) => {
     const values = { ...toContentModerationFormValues(response), ...patch }
     expect(contentModerationFormSchema.safeParse(values).success).toBe(false)
+  })
+
+  it('accepts keyword-only moderation without any API key', () => {
+    const values = {
+      ...toContentModerationFormValues(response),
+      mode: 'pre_block',
+      stored_keys: [],
+      keyword_mode: 'keyword_only',
+      keyword_lists: ['default'],
+    }
+    expect(contentModerationFormSchema.safeParse(values).success).toBe(true)
+    const request = toContentModerationConfigRequest(
+      contentModerationFormSchema.parse(values),
+      response.config
+    )
+    expect(request.config.keyword_mode).toBe('keyword_only')
+    expect(request.config.keyword_lists).toEqual(['default'])
   })
 
   it('accepts an active mode with a newly entered key', () => {

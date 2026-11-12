@@ -126,7 +126,11 @@ export function ContentModerationEventDialog(props: {
           })}
         />
         {event.engine_model && (
-          <DetailRow label={t('Engine model')} value={event.engine_model} mono />
+          <DetailRow
+            label={t('Engine model')}
+            value={event.engine_model}
+            mono
+          />
         )}
         {scores.length > 0 && (
           <ul aria-label={t('Category scores')} className='space-y-1 text-xs'>
@@ -174,6 +178,13 @@ export function ContentModerationEventDialog(props: {
         <DetailRow label={t('Endpoint')} value={event.endpoint} mono />
         <DetailRow label={t('Request ID')} value={event.request_id} mono />
         <DetailRow label={t('Input hash')} value={event.input_hash} mono />
+        {event.keyword_list && (
+          <DetailRow
+            label={t('Matched keyword list')}
+            value={event.keyword_list}
+            mono
+          />
+        )}
         <DetailRow
           label={t('Input size')}
           value={t('{{chars}} characters, {{images}} images', {

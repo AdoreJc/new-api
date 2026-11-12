@@ -6,7 +6,9 @@
 // pre_block (the input is checked before billing and a flagged request is
 // answered with 403). Engine failures always let the request through
 // (fail-open). Allowlisted users are checked in the background and never
-// blocked, mailed or disabled.
+// blocked, mailed or disabled. Which requests are moderated, and how, is
+// decided by a ScopePolicy (policy.go); the stages that follow are the hash
+// blocklist, the keyword lists and the engine.
 package contentmoderation
 
 import (
@@ -67,6 +69,7 @@ type Metrics struct {
 	flagged        atomic.Int64
 	blocked        atomic.Int64
 	hashBlocked    atomic.Int64
+	keywordHits    atomic.Int64
 	failed         atomic.Int64
 	timeouts       atomic.Int64
 	calls          atomic.Int64
@@ -83,12 +86,12 @@ type Metrics struct {
 
 // request is one input with the relay metadata needed for its event.
 type request struct {
-	input       Input
-	hash        string
-	allowlisted bool
-	size        int64
-	event       model.ContentModerationEvent
-	enqueuedAt  time.Time
+	input      Input
+	hash       string
+	decision   Decision
+	size       int64
+	event      model.ContentModerationEvent
+	enqueuedAt time.Time
 }
 
 // record is an event waiting to be stored. Flagged events by users who are
@@ -113,6 +116,8 @@ type Service struct {
 	records     chan *record
 	startOnce   sync.Once
 	lastCleanup atomic.Int64
+
+	keywords atomic.Pointer[keywordIndex]
 
 	hashMu     sync.RWMutex
 	hashes     map[string]struct{}
@@ -193,26 +198,31 @@ func CheckRelay(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError 
 }
 
 func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
-	snapshot := content_moderation_setting.Current()
-	config := &snapshot.Config
-	if config.Mode == content_moderation_setting.ModeOff || info == nil {
+	if info == nil {
+		return nil
+	}
+	subject := Subject{UserID: info.UserId, TokenID: info.TokenId, Group: info.UsingGroup, Model: info.OriginModelName}
+	// An "auto" token routes to a concrete group chosen by the distributor;
+	// the policy and the event see that group, and "auto" still matches.
+	if subject.Group == "auto" {
+		if selected := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); selected != "" {
+			subject.Group, subject.RequestedGroup = selected, "auto"
+		}
+	}
+	decision := currentScopePolicy().Decide(subject)
+	if !decision.Moderate {
+		if decision.Mode != "" {
+			s.metrics.skipped.Add(1)
+		}
 		return nil
 	}
 	protocol, covered := RelayProtocol(info.RelayFormat, info.RequestURLPath)
-	group := info.UsingGroup
-	inScope := config.IncludesGroup(group)
-	// An "auto" token routes to a concrete group chosen by the distributor;
-	// scope rules and the event use that group, and "auto" still matches.
-	if group == "auto" {
-		if selected := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); selected != "" {
-			group = selected
-			inScope = inScope || config.IncludesGroup(selected)
-		}
-	}
-	if !covered || !inScope || !config.IncludesModel(info.OriginModelName) {
+	if !covered {
 		s.metrics.skipped.Add(1)
 		return nil
 	}
+	snapshot := content_moderation_setting.Current()
+	config := &snapshot.Config
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
 		s.metrics.skipped.Add(1)
@@ -235,45 +245,44 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 	s.metrics.checked.Add(1)
 	endpoint, _, _ := strings.Cut(info.RequestURLPath, "?")
 	hash := input.Hash()
-	allowlisted := config.Allowlisted(info.UserId)
 	item := &request{
-		input:       input,
-		hash:        hash,
-		allowlisted: allowlisted,
-		size:        int64(len(input.Text)),
-		enqueuedAt:  s.now(),
+		input:      input,
+		hash:       hash,
+		decision:   decision,
+		size:       int64(len(input.Text)),
+		enqueuedAt: s.now(),
 		event: model.ContentModerationEvent{
 			RequestId:     c.GetString(common.RequestIdKey),
 			UserId:        info.UserId,
 			Username:      common.GetContextKeyString(c, constant.ContextKeyUserName),
 			TokenId:       info.TokenId,
 			TokenName:     c.GetString("token_name"),
-			UsingGroup:    group,
+			UsingGroup:    subject.Group,
 			ChannelId:     common.GetContextKeyInt(c, constant.ContextKeyChannelId),
 			RelayFormat:   string(info.RelayFormat),
 			Endpoint:      endpoint,
 			ModelName:     info.OriginModelName,
-			Mode:          config.Mode,
+			Mode:          decision.Mode,
 			InputHash:     hash,
 			InputLength:   len([]rune(input.Text)),
 			ImageCount:    len(input.Images),
 			ConfigVersion: config.ConfigVersion,
-			Allowlisted:   allowlisted,
+			Allowlisted:   decision.Action == ActionRecordOnly,
 		},
 	}
 	for _, image := range input.Images {
 		item.size += int64(len(image))
 	}
+	blocking := decision.Action == ActionBlock
 
 	if config.HashBlocklistEnabled && s.hashListed(item.hash) {
 		s.metrics.hashBlocked.Add(1)
 		event := item.event
 		event.CreatedAt = s.now().Unix()
-		event.Action, event.Flagged, event.HighestCategory, event.HighestScore = model.ContentModerationActionHashBlock, true, model.ContentModerationHashCategory, 1
+		event.Action, event.Flagged, event.HighestCategory, event.HighestScore = model.ContentModerationActionAllow, true, model.ContentModerationHashCategory, 1
 		event.InputExcerpt = Excerpt(input.Text)
-		blocking := config.Mode == content_moderation_setting.ModePreBlock && !item.allowlisted
-		if !blocking {
-			event.Action = model.ContentModerationActionAllow
+		if blocking {
+			event.Action = model.ContentModerationActionHashBlock
 		}
 		s.enqueueRecord(&record{event: &event})
 		if blocking {
@@ -281,7 +290,36 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 		}
 		return nil
 	}
-	if !sampled(item.hash, config.SampleRate) {
+
+	// Keyword stage: keyword_only decides here without an engine call;
+	// keyword_and_api sends only inputs with a keyword on to the engine,
+	// whatever the sample rate, and the engine decides.
+	keywordHit := false
+	if config.KeywordMode != content_moderation_setting.KeywordModeAPIOnly {
+		list, hit := s.matchKeyword(input.Text, config.KeywordLists)
+		if !hit {
+			return nil
+		}
+		s.metrics.keywordHits.Add(1)
+		keywordHit = true
+		item.event.KeywordList = list
+		if config.KeywordMode == content_moderation_setting.KeywordModeKeywordOnly {
+			s.metrics.flagged.Add(1)
+			event := item.event
+			event.CreatedAt = s.now().Unix()
+			event.Action, event.Flagged, event.HighestCategory, event.HighestScore = model.ContentModerationActionAllow, true, model.ContentModerationKeywordCategory, 1
+			event.InputExcerpt = Excerpt(input.Text)
+			if blocking {
+				event.Action = model.ContentModerationActionKeywordBlock
+			}
+			s.enqueueRecord(&record{event: &event, email: info.UserEmail, dispose: decision.Action != ActionRecordOnly, config: config.Clone()})
+			if blocking {
+				return s.blockError(c)
+			}
+			return nil
+		}
+	}
+	if !keywordHit && !sampled(item.hash, decision.SampleRate) {
 		s.metrics.sampledOut.Add(1)
 		return nil
 	}
@@ -289,7 +327,7 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 		s.metrics.noKeys.Add(1)
 		return nil
 	}
-	if config.Mode == content_moderation_setting.ModeObserve || item.allowlisted {
+	if !blocking {
 		s.enqueue(item, config)
 		return nil
 	}
@@ -381,7 +419,9 @@ func (s *Service) worker(ctx context.Context) {
 			slots := s.slots(snapshot.Config.WorkerCount)
 			slots <- struct{}{}
 			s.active.Add(1)
-			if snapshot.Config.Mode != content_moderation_setting.ModeOff && len(snapshot.Keys) > 0 {
+			// Items were admitted by the scope policy; they are checked
+			// even if the settings changed while they waited.
+			if len(snapshot.Keys) > 0 {
 				delay := int(s.now().Sub(item.enqueuedAt).Milliseconds())
 				s.check(ctx, snapshot, item, "", delay, false)
 			}
@@ -393,9 +433,8 @@ func (s *Service) worker(ctx context.Context) {
 }
 
 // check calls the engine for one input and queues its event. It reports
-// whether the request must be blocked: only a synchronous pre_block check of
-// a user who is not allowlisted blocks, and a failed call never does
-// (fail-open).
+// whether the request must be blocked: only a synchronous check whose policy
+// action is block can block, and a failed call never does (fail-open).
 func (s *Service) check(ctx context.Context, snapshot *content_moderation_setting.Snapshot, item *request, email string, queueDelayMS int, synchronous bool) bool {
 	config := &snapshot.Config
 	started := s.now()
@@ -404,7 +443,6 @@ func (s *Service) check(ctx context.Context, snapshot *content_moderation_settin
 	s.metrics.calls.Add(int64(attempts))
 	event := item.event
 	event.CreatedAt = s.now().Unix()
-	event.Mode = config.Mode
 	event.LatencyMs, event.QueueDelayMs = latency, queueDelayMS
 	event.ConfigVersion = config.ConfigVersion
 	if err != nil {
@@ -439,14 +477,15 @@ func (s *Service) check(ctx context.Context, snapshot *content_moderation_settin
 	}
 	s.metrics.flagged.Add(1)
 	event.InputExcerpt = Excerpt(item.input.Text)
-	blocking := synchronous && config.Mode == content_moderation_setting.ModePreBlock && !item.allowlisted
+	blocking := synchronous && item.decision.Action == ActionBlock
+	dispose := item.decision.Action != ActionRecordOnly
 	if blocking {
 		event.Action = model.ContentModerationActionBlock
 	}
-	if config.HashBlocklistEnabled && !item.allowlisted {
+	if config.HashBlocklistEnabled && dispose {
 		s.addHash(item.hash)
 	}
-	s.enqueueRecord(&record{event: &event, email: email, dispose: !item.allowlisted, config: config.Clone()})
+	s.enqueueRecord(&record{event: &event, email: email, dispose: dispose, config: config.Clone()})
 	return blocking
 }
 
@@ -703,6 +742,11 @@ func (s *Service) maintenanceLoop(ctx context.Context) {
 	defer cleanupTicker.Stop()
 	for {
 		snapshot := content_moderation_setting.Current()
+		if snapshot.Config.Mode != content_moderation_setting.ModeOff && snapshot.Config.KeywordMode != content_moderation_setting.KeywordModeAPIOnly {
+			if err := s.reloadKeywords(false); err != nil {
+				common.SysError(common.LogText("failed to load content moderation keyword lists: %s", err.Error()))
+			}
+		}
 		if snapshot.Config.Mode != content_moderation_setting.ModeOff && snapshot.Config.HashBlocklistEnabled && !s.hashLoaded.Load() {
 			if err := s.refreshHashes(); err != nil {
 				common.SysError(common.LogText("failed to load the content moderation hash blocklist: %s", err.Error()))
@@ -765,6 +809,7 @@ type RuntimeStatus struct {
 	Flagged          int64       `json:"flagged"`
 	Blocked          int64       `json:"blocked"`
 	HashBlocked      int64       `json:"hash_blocked"`
+	KeywordHits      int64       `json:"keyword_hits"`
 	Failed           int64       `json:"failed"`
 	Timeouts         int64       `json:"timeouts"`
 	Calls            int64       `json:"calls"`
@@ -795,7 +840,7 @@ func (s *Service) runtime() RuntimeStatus {
 		Checked: m.checked.Load(), Skipped: m.skipped.Load(), SkippedTooLarge: m.tooLarge.Load(),
 		SkippedEmpty: m.empty.Load(), SampledOut: m.sampledOut.Load(), NoKeys: m.noKeys.Load(),
 		Enqueued: m.enqueued.Load(), Dropped: m.dropped.Load(), Passed: m.passed.Load(), Flagged: m.flagged.Load(),
-		Blocked: m.blocked.Load(), HashBlocked: m.hashBlocked.Load(), Failed: m.failed.Load(), Timeouts: m.timeouts.Load(),
+		Blocked: m.blocked.Load(), HashBlocked: m.hashBlocked.Load(), KeywordHits: m.keywordHits.Load(), Failed: m.failed.Load(), Timeouts: m.timeouts.Load(),
 		Calls: m.calls.Load(), AutoDisabled: m.autoDisabled.Load(), EmailsSent: m.emailsSent.Load(),
 		EmailsFailed: m.emailsFailed.Load(), Recorded: m.recorded.Load(), RecordFailed: m.recordFailed.Load(),
 		LatencyMaxMS: m.latencyMaxMS.Load(), Keys: s.engine.keyStatuses(snapshot.Keys),

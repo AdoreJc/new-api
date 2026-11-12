@@ -53,6 +53,8 @@ export type ContentModerationConfig = {
   auto_disable_enabled: boolean
   disable_threshold: number
   violation_window_hours: number
+  keyword_mode: 'api_only' | 'keyword_only' | 'keyword_and_api'
+  keyword_lists: string[]
   allowlist_user_ids: number[]
   config_version: number
   updated_at: number
@@ -206,5 +208,55 @@ export function clearContentModerationHashes() {
       '/api/content_moderation/hashes'
     ),
     t('Failed to clear the hash blocklist')
+  )
+}
+
+export const KEYWORD_LISTS_QUERY_KEY = [
+  'content-moderation',
+  'keyword-lists',
+] as const
+
+export type ContentModerationKeywordListSummary = {
+  name: string
+  count: number
+  updated_at: number
+  /** The default list is the global sensitive words list. */
+  builtin: boolean
+}
+
+export function getContentModerationKeywordLists() {
+  return unwrap(
+    api.get<ApiResponse<ContentModerationKeywordListSummary[]>>(
+      '/api/content_moderation/keyword_lists'
+    ),
+    t('Failed to load keyword lists')
+  )
+}
+
+export function getContentModerationKeywordList(name: string) {
+  return unwrap(
+    api.get<ApiResponse<{ name: string; words: string }>>(
+      `/api/content_moderation/keyword_lists/${encodeURIComponent(name)}`
+    ),
+    t('Failed to load keyword lists')
+  )
+}
+
+export function saveContentModerationKeywordList(name: string, words: string) {
+  return unwrap(
+    api.put<ApiResponse<ContentModerationKeywordListSummary>>(
+      `/api/content_moderation/keyword_lists/${encodeURIComponent(name)}`,
+      { words }
+    ),
+    t('Failed to save the keyword list')
+  )
+}
+
+export function deleteContentModerationKeywordList(name: string) {
+  return unwrap(
+    api.delete<ApiResponse<{ deleted: number }>>(
+      `/api/content_moderation/keyword_lists/${encodeURIComponent(name)}`
+    ),
+    t('Failed to delete the keyword list')
   )
 }

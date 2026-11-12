@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -17,11 +18,17 @@ const (
 	ContentModerationActionAllow     = "allow"
 	ContentModerationActionBlock     = "block"
 	ContentModerationActionHashBlock = "hash_block"
-	ContentModerationActionError     = "error"
+	// ContentModerationActionKeywordBlock is a request blocked by a keyword
+	// list without an engine call.
+	ContentModerationActionKeywordBlock = "keyword_block"
+	ContentModerationActionError        = "error"
 
 	// ContentModerationHashCategory marks events matched by the hash
 	// blocklist instead of an engine call; they never count as violations.
 	ContentModerationHashCategory = "hash"
+	// ContentModerationKeywordCategory marks events flagged by a keyword list
+	// alone (keyword_only mode).
+	ContentModerationKeywordCategory = "keyword"
 )
 
 // ContentModerationEvent is one moderation result. Flagged results are always
@@ -50,6 +57,9 @@ type ContentModerationEvent struct {
 	CategoryScores string `json:"category_scores" gorm:"type:text"`
 	Thresholds     string `json:"thresholds" gorm:"type:text"`
 	InputHash      string `json:"input_hash" gorm:"type:varchar(64);index"`
+	// KeywordList names the keyword list that matched; the keyword itself is
+	// never stored.
+	KeywordList    string `json:"keyword_list" gorm:"type:varchar(64)"`
 	InputExcerpt   string `json:"input_excerpt" gorm:"type:text"`
 	InputLength    int    `json:"input_length"`
 	ImageCount     int    `json:"image_count"`
@@ -72,7 +82,7 @@ func (e *ContentModerationEvent) fitColumns() {
 	}{
 		{&e.RequestId, 64}, {&e.Username, 64}, {&e.TokenName, 255}, {&e.UsingGroup, 64},
 		{&e.RelayFormat, 32}, {&e.Endpoint, 128}, {&e.ModelName, 255}, {&e.Mode, 16}, {&e.Action, 16},
-		{&e.HighestCategory, 64}, {&e.InputHash, 64}, {&e.EngineModel, 255}, {&e.Error, 255},
+		{&e.HighestCategory, 64}, {&e.InputHash, 64}, {&e.KeywordList, 64}, {&e.EngineModel, 255}, {&e.Error, 255},
 	} {
 		if utf8.RuneCountInString(*field.value) > field.limit {
 			*field.value = string([]rune(*field.value)[:field.limit])
@@ -85,6 +95,49 @@ func (e *ContentModerationEvent) fitColumns() {
 type ContentModerationFlaggedHash struct {
 	InputHash string `json:"input_hash" gorm:"type:varchar(64);primaryKey"`
 	CreatedAt int64  `json:"created_at" gorm:"bigint;index"`
+}
+
+// ContentModerationKeywordList is one named keyword list, one keyword per
+// line. The built-in "default" list is the global sensitive words and is not
+// stored here.
+type ContentModerationKeywordList struct {
+	Id        int      `json:"id"`
+	Name      string   `json:"name" gorm:"type:varchar(64);uniqueIndex"`
+	Words     LongText `json:"words"`
+	UpdatedAt int64    `json:"updated_at" gorm:"bigint"`
+}
+
+// ListContentModerationKeywordLists returns every stored list by name.
+func ListContentModerationKeywordLists() ([]*ContentModerationKeywordList, error) {
+	var lists []*ContentModerationKeywordList
+	err := DB.Order("name").Find(&lists).Error
+	return lists, err
+}
+
+// SaveContentModerationKeywordList creates or replaces a list.
+func SaveContentModerationKeywordList(name string, words []string, updatedAt int64) error {
+	list := ContentModerationKeywordList{Name: name}
+	return DB.Where(ContentModerationKeywordList{Name: name}).
+		Assign(map[string]any{"words": LongText(strings.Join(words, "\n")), "updated_at": updatedAt}).
+		FirstOrCreate(&list).Error
+}
+
+func DeleteContentModerationKeywordList(name string) (int64, error) {
+	result := DB.Where("name = ?", name).Delete(&ContentModerationKeywordList{})
+	return result.RowsAffected, result.Error
+}
+
+// ContentModerationKeywordListsVersion summarizes the stored lists so a node
+// can tell, with one small query, whether its matchers are stale.
+func ContentModerationKeywordListsVersion() (string, error) {
+	var summary struct {
+		Total int64
+		Last  int64
+		Ids   int64
+	}
+	err := DB.Model(&ContentModerationKeywordList{}).
+		Select("COUNT(*) AS total, COALESCE(MAX(updated_at), 0) AS last, COALESCE(SUM(id), 0) AS ids").Scan(&summary).Error
+	return fmt.Sprintf("%d/%d/%d", summary.Total, summary.Last, summary.Ids), err
 }
 
 // ContentModerationEventFilter narrows event listing and filtered deletion.

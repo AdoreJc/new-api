@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/content_moderation_setting"
 
 	"github.com/gin-gonic/gin"
@@ -284,7 +286,7 @@ func setupDB(t *testing.T) {
 		db, err = gorm.Open(sqlite.Open(t.TempDir()+"/moderation.db"), config)
 	}
 	require.NoError(t, err)
-	tables := []any{&model.ContentModerationEvent{}, &model.ContentModerationFlaggedHash{}, &model.User{}, &model.UserSession{}, &model.AuditLog{}}
+	tables := []any{&model.ContentModerationEvent{}, &model.ContentModerationFlaggedHash{}, &model.ContentModerationKeywordList{}, &model.User{}, &model.UserSession{}, &model.AuditLog{}}
 	require.NoError(t, db.Migrator().DropTable(tables...))
 	require.NoError(t, db.AutoMigrate(tables...))
 	previousDB, previousLogDB, previousRedis := model.DB, model.LOG_DB, common.RedisEnabled
@@ -595,4 +597,182 @@ func TestExcerptRedactsSecrets(t *testing.T) {
 		assert.NotContains(t, excerpt, secret)
 	}
 	assert.Len(t, []rune(Excerpt(strings.Repeat("a b ", 200))), maxExcerptRunes)
+}
+
+func useSensitiveWords(t *testing.T, words string) {
+	t.Helper()
+	previous := setting.SensitiveWordsToString()
+	setting.SensitiveWordsFromString(words)
+	t.Cleanup(func() { setting.SensitiveWordsFromString(previous) })
+}
+
+func TestKeywordListsMatchCaseInsensitivelyAndFollowChanges(t *testing.T) {
+	setupDB(t)
+	useSensitiveWords(t, "Banned Phrase")
+	s := newService()
+	require.NoError(t, model.SaveContentModerationKeywordList("spam", []string{"BuyNow", "免费领取"}, 100))
+	require.NoError(t, s.reloadKeywords(false))
+
+	tests := []struct {
+		text  string
+		lists []string
+		want  string
+	}{
+		{"please buynow today", []string{"spam"}, "spam"},
+		{"现在免费领取吧", []string{"spam"}, "spam"},
+		{"a banned phrase here", []string{"spam", content_moderation_setting.DefaultKeywordList}, content_moderation_setting.DefaultKeywordList},
+		{"a banned phrase here", []string{"spam"}, ""},
+		{"nothing to see", []string{"spam", content_moderation_setting.DefaultKeywordList}, ""},
+		{"buynow", []string{"missing-list"}, ""},
+	}
+	for _, test := range tests {
+		list, hit := s.matchKeyword(test.text, test.lists)
+		assert.Equal(t, test.want, list, test.text)
+		assert.Equal(t, test.want != "", hit, test.text)
+	}
+
+	// The default list reads the global sensitive words in place, so an
+	// edit there applies at once without a reload.
+	setting.SensitiveWordsFromString("other words")
+	_, hit := s.matchKeyword("a banned phrase here", []string{content_moderation_setting.DefaultKeywordList})
+	assert.False(t, hit)
+
+	// A stored list change is picked up by the next reload.
+	require.NoError(t, model.SaveContentModerationKeywordList("spam", []string{"discount"}, 200))
+	require.NoError(t, s.reloadKeywords(false))
+	_, hit = s.matchKeyword("please buynow today", []string{"spam"})
+	assert.False(t, hit)
+	list, _ := s.matchKeyword("big DISCOUNT", []string{"spam"})
+	assert.Equal(t, "spam", list)
+}
+
+func TestNormalizeKeywordsEnforcesLimits(t *testing.T) {
+	words, err := content_moderation_setting.NormalizeKeywords(" a \n\nB\nb\n c ")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a", "B", "c"}, words, "blanks and case-insensitive duplicates are dropped")
+
+	_, err = content_moderation_setting.NormalizeKeywords(strings.Repeat("x", content_moderation_setting.MaxKeywordRunes+1))
+	assert.Error(t, err)
+	many := make([]string, content_moderation_setting.MaxKeywordsPerList+1)
+	for index := range many {
+		many[index] = "w" + strconv.Itoa(index)
+	}
+	_, err = content_moderation_setting.NormalizeKeywords(strings.Join(many, "\n"))
+	assert.Error(t, err)
+}
+
+func TestKeywordModes(t *testing.T) {
+	setupDB(t)
+	require.NoError(t, i18n.Init())
+	useSensitiveWords(t, "")
+	server := newModerationServer(t, okStatus, scoreBy("attack"))
+	require.NoError(t, model.SaveContentModerationKeywordList("spam", []string{"buynow", "attack"}, 100))
+
+	t.Run("keyword_only blocks without an engine call and records the list name", func(t *testing.T) {
+		config := moderationConfig(content_moderation_setting.ModePreBlock, server.URL)
+		config.KeywordMode, config.KeywordLists = content_moderation_setting.KeywordModeKeywordOnly, []string{"spam"}
+		useConfig(t, config, nil)
+		s := newService()
+		require.NoError(t, s.reloadKeywords(false))
+		server.calls.Store(0)
+
+		c, _ := relayContext(chatBody("clean question"))
+		assert.Nil(t, s.checkRelay(c, chatInfo(7)), "no keyword, no engine: the request continues")
+		c, _ = relayContext(chatBody("BUYNOW cheap"))
+		apiErr := s.checkRelay(c, chatInfo(7))
+		require.NotNil(t, apiErr)
+		assert.Equal(t, http.StatusForbidden, apiErr.StatusCode)
+		assert.Zero(t, server.calls.Load(), "keyword_only never calls the engine")
+
+		drainRecords(s)
+		events, _, err := model.ListContentModerationEvents(model.ContentModerationEventFilter{Action: model.ContentModerationActionKeywordBlock}, 0, 10)
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		assert.Equal(t, "spam", events[0].KeywordList)
+		assert.Equal(t, model.ContentModerationKeywordCategory, events[0].HighestCategory)
+		assert.Equal(t, 1, events[0].ViolationCount, "keyword blocks count toward disabling")
+		encoded, err := common.Marshal(events[0])
+		require.NoError(t, err)
+		assert.NotContains(t, string(encoded), `"buynow"`, "the matched keyword is not stored as such")
+	})
+
+	t.Run("keyword_and_api sends only keyword hits to the engine, which decides", func(t *testing.T) {
+		config := moderationConfig(content_moderation_setting.ModePreBlock, server.URL)
+		config.KeywordMode, config.KeywordLists = content_moderation_setting.KeywordModeKeywordAndAPI, []string{"spam"}
+		config.SampleRate = 0
+		useConfig(t, config, []string{"k1"})
+		s := newService()
+		require.NoError(t, s.reloadKeywords(false))
+		server.calls.Store(0)
+
+		c, _ := relayContext(chatBody("buynow please"))
+		assert.Nil(t, s.checkRelay(c, chatInfo(8)), "the engine clears a keyword hit")
+		assert.Equal(t, int64(1), server.calls.Load(), "a keyword hit is reviewed even with a zero sample rate")
+		c, _ = relayContext(chatBody("attack now"))
+		require.NotNil(t, s.checkRelay(c, chatInfo(8)), "the engine confirms a keyword hit")
+		assert.Equal(t, int64(2), server.calls.Load())
+		c, _ = relayContext(chatBody("plain question"))
+		assert.Nil(t, s.checkRelay(c, chatInfo(8)))
+		assert.Equal(t, int64(2), server.calls.Load(), "inputs without a keyword skip the engine")
+		drainRecords(s)
+		events, _, err := model.ListContentModerationEvents(model.ContentModerationEventFilter{Action: model.ContentModerationActionBlock}, 0, 10)
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		assert.Equal(t, "spam", events[0].KeywordList)
+		assert.Equal(t, "violence", events[0].HighestCategory)
+	})
+}
+
+// fixedPolicy decides the same for every request.
+type fixedPolicy struct{ decision Decision }
+
+func (p fixedPolicy) Decide(Subject) Decision { return p.decision }
+
+func TestScanFollowsAReplacedScopePolicy(t *testing.T) {
+	setupDB(t)
+	require.NoError(t, i18n.Init())
+	server := newModerationServer(t, okStatus, scoreBy("attack"))
+	// The settings say observe, but the policy says block for this request.
+	useConfig(t, moderationConfig(content_moderation_setting.ModeObserve, server.URL), []string{"k1"})
+	SetScopePolicy(fixedPolicy{Decision{Moderate: true, Mode: "rule", Action: ActionBlock, SampleRate: 100}})
+	t.Cleanup(func() { SetScopePolicy(nil) })
+	s := newService()
+
+	c, _ := relayContext(chatBody("attack"))
+	require.NotNil(t, s.checkRelay(c, chatInfo(7)), "the policy action decides blocking")
+	drainRecords(s)
+	events, _, err := model.ListContentModerationEvents(model.ContentModerationEventFilter{}, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, "rule", events[0].Mode)
+
+	SetScopePolicy(fixedPolicy{Decision{}})
+	c, body := relayContext(chatBody("attack"))
+	assert.Nil(t, s.checkRelay(c, chatInfo(7)))
+	assert.Zero(t, body.reads.Load(), "out of scope: the body is not read")
+}
+
+func TestConfigScopePolicy(t *testing.T) {
+	config := moderationConfig(content_moderation_setting.ModePreBlock, "http://127.0.0.1:1")
+	config.AllGroups, config.Groups = false, []string{"vip*"}
+	config.ModelFilter = content_moderation_setting.ModelFilter{Type: content_moderation_setting.ModelFilterExclude, Models: []string{"free-model"}}
+	config.AllowlistUserIDs, config.SampleRate = []int{9}, 40
+	useConfig(t, config, nil)
+	policy := ConfigScopePolicy{}
+	tests := []struct {
+		name    string
+		subject Subject
+		want    Decision
+	}{
+		{"in scope", Subject{UserID: 1, Group: "vip-1", Model: "m"}, Decision{Moderate: true, Mode: "pre_block", Action: ActionBlock, SampleRate: 40}},
+		{"auto token routed to a matching group", Subject{UserID: 1, Group: "vip-2", RequestedGroup: "auto", Model: "m"}, Decision{Moderate: true, Mode: "pre_block", Action: ActionBlock, SampleRate: 40}},
+		{"allowlisted user", Subject{UserID: 9, Group: "vip-1", Model: "m"}, Decision{Moderate: true, Mode: "pre_block", Action: ActionRecordOnly, SampleRate: 40}},
+		{"group out of scope", Subject{UserID: 1, Group: "default", Model: "m"}, Decision{Mode: "pre_block"}},
+		{"excluded model", Subject{UserID: 1, Group: "vip-1", Model: "free-model"}, Decision{Mode: "pre_block"}},
+	}
+	for _, test := range tests {
+		assert.Equal(t, test.want, policy.Decide(test.subject), test.name)
+	}
+	useConfig(t, content_moderation_setting.DefaultConfig(), nil)
+	assert.Equal(t, Decision{}, policy.Decide(Subject{UserID: 1, Group: "vip-1", Model: "m"}), "off")
 }

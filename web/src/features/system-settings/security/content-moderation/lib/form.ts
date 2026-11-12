@@ -27,6 +27,8 @@ import type {
 /** OpenAI moderation categories with their English i18n keys. */
 export const CONTENT_MODERATION_CATEGORY_LABELS: Record<string, string> = {
   harassment: 'Harassment',
+  keyword: 'Keyword list',
+  hash: 'Remembered input',
   'harassment/threatening': 'Harassment (threatening)',
   hate: 'Hate',
   'hate/threatening': 'Hate (threatening)',
@@ -79,6 +81,8 @@ export const contentModerationFormSchema = z
     auto_disable_enabled: z.boolean(),
     disable_threshold: numberField(1, 10000),
     violation_window_hours: numberField(1, 8760),
+    keyword_mode: z.enum(['api_only', 'keyword_only', 'keyword_and_api']),
+    keyword_lists: z.array(z.string()),
     allowlist: z.string(),
     stored_keys: z.array(z.string()),
     removed_keys: z.array(z.string()),
@@ -112,7 +116,22 @@ export const contentModerationFormSchema = z
     const remainingKeys =
       values.stored_keys.filter((id) => !values.removed_keys.includes(id))
         .length + splitList(values.new_keys).length
-    if (values.mode !== 'off' && remainingKeys === 0) {
+    if (
+      values.keyword_mode !== 'api_only' &&
+      values.keyword_lists.length === 0
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['keyword_lists'],
+        message: 'Select at least one keyword list for the keyword mode',
+      })
+    }
+    // Keyword-only moderation never calls the API, so it needs no key.
+    if (
+      values.mode !== 'off' &&
+      values.keyword_mode !== 'keyword_only' &&
+      remainingKeys === 0
+    ) {
       context.addIssue({
         code: 'custom',
         path: ['new_keys'],
@@ -156,6 +175,8 @@ export function toContentModerationFormValues(
     auto_disable_enabled: config.auto_disable_enabled,
     disable_threshold: config.disable_threshold,
     violation_window_hours: config.violation_window_hours,
+    keyword_mode: config.keyword_mode ?? 'api_only',
+    keyword_lists: config.keyword_lists ?? [],
     allowlist: (config.allowlist_user_ids ?? []).join(', '),
     stored_keys: (response.keys ?? []).map((key) => key.id),
     removed_keys: [],
@@ -206,6 +227,8 @@ export function toContentModerationConfigRequest(
       auto_disable_enabled: values.auto_disable_enabled,
       disable_threshold: values.disable_threshold,
       violation_window_hours: values.violation_window_hours,
+      keyword_mode: values.keyword_mode,
+      keyword_lists: values.keyword_lists,
       allowlist_user_ids: splitList(values.allowlist).map(Number),
     },
   }

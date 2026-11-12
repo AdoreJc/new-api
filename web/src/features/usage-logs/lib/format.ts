@@ -503,6 +503,10 @@ const AUDIT_TEMPLATES: Record<string, string> = {
     'Removed input hash {{hash}} from the content moderation blocklist',
   'content_moderation.hashes_clear':
     'Cleared {{count}} input hashes from the content moderation blocklist',
+  'content_moderation.keyword_list_save':
+    'Saved content moderation keyword list {{name}} ({{count}} keywords)',
+  'content_moderation.keyword_list_delete':
+    'Deleted content moderation keyword list {{name}}',
   'content_moderation.auto_disable':
     'Content moderation disabled user {{username}} (ID: {{target_user_id}}) after {{violations}} flagged requests',
   'option.passkey_domains':

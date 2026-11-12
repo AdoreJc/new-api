@@ -178,6 +178,10 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/content_moderation/events/delete-by-filter": accessTokenSessionRule,
 	"DELETE /api/content_moderation/hashes/:hash":          accessTokenSessionRule,
 	"DELETE /api/content_moderation/hashes":                accessTokenSessionRule,
+	"GET /api/content_moderation/keyword_lists":            accessTokenScopeRule("option:read"),
+	"GET /api/content_moderation/keyword_lists/:name":      accessTokenScopeRule("option:read"),
+	"PUT /api/content_moderation/keyword_lists/:name":      accessTokenSessionRule,
+	"DELETE /api/content_moderation/keyword_lists/:name":   accessTokenSessionRule,
 
 	// router/api-router.go: /api/option
 	"GET /api/option/":                                           accessTokenScopeRule("option:read"),

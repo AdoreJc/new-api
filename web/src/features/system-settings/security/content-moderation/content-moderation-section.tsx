@@ -63,6 +63,7 @@ import {
   type ContentModerationConfigResponse,
 } from './api'
 import { ContentModerationEngineFields } from './engine-fields'
+import { ContentModerationKeywordFields } from './keyword-fields'
 import {
   CONTENT_MODERATION_CATEGORY_LABELS,
   contentModerationFormSchema,
@@ -121,10 +122,30 @@ const SWITCHES = [
 
 const NUMBER_FIELDS = [
   { name: 'sample_rate', label: 'Sample rate (%)', min: 0, max: 100 },
-  { name: 'disable_threshold', label: 'Flags before disabling', min: 1, max: 10000 },
-  { name: 'violation_window_hours', label: 'Counting window (hours)', min: 1, max: 8760 },
-  { name: 'hit_retention_days', label: 'Keep flagged records (days)', min: 1, max: 3650 },
-  { name: 'non_hit_retention_days', label: 'Keep other records (days)', min: 1, max: 3 },
+  {
+    name: 'disable_threshold',
+    label: 'Flags before disabling',
+    min: 1,
+    max: 10000,
+  },
+  {
+    name: 'violation_window_hours',
+    label: 'Counting window (hours)',
+    min: 1,
+    max: 8760,
+  },
+  {
+    name: 'hit_retention_days',
+    label: 'Keep flagged records (days)',
+    min: 1,
+    max: 3650,
+  },
+  {
+    name: 'non_hit_retention_days',
+    label: 'Keep other records (days)',
+    min: 1,
+    max: 3,
+  },
   { name: 'worker_count', label: 'Background workers', min: 1, max: 32 },
   { name: 'queue_size', label: 'Background queue size', min: 1, max: 10000 },
 ] as const
@@ -248,6 +269,7 @@ function ContentModerationForm(props: {
             )}
           />
           <ContentModerationEngineFields form={form} />
+          <ContentModerationKeywordFields form={form} />
           {SWITCHES.map((item) => (
             <FormField
               key={item.name}

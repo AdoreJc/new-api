@@ -172,7 +172,8 @@ export function ContentModerationEvents() {
             if (value === null) return
             setDraft((previous) => ({
               ...previous,
-              flagged: value === 'true' || value === 'false' ? value : undefined,
+              flagged:
+                value === 'true' || value === 'false' ? value : undefined,
             }))
           }}
           aria-label={t('Result')}
@@ -197,7 +198,9 @@ export function ContentModerationEvents() {
 
   return (
     <SectionPageLayout fixedContent>
-      <SectionPageLayout.Title>{t('Content Moderation')}</SectionPageLayout.Title>
+      <SectionPageLayout.Title>
+        {t('Content Moderation')}
+      </SectionPageLayout.Title>
       <SectionPageLayout.Content>
         <div className='flex h-full min-h-0 flex-col'>
           <DataTablePage
