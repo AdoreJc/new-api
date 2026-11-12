@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -334,7 +335,7 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 			affinityUsable := false
 			preferred, err := model.CacheGetChannel(preferredChannelID)
 			affinitySatisfied := false
-			if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled {
+			if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled && !model.CodexChannelCoolingDown(preferred.Id, time.Now()) {
 				affinitySatisfied, _ = model.ChannelSatisfiesFilters(preferred, modelName, constraints.Filters)
 			}
 			if affinitySatisfied {

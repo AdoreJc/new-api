@@ -113,6 +113,8 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 				}
 			}
 			streamErr = types.NewOpenAIError(fmt.Errorf("responses stream error: %s", streamResp.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+		case "error":
+			streamErr = ResponsesErrorEventError(&streamResp, []byte(data))
 		}
 		if streamErr != nil || finalResponse != nil {
 			break
@@ -299,6 +301,12 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 				}
 			}
 			streamErr = types.NewOpenAIError(fmt.Errorf("responses stream error: %s", streamResp.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			stopStream(sr, streamErr)
+			return
+		}
+		if streamResp.Type == "error" {
+			upstreamFailed = true
+			streamErr = ResponsesErrorEventError(&streamResp, []byte(data))
 			stopStream(sr, streamErr)
 			return
 		}
