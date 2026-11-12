@@ -158,6 +158,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/option/email_oauth/authorize":                     accessTokenSessionRule,
 	"POST /api/option/email_oauth/callback":                      accessTokenSessionRule,
 	"DELETE /api/option/email_oauth/authorization":               accessTokenScopeRule("option:write"),
+	"POST /api/option/email_oauth/test":                          accessTokenScopeRule("option:write"),
 	"GET /api/option/model_pricing":                              accessTokenScopeRule("option:read"),
 	"GET /api/option/model_pricing/issues":                       accessTokenScopeRule("option:read"),
 	"PATCH /api/option/model_pricing":                            accessTokenScopeRule("option:write"),
