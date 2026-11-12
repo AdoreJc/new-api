@@ -7108,6 +7108,7 @@
     "Usage percentage": "使用率",
     "Usage prices": "使用量料金",
     "Usage Windows": "使用量ウィンドウ",
+    "Usage-limit cooldown until {{time}}": "使用上限のクールダウン：{{time}} まで",
     "Usage-based": "使用量ベース",
     "Usage-based billing": "使用量ベースの課金",
     "Usage-based billing · price not configured": "使用量ベースの課金 · 料金未設定",

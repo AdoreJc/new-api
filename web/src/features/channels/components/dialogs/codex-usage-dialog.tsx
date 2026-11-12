@@ -141,6 +141,8 @@ export type CodexUsageDialogData = {
   message?: string
   upstream_status?: number
   data?: Record<string, unknown>
+  /** Unix seconds until which channel routing skips this channel after a usage-limit answer. */
+  cooldown_until?: number
 }
 
 type CodexUsageDialogProps = {
@@ -947,6 +949,15 @@ export function CodexUsageDialog({
                 <StatusBadge
                   label={t('Spend limited')}
                   variant='danger'
+                  copyable={false}
+                />
+              ) : null}
+              {response?.cooldown_until ? (
+                <StatusBadge
+                  label={t('Usage-limit cooldown until {{time}}', {
+                    time: formatUnixSeconds(response.cooldown_until),
+                  })}
+                  variant='warning'
                   copyable={false}
                 />
               ) : null}

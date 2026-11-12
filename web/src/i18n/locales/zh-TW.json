@@ -7108,6 +7108,7 @@
     "Usage percentage": "已用比例",
     "Usage prices": "用量價格",
     "Usage Windows": "用量視窗",
+    "Usage-limit cooldown until {{time}}": "用量上限冷卻至 {{time}}",
     "Usage-based": "基於使用量",
     "Usage-based billing": "按用量計費",
     "Usage-based billing · price not configured": "按用量計費 · 尚未設定價格",

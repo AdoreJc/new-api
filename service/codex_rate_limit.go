@@ -221,6 +221,15 @@ func MarkCodexChannelCooldown(c *gin.Context, channelError types.ChannelError, a
 	logger.LogWarn(c, common.LogText("codex channel #%d hit its usage limit (window=%q); it is skipped until %s", channelError.ChannelId, window, time.Unix(resetAt, 0).Format(time.RFC3339)))
 }
 
+// EndCodexChannelCooldownAfterSuccess ends the cooldown of a channel that
+// answered successfully and whose usage headers show no exhausted window.
+func EndCodexChannelCooldownAfterSuccess(channelID int, headers http.Header) {
+	if _, _, exhausted := codexExhaustedWindow(headers, time.Now()); exhausted {
+		return
+	}
+	model.ClearCodexChannelCooldown(channelID)
+}
+
 var codexPassiveUsageThrottle = struct {
 	sync.Mutex
 	lastWrite map[int]time.Time

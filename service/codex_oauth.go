@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -32,9 +33,6 @@ type CodexOAuthTokenResult struct {
 	ExpiresAt time.Time
 }
 
-// codexOAuthRefreshScope is the scope the Codex CLI sends when refreshing.
-const codexOAuthRefreshScope = "openid profile email"
-
 // codexOAuthErrorBodyLimit bounds how much of a token endpoint answer is read.
 const codexOAuthErrorBodyLimit = 64 << 10
 
@@ -57,36 +55,35 @@ func (e *CodexOAuthRefreshError) Error() string {
 	return msg
 }
 
-// codexPermanentRefreshErrorCodes are refresh failures that no retry can fix:
-// the refresh token or the session behind it is gone and the account must be
-// authorized again. Same list as sub2api isNonRetryableRefreshError (OpenAI
-// subset, 2026-11-05).
+// codexPermanentRefreshErrorCodes are OAuth error codes saying the refresh
+// token or the session behind it is gone, so no retry can succeed and the
+// account must be authorized again (the token-related subset of sub2api
+// isNonRetryableRefreshError, 2026-11-05). Client or scope errors such as
+// invalid_client are configuration problems and are not in the list.
 var codexPermanentRefreshErrorCodes = []string{
 	"invalid_grant",
 	"invalid_refresh_token",
-	"token_expired",
-	"app_session_terminated",
 	"refresh_token_reused",
 	"refresh_token_invalidated",
 	"refresh_token_expired",
-	"invalid_client",
-	"unauthorized_client",
-	"access_denied",
-	"invalid_scope",
+	"token_expired",
+	"app_session_terminated",
 }
 
-// CodexPermanentRefreshErrorCode returns the error code when err is a refresh
-// failure that retrying cannot fix.
+// CodexPermanentRefreshErrorCode returns the error code when err is a 400 or
+// 401 answer of the token endpoint whose structured error code says the
+// refresh token is no longer valid.
 func CodexPermanentRefreshErrorCode(err error) (string, bool) {
 	var refreshErr *CodexOAuthRefreshError
 	if !errors.As(err, &refreshErr) {
 		return "", false
 	}
-	text := strings.ToLower(refreshErr.Code + " " + refreshErr.Description)
-	for _, code := range codexPermanentRefreshErrorCodes {
-		if strings.Contains(text, code) {
-			return code, true
-		}
+	if refreshErr.StatusCode != http.StatusBadRequest && refreshErr.StatusCode != http.StatusUnauthorized {
+		return "", false
+	}
+	code := strings.ToLower(strings.TrimSpace(refreshErr.Code))
+	if slices.Contains(codexPermanentRefreshErrorCodes, code) {
+		return code, true
 	}
 	return "", false
 }
@@ -119,7 +116,6 @@ func refreshCodexOAuthToken(
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", rt)
 	form.Set("client_id", clientID)
-	form.Set("scope", codexOAuthRefreshScope)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {

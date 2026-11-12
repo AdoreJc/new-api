@@ -23,6 +23,26 @@ func CoolDownCodexChannel(channelID int, until time.Time) {
 	codexChannelCooldowns.Store(channelID, until)
 }
 
+// ClearCodexChannelCooldown lets the channel be selected again at once: the
+// account was authorized again or its key replaced, an admin enabled it, the
+// usage window was reset, or it answered successfully below its limit.
+func ClearCodexChannelCooldown(channelID int) {
+	codexChannelCooldowns.Delete(channelID)
+}
+
+// CodexChannelCooldownUntil returns when the channel's cooldown ends, if it is
+// cooling down.
+func CodexChannelCooldownUntil(channelID int, now time.Time) (time.Time, bool) {
+	if !CodexChannelCoolingDown(channelID, now) {
+		return time.Time{}, false
+	}
+	value, ok := codexChannelCooldowns.Load(channelID)
+	if !ok {
+		return time.Time{}, false
+	}
+	return value.(time.Time), true
+}
+
 // CodexChannelCoolingDown reports whether the channel is still cooling down.
 func CodexChannelCoolingDown(channelID int, now time.Time) bool {
 	value, ok := codexChannelCooldowns.Load(channelID)

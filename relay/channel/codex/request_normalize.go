@@ -19,13 +19,8 @@ import (
 //   - item ids are dropped (an rs_* id replayed under store=false is answered
 //     404) and item_reference items are dropped, since nothing is stored to
 //     refer to;
-//   - a reasoning item without a summary gets an empty one (400 otherwise);
-//   - when reasoning is requested, include asks for reasoning.encrypted_content
-//     so the next turn can replay it.
+//   - a reasoning item without a summary gets an empty one (400 otherwise).
 func normalizeCodexInput(request *dto.OpenAIResponsesRequest) error {
-	if err := ensureCodexReasoningInclude(request); err != nil {
-		return err
-	}
 	input := bytes.TrimSpace(request.Input)
 	if len(input) == 0 {
 		return nil
@@ -148,6 +143,8 @@ func codexRawString(raw json.RawMessage) string {
 // encrypted reasoning a store=false conversation replays on the next turn.
 const codexReasoningEncryptedContent = "reasoning.encrypted_content"
 
+// ensureCodexReasoningInclude asks for reasoning.encrypted_content when
+// reasoning is requested, so the next turn can replay it under store=false.
 func ensureCodexReasoningInclude(request *dto.OpenAIResponsesRequest) error {
 	if request.Reasoning == nil {
 		return nil

@@ -108,6 +108,8 @@ export type CodexUsageResponse = {
   message?: string
   upstream_status?: number
   data?: Record<string, unknown>
+  /** Unix seconds until which channel routing skips the channel after a usage-limit answer. */
+  cooldown_until?: number
 }
 
 export type CodexResetCreditsResponse = CodexUsageResponse

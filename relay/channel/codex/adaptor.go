@@ -133,8 +133,14 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	request.EnableThinking = nil
 	request.ThinkingBudget = nil
 	// Nothing is stored upstream (store=false), so a previous response can
-	// never be found.
-	request.PreviousResponseID = ""
+	// never be found; the client's context continues only through the input
+	// it sends.
+	if request.PreviousResponseID != "" {
+		if c != nil {
+			logger.LogInfo(c, common.LogText("codex channel: dropped previous_response_id, which the upstream cannot resolve without stored responses"))
+		}
+		request.PreviousResponseID = ""
+	}
 
 	if isCompact {
 		// Compaction is a plain JSON call that takes neither field.
@@ -147,6 +153,9 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	request.Stream = lo.ToPtr(true)
 	// codex: store must be false
 	request.Store = json.RawMessage("false")
+	if err := ensureCodexReasoningInclude(&request); err != nil {
+		return nil, err
+	}
 	return request, nil
 }
 
@@ -171,6 +180,9 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			limitBody = peekCodexResponseBody(resp)
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 && !info.ChannelIsMultiKey {
+			service.EndCodexChannelCooldownAfterSuccess(info.ChannelId, resp.Header)
 		}
 	}
 	service.RecordSubscriptionLimitHeaders(c, headers)

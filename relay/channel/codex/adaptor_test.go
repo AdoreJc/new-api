@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -141,6 +142,7 @@ func TestConvertCodexRequestStripsUnsupportedFields(t *testing.T) {
 			EnableThinking:     json.RawMessage(`true`),
 			Stream:             lo.ToPtr(false),
 			Store:              json.RawMessage(`true`),
+			Reasoning:          &dto.Reasoning{Effort: "high"},
 		}, dto.ChannelSettings{})
 		for _, field := range []string{"temperature", "top_p", "max_output_tokens", "previous_response_id", "prompt_cache_options", "prompt", "top_k", "enable_thinking"} {
 			assert.NotContains(t, body, field, "relay mode %d", relayMode)
@@ -148,9 +150,12 @@ func TestConvertCodexRequestStripsUnsupportedFields(t *testing.T) {
 		if relayMode == relayconstant.RelayModeResponsesCompact {
 			assert.NotContains(t, body, "stream")
 			assert.NotContains(t, body, "store")
+			// The compaction endpoint is not asked for encrypted reasoning.
+			assert.NotContains(t, body, "include")
 		} else {
 			assert.Equal(t, true, body["stream"])
 			assert.Equal(t, false, body["store"])
+			assert.Equal(t, []any{"reasoning.encrypted_content"}, body["include"])
 		}
 	}
 }
@@ -237,7 +242,8 @@ func TestConvertCodexRequestNormalizesInput(t *testing.T) {
 }
 
 // A 401 is answered by refreshing the credential and sending the request once
-// more with the renewed token; a revoked token is not refreshed.
+// more with the renewed token; a revoked token is not refreshed. A successful
+// answer ends a usage-limit cooldown of the channel.
 func TestCodexDoRequestRefreshesAfterUnauthorized(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, err := gorm.Open(sqlite.Open("file:codex401?mode=memory&cache=shared"), &gorm.Config{})
@@ -264,9 +270,10 @@ func TestCodexDoRequestRefreshesAfterUnauthorized(t *testing.T) {
 		wantStatus     int
 		wantTokenCalls int
 		wantAuth       []string
+		wantCooling    bool
 	}{
 		{name: "expired token", channelID: 9401, unauthorized: `{"error":{"code":"token_expired"}}`, wantStatus: http.StatusOK, wantTokenCalls: 1, wantAuth: []string{"Bearer old-access", "Bearer new-access"}},
-		{name: "revoked token", channelID: 9402, unauthorized: `{"error":{"code":"token_revoked"}}`, wantStatus: http.StatusUnauthorized, wantAuth: []string{"Bearer old-access"}},
+		{name: "revoked token", channelID: 9402, unauthorized: `{"error":{"code":"token_revoked"}}`, wantStatus: http.StatusUnauthorized, wantAuth: []string{"Bearer old-access"}, wantCooling: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			tokenCalls = 0
@@ -285,6 +292,8 @@ func TestCodexDoRequestRefreshesAfterUnauthorized(t *testing.T) {
 			t.Cleanup(upstream.Close)
 
 			key := `{"access_token":"old-access","refresh_token":"refresh-1","account_id":"acct-test"}`
+			model.CoolDownCodexChannel(tt.channelID, time.Now().Add(time.Hour))
+			t.Cleanup(func() { model.ClearCodexChannelCooldown(tt.channelID) })
 			require.NoError(t, db.Create(&model.Channel{Id: tt.channelID, Type: constant.ChannelTypeCodex, Name: "codex", Key: key, Status: common.ChannelStatusEnabled, BaseURL: lo.ToPtr(upstream.URL)}).Error)
 
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -304,6 +313,7 @@ func TestCodexDoRequestRefreshesAfterUnauthorized(t *testing.T) {
 			assert.Equal(t, tt.wantStatus, httpResp.StatusCode)
 			assert.Equal(t, tt.wantTokenCalls, tokenCalls)
 			assert.Equal(t, tt.wantAuth, auths)
+			assert.Equal(t, tt.wantCooling, model.CodexChannelCoolingDown(tt.channelID, time.Now()))
 			for _, sent := range bodies {
 				assert.Equal(t, `{"model":"gpt-5.5"}`, sent)
 			}

@@ -24,6 +24,7 @@ func GetCodexChannelUsage(c *gin.Context) {
 		service.FetchCodexWhamUsage,
 		common.LogText("failed to fetch codex usage"),
 		"Failed to fetch usage. Please try again later",
+		false,
 	)
 }
 
@@ -33,6 +34,7 @@ func GetCodexChannelRateLimitResetCredits(c *gin.Context) {
 		service.FetchCodexWhamRateLimitResetCredits,
 		common.LogText("failed to fetch codex reset credits"),
 		"Failed to fetch reset credit details. Please try again later",
+		false,
 	)
 }
 
@@ -42,6 +44,7 @@ func ResetCodexChannelUsage(c *gin.Context) {
 		service.ConsumeCodexWhamRateLimitResetCredit,
 		common.LogText("failed to reset codex usage"),
 		"Failed to reset usage. Please try again later",
+		true,
 	)
 }
 
@@ -58,6 +61,9 @@ func fetchCodexChannelWhamData(
 	fetch codexWhamFetchFunc,
 	logPrefix string,
 	userMessage string,
+	// resetsUsage marks the call that resets the usage window; its success
+	// ends the channel's usage-limit cooldown.
+	resetsUsage bool,
 ) {
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -103,6 +109,14 @@ func fetchCodexChannelWhamData(
 	}
 	if !ok {
 		resp["message"] = fmt.Sprintf("upstream status: %d", statusCode)
+	}
+	if ok && resetsUsage {
+		model.ClearCodexChannelCooldown(ch.Id)
+	}
+	// While the channel is skipped by channel selection after a usage-limit
+	// answer, cooldown_until (unix seconds) says until when.
+	if until, cooling := model.CodexChannelCooldownUntil(ch.Id, time.Now()); cooling {
+		resp["cooldown_until"] = until.Unix()
 	}
 	c.JSON(http.StatusOK, resp)
 }
