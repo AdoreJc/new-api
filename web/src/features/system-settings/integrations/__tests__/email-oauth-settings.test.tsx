@@ -130,6 +130,7 @@ describe('OAuth mailbox settings', () => {
   it.each([
     [
       'Gmail / Google Workspace',
+      /choose Internal for Google Workspace; with External, add the sending mailbox as a test user or publish the app/,
       [
         [
           'Get a Client ID and client secret',
@@ -143,6 +144,7 @@ describe('OAuth mailbox settings', () => {
     ],
     [
       'Outlook / Microsoft 365',
+      /delegated Microsoft Graph permissions.*A single-tenant app \(the default\) needs its Directory \(tenant\) ID in Tenant below/,
       [
         [
           'Get a Client ID and client secret',
@@ -151,10 +153,15 @@ describe('OAuth mailbox settings', () => {
       ],
     ],
   ])(
-    'links to the %s console to create the OAuth app',
-    async (service, expected) => {
+    'guides the %s app setup and links to its console',
+    async (service, steps, expected) => {
       const user = renderEmail({ EmailProvider: 'oauth' })
       await user.click(screen.getByRole('radio', { name: service }))
+      expect(screen.getByText(steps)).toBeVisible()
+      expect(screen.getByLabelText('Client secret')).toHaveAttribute(
+        'placeholder',
+        'Enter new secret to update'
+      )
       const links = screen
         .getAllByRole('link')
         .filter((link) => link.getAttribute('target') === '_blank')

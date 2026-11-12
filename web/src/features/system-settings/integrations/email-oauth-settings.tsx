@@ -205,10 +205,10 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
         description={
           oauthProvider === 'microsoft'
             ? t(
-                'In Microsoft Entra, register an app, add a Web platform with the redirect URI below, create a client secret under Certificates & secrets, and add the Microsoft Graph permissions Mail.Send, User.Read and offline_access.'
+                'In Microsoft Entra, register an app, add a Web platform with the redirect URI below, create a client secret under Certificates & secrets, and add the delegated Microsoft Graph permissions Mail.Send, User.Read and offline_access. A single-tenant app (the default) needs its Directory (tenant) ID in Tenant below; use common only for multi-tenant or personal-account apps.'
               )
             : t(
-                'In Google Cloud Console, enable the Gmail API, then create an OAuth client ID of type Web application with the redirect URI below.'
+                'In Google Cloud Console, enable the Gmail API, then create an OAuth client ID of type Web application with the redirect URI below. On the OAuth consent screen, choose Internal for Google Workspace; with External, add the sending mailbox as a test user or publish the app, because while in Testing other accounts are denied and refresh tokens expire after 7 days.'
               )
         }
       >
@@ -255,7 +255,7 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
                 {...field}
                 autoComplete='new-password'
                 disabled={busy}
-                placeholder={t('Enter new token to update')}
+                placeholder={t('Enter new secret to update')}
               />
             </FormControl>
             <FormDescription>
