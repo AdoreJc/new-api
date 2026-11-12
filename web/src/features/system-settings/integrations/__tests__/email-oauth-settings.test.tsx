@@ -127,6 +127,46 @@ describe('OAuth mailbox settings', () => {
     )
   })
 
+  it.each([
+    [
+      'Gmail / Google Workspace',
+      [
+        [
+          'Get a Client ID and client secret',
+          'https://console.cloud.google.com/apis/credentials',
+        ],
+        [
+          'Enable the Gmail API',
+          'https://console.cloud.google.com/apis/library/gmail.googleapis.com',
+        ],
+      ],
+    ],
+    [
+      'Outlook / Microsoft 365',
+      [
+        [
+          'Get a Client ID and client secret',
+          'https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade',
+        ],
+      ],
+    ],
+  ])(
+    'links to the %s console to create the OAuth app',
+    async (service, expected) => {
+      const user = renderEmail({ EmailProvider: 'oauth' })
+      await user.click(screen.getByRole('radio', { name: service }))
+      const links = screen
+        .getAllByRole('link')
+        .filter((link) => link.getAttribute('target') === '_blank')
+      expect(
+        links.map((link) => [link.textContent, link.getAttribute('href')])
+      ).toEqual(expected)
+      for (const link of links) {
+        expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+      }
+    }
+  )
+
   it('requires a Client ID and secret before saving the OAuth method', async () => {
     const request = vi.spyOn(api, 'put')
     const user = renderEmail()

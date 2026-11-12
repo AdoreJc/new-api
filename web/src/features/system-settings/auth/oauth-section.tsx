@@ -19,14 +19,12 @@ For commercial licensing, please contact support@quantumnous.com
 import { zodResolver } from '@hookform/resolvers/zod'
 import axios from 'axios'
 import { ExternalLink } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import * as z from 'zod'
 
-import { CopyButton } from '@/components/copy-button'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
   Form,
   FormControl,
@@ -43,6 +41,7 @@ import { handleServerError } from '@/lib/handle-server-error'
 
 import { FormDirtyIndicator } from '../components/form-dirty-indicator'
 import { FormNavigationGuard } from '../components/form-navigation-guard'
+import { OAuthSetupGuide } from '../components/oauth-setup-guide'
 import {
   SettingsForm,
   SettingsSwitchContent,
@@ -125,55 +124,6 @@ type FlatOAuthDefaults = {
 
 const oauthTabContentClassName =
   'grid min-w-0 gap-x-5 gap-y-6 lg:grid-cols-2 [&>[data-slot=form-item]]:min-w-0 lg:[&>[data-slot=form-item]:has([data-slot=switch])]:col-span-2'
-
-type OAuthSetupGuideRow = {
-  label: ReactNode
-  value: string
-  copyLabel: string
-}
-
-type OAuthSetupGuideProps = {
-  title: string
-  description: ReactNode
-  rows: OAuthSetupGuideRow[]
-  children?: ReactNode
-}
-
-function OAuthSetupGuide(props: OAuthSetupGuideProps) {
-  return (
-    <Alert className='lg:col-span-2'>
-      <AlertTitle>{props.title}</AlertTitle>
-      <AlertDescription className='space-y-3 text-sm'>
-        <div>{props.description}</div>
-        <div className='space-y-2'>
-          {props.rows.map((row) => (
-            <div
-              key={`${String(row.label)}-${row.value}`}
-              className='flex min-w-0 flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between'
-            >
-              <span className='text-muted-foreground shrink-0'>
-                {row.label}
-              </span>
-              <span className='flex min-w-0 items-center gap-2'>
-                <code className='bg-muted text-foreground min-w-0 rounded px-1.5 py-0.5 text-xs break-all'>
-                  {row.value}
-                </code>
-                <CopyButton
-                  value={row.value}
-                  size='icon'
-                  className='size-7'
-                  tooltip={row.copyLabel}
-                  aria-label={row.copyLabel}
-                />
-              </span>
-            </div>
-          ))}
-        </div>
-        {props.children}
-      </AlertDescription>
-    </Alert>
-  )
-}
 
 const buildFormDefaults = (defaults: FlatOAuthDefaults): OAuthFormValues => ({
   GitHubOAuthEnabled: defaults.GitHubOAuthEnabled,
