@@ -23,7 +23,7 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
 	}
-	if !setting.CreemEnabled {
+	if !setting.CreemEnabled || operation_setting.IsPayMethodTypeDisabled(model.PaymentMethodCreem) {
 		common.ApiErrorT(c, "This payment channel is disabled")
 		return
 	}

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -129,9 +130,10 @@ func TestGetTopUpInfoHidesSwitchedOffGatewaysAndMethods(t *testing.T) {
 			methods: append(payMethods,
 				map[string]string{"name": "Stripe", "type": "stripe", "enabled": "false"},
 				map[string]string{"name": "Waffo Pancake", "type": "waffo_pancake", "enabled": "false"},
+				map[string]string{"name": "Creem", "type": "creem", "enabled": "false"},
 			),
 			wantTypes:    []string{"alipay", "wxpay", "custom2", model.PaymentMethodWaffo},
-			wantDisabled: []string{"waffo_pancake"},
+			wantDisabled: []string{"waffo_pancake", "creem"},
 		},
 	}
 	for _, tc := range cases {
@@ -181,6 +183,20 @@ func TestOrderEndpointsRejectSwitchedOffGateways(t *testing.T) {
 				operation_setting.PayMethods = []map[string]string{{"name": "Waffo", "type": "waffo", "enabled": "false"}}
 			},
 			RequestWaffoPay, `{"amount":10,"pay_method_index":0}`,
+		},
+		{
+			"creem wallet with its pay method switched off",
+			func() {
+				operation_setting.PayMethods = []map[string]string{{"name": "Creem", "type": "creem", "enabled": "false"}}
+			},
+			RequestCreemPay, `{"product_id":"prod_123","payment_method":"creem"}`,
+		},
+		{
+			"creem subscription with its pay method switched off",
+			func() {
+				operation_setting.PayMethods = []map[string]string{{"name": "Creem", "type": "creem", "enabled": "false"}}
+			},
+			SubscriptionRequestCreemPay, `{"plan_id":1}`,
 		},
 	}
 	for _, tc := range cases {
@@ -241,7 +257,10 @@ func TestOrderEndpointsRejectSwitchedOffPayMethods(t *testing.T) {
 }
 
 func TestWebhooksIgnoreGatewayAndPayMethodSwitches(t *testing.T) {
-	configurePaymentGatewaysForTest(t, []map[string]string{{"name": "Alipay", "type": "alipay", "enabled": "false"}})
+	configurePaymentGatewaysForTest(t, []map[string]string{
+		{"name": "Alipay", "type": "alipay", "enabled": "false"},
+		{"name": "Creem", "type": "creem", "enabled": "false"},
+	})
 	operation_setting.EpayEnabled, setting.StripeEnabled, setting.CreemEnabled, setting.WaffoEnabled, setting.WaffoPancakeEnabled = false, false, false, false, false
 
 	assert.False(t, isEpayTopUpEnabled())
@@ -291,4 +310,66 @@ func TestEpayCallbacksCompleteExistingOrdersAfterSwitchOff(t *testing.T) {
 	topUp := model.GetTopUpByTradeNo(walletTradeNo)
 	require.NotNil(t, topUp)
 	assert.Equal(t, common.TopUpStatusSuccess, topUp.Status)
+}
+
+func TestOptionUpdateAuditRecordsPaymentSwitchChanges(t *testing.T) {
+	admin, _ := setupAccessTokenAudit(t)
+	configurePaymentGatewaysForTest(t, []map[string]string{
+		{"name": "Alipay", "type": "alipay"},
+		{"name": "WeChat", "type": "wxpay", "enabled": "false"},
+		{"name": "Custom", "type": "custom1"},
+	})
+	common.OptionMapRWMutex.Lock()
+	originalOptionMap := maps.Clone(common.OptionMap)
+	if common.OptionMap == nil {
+		common.OptionMap = map[string]string{}
+	}
+	common.OptionMap["StripeEnabled"] = "true"
+	common.OptionMap["PayMethods"] = operation_setting.PayMethods2JsonString()
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = originalOptionMap
+		common.OptionMapRWMutex.Unlock()
+	})
+
+	update := func(body string) map[string]any {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPut, "/api/option/", bytes.NewBufferString(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Set("id", admin.Id)
+		c.Set("role", common.RoleRootUser)
+		UpdateOption(c)
+		require.Contains(t, recorder.Body.String(), `"success":true`)
+		var audit model.AuditLog
+		require.NoError(t, model.LOG_DB.Where("action = ?", "option.update").Order("id desc").First(&audit).Error)
+		require.NotNil(t, audit.Other.Op)
+		raw, err := common.Marshal(audit.Other.Op.Params)
+		require.NoError(t, err)
+		var params map[string]any
+		require.NoError(t, common.Unmarshal(raw, &params))
+		return params
+	}
+
+	params := update(`{"key":"StripeEnabled","value":false}`)
+	assert.Equal(t, "StripeEnabled", params["key"])
+	assert.Equal(t, "true", params["old_value"])
+	assert.Equal(t, "false", params["new_value"])
+	assert.False(t, setting.StripeEnabled)
+
+	// Only the switches that changed are recorded, by type and name; a method
+	// that was added or kept its state is not.
+	params = update(`{"key":"PayMethods","value":"[{\"name\":\"Alipay\",\"type\":\"alipay\",\"enabled\":\"false\"},{\"name\":\"WeChat\",\"type\":\"wxpay\"},{\"name\":\"Custom\",\"type\":\"custom1\"},{\"name\":\"New\",\"type\":\"custom2\",\"enabled\":\"false\"}]"}`)
+	assert.Equal(t, "PayMethods", params["key"])
+	assert.Equal(t, []any{
+		map[string]any{"type": "alipay", "name": "Alipay", "old_value": "true", "new_value": "false"},
+		map[string]any{"type": "wxpay", "name": "WeChat", "old_value": "false", "new_value": "true"},
+	}, params["pay_method_enabled_changes"])
+	assert.NotContains(t, params, "new_value")
+
+	// Secret options keep recording only their key.
+	params = update(`{"key":"StripeApiSecret","value":"sk_test_new_secret"}`)
+	assert.Equal(t, map[string]any{"key": "StripeApiSecret"}, params)
 }

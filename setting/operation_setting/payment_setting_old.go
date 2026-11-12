@@ -84,7 +84,7 @@ func IsPayMethodEnabled(payMethod map[string]string) bool {
 
 // IsPayMethodTypeDisabled reports whether PayMethods lists methodType and every
 // entry of that type is switched off. Gateways with a built-in entry (stripe,
-// waffo, waffo_pancake) use it to keep that entry hidden as well.
+// creem, waffo, waffo_pancake) use it to keep that entry hidden as well.
 func IsPayMethodTypeDisabled(methodType string) bool {
 	listed := false
 	for _, payMethod := range PayMethods {

@@ -3,6 +3,7 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"sort"
@@ -422,6 +423,9 @@ func UpdateOption(c *gin.Context) {
 		common.ApiSuccess(c, change)
 		return
 	}
+	common.OptionMapRWMutex.RLock()
+	previousValue := common.OptionMap[option.Key]
+	common.OptionMapRWMutex.RUnlock()
 	err = model.UpdateOption(option.Key, option.Value.(string))
 	if err != nil {
 		if errors.Is(err, system_setting.ErrPasskeyRPIDInvalid) {
@@ -431,12 +435,69 @@ func UpdateOption(c *gin.Context) {
 		}
 		return
 	}
-	// 出于安全考虑只记录被修改的配置项名称，不记录配置值（可能含密钥等敏感信息）。
-	recordManageAudit(c, "option.update", map[string]any{
+	// 出于安全考虑只记录被修改的配置项名称，不记录配置值（可能含密钥等敏感信息）；
+	// 支付渠道开关例外，见 paymentSwitchAuditParams。
+	auditParams := map[string]any{
 		"key": option.Key,
-	})
+	}
+	maps.Copy(auditParams, paymentSwitchAuditParams(option.Key, previousValue, option.Value.(string)))
+	recordManageAudit(c, "option.update", auditParams)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 	})
+}
+
+// paymentGatewaySwitchOptionKeys are the administrator switches of the payment
+// gateways. Their values are only "true" or "false", so the audit log records
+// them.
+var paymentGatewaySwitchOptionKeys = []string{
+	"EpayEnabled",
+	"StripeEnabled",
+	"CreemEnabled",
+	"WaffoEnabled",
+	"WaffoPancakeEnabled",
+}
+
+// paymentSwitchAuditParams returns the extra audit parameters for a change to
+// a payment switch: old_value and new_value for a gateway switch, and for
+// PayMethods the entries whose enabled switch changed (type, name, old and new
+// state). PayMethods holds no secrets, but only the switches are recorded.
+// Other options return nil.
+func paymentSwitchAuditParams(key string, oldValue string, newValue string) map[string]any {
+	if slices.Contains(paymentGatewaySwitchOptionKeys, key) {
+		return map[string]any{"old_value": oldValue, "new_value": newValue}
+	}
+	if key != "PayMethods" {
+		return nil
+	}
+	var oldMethods, newMethods []map[string]string
+	// The new value was validated before saving; an unreadable old value is
+	// treated as an empty list.
+	_ = common.UnmarshalJsonStr(oldValue, &oldMethods)
+	if err := common.UnmarshalJsonStr(newValue, &newMethods); err != nil {
+		return nil
+	}
+	oldEnabled := make(map[string]bool, len(oldMethods))
+	for _, method := range oldMethods {
+		oldEnabled[method["type"]+"/"+method["name"]] = operation_setting.IsPayMethodEnabled(method)
+	}
+	changes := make([]map[string]any, 0)
+	for _, method := range newMethods {
+		before, existed := oldEnabled[method["type"]+"/"+method["name"]]
+		after := operation_setting.IsPayMethodEnabled(method)
+		if !existed || before == after {
+			continue
+		}
+		changes = append(changes, map[string]any{
+			"type":      method["type"],
+			"name":      method["name"],
+			"old_value": strconv.FormatBool(before),
+			"new_value": strconv.FormatBool(after),
+		})
+	}
+	if len(changes) == 0 {
+		return nil
+	}
+	return map[string]any{"pay_method_enabled_changes": changes}
 }

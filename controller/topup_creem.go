@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"io"
 	"net/http"
 	"time"
@@ -65,7 +66,7 @@ type CreemAdaptor struct {
 }
 
 func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
-	if !setting.CreemEnabled {
+	if !setting.CreemEnabled || operation_setting.IsPayMethodTypeDisabled(model.PaymentMethodCreem) {
 		paymentError(c, common.NewMessage("This payment channel is disabled"))
 		return
 	}
