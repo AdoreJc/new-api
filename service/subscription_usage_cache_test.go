@@ -9,6 +9,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// useSubscriptionUsageClock makes cache entries written from now on dated at.
+func useSubscriptionUsageClock(t *testing.T, at time.Time) {
+	t.Helper()
+	original := subscriptionUsageClock
+	subscriptionUsageClock = func() time.Time { return at }
+	t.Cleanup(func() { subscriptionUsageClock = original })
+}
+
 func TestSubscriptionUsageCacheKeepsSuccessesAndFailuresForTheirTTL(t *testing.T) {
 	const channelId = 910001
 	t.Cleanup(func() { InvalidateSubscriptionUsage(channelId) })
@@ -25,6 +33,7 @@ func TestSubscriptionUsageCacheKeepsSuccessesAndFailuresForTheirTTL(t *testing.T
 		{"newer windows", true, nil},
 	}
 	load := func(at time.Time) (string, error) {
+		useSubscriptionUsageClock(t, at)
 		return LoadSubscriptionUsage(channelId, at, func() (string, bool, error) {
 			answer := answers[calls]
 			calls++
@@ -57,6 +66,29 @@ func TestSubscriptionUsageCacheKeepsSuccessesAndFailuresForTheirTTL(t *testing.T
 	value, _ = load(at.Add(SubscriptionUsageCacheTTL))
 	assert.Equal(t, "newer windows", value)
 	assert.Equal(t, 4, calls)
+}
+
+// The TTL runs from when the fetch finished: a fetch that hung past the
+// failure TTL (an upstream timeout) is still served to the next caller.
+func TestSubscriptionUsageTTLStartsWhenTheFetchFinishes(t *testing.T) {
+	const channelId = 910005
+	t.Cleanup(func() { InvalidateSubscriptionUsage(channelId) })
+	start := time.Now()
+	finished := start.Add(SubscriptionUsageFailureTTL + 5*time.Second)
+	calls := 0
+	_, err := LoadSubscriptionUsage(channelId, start, func() (string, bool, error) {
+		calls++
+		useSubscriptionUsageClock(t, finished)
+		return "", false, errors.New("upstream timeout")
+	})
+	assert.EqualError(t, err, "upstream timeout")
+
+	_, err = LoadSubscriptionUsage(channelId, finished, func() (string, bool, error) {
+		calls++
+		return "unexpected fetch", true, nil
+	})
+	assert.EqualError(t, err, "upstream timeout", "the failure is served right after the slow fetch")
+	assert.Equal(t, 1, calls)
 }
 
 // A fetch that was in flight when the usage was invalidated (a reset credit

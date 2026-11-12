@@ -40,6 +40,9 @@ var (
 	subscriptionUsageGenerations = map[int]uint64{}
 	subscriptionUsageRefreshedAt = map[int]time.Time{}
 	subscriptionUsageFlight      singleflight.Group
+	// subscriptionUsageClock dates a cache entry when its fetch finishes, so
+	// a slow fetch does not eat into the TTL; tests replace it.
+	subscriptionUsageClock = time.Now
 )
 
 func cachedSubscriptionUsage[T any](channelId int, now time.Time) (value T, err error, ok bool) {
@@ -78,7 +81,7 @@ func LoadSubscriptionUsage[T any](channelId int, now time.Time, fetch func() (va
 		}
 		subscriptionUsageCacheMu.Lock()
 		if subscriptionUsageGenerations[channelId] == generation {
-			subscriptionUsageCache[channelId] = subscriptionUsageCacheEntry{value: value, err: err, expiresAt: now.Add(ttl)}
+			subscriptionUsageCache[channelId] = subscriptionUsageCacheEntry{value: value, err: err, expiresAt: subscriptionUsageClock().Add(ttl)}
 		}
 		subscriptionUsageCacheMu.Unlock()
 		return value, err
