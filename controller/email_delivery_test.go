@@ -268,6 +268,7 @@ type fakeMailProvider struct {
 	sends      []fakeMailSend
 	issue      func(form url.Values) (int, string)
 	sendStatus int
+	sendBody   string
 	url        string
 }
 
@@ -301,9 +302,10 @@ func newFakeMailProvider(t *testing.T) *fakeMailProvider {
 		assert.NoError(t, err)
 		provider.mu.Lock()
 		provider.sends = append(provider.sends, fakeMailSend{path: r.URL.Path, authorization: r.Header.Get("Authorization"), body: body})
-		status := provider.sendStatus
+		status, reply := provider.sendStatus, provider.sendBody
 		provider.mu.Unlock()
 		w.WriteHeader(status)
+		_, _ = io.WriteString(w, reply)
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /google/token", token)
@@ -410,6 +412,7 @@ func TestOAuthEmailDeliveryRequestFormats(t *testing.T) {
 				assert.Equal(t, []string{"contoso.example"}, provider.tenants)
 				assert.Contains(t, form.Get("scope"), "https://graph.microsoft.com/Mail.Send")
 				assert.Contains(t, form.Get("scope"), "offline_access")
+				assert.NotContains(t, form.Get("scope"), "Mail.Send.Shared", "without a sender address the grant keeps its original scopes")
 				assert.Equal(t, "/graph/me/sendMail", first.path)
 				var body struct {
 					Message struct {
@@ -559,7 +562,7 @@ func TestOAuthEmailRotationDoesNotOverwriteNewerAuthorization(t *testing.T) {
 	options := oauthEmailOptions(common.EmailOAuthProviderMicrosoft)
 	configureEmailDelivery(t, options)
 	useEmailOptionsDatabase(t, options)
-	require.NoError(t, model.SaveEmailOAuthAuthorization("refresh-new-grant", "sender@contoso.example"))
+	require.NoError(t, model.SaveEmailOAuthAuthorization(common.EmailOAuthGrant{RefreshToken: "refresh-new-grant", Email: "sender@contoso.example"}))
 	assert.ErrorIs(t, model.ReplaceEmailOAuthRefreshToken("refresh-1", "refresh-2"), common.ErrEmailOAuthAuthorizationChanged)
 	assert.Equal(t, "refresh-new-grant", storedOption(t, common.EmailOAuthRefreshTokenOption))
 	assert.Equal(t, "refresh-new-grant", common.OptionMap[common.EmailOAuthRefreshTokenOption])
@@ -637,4 +640,141 @@ func TestOAuthEmailFailuresDoNotFallBackToOtherMethods(t *testing.T) {
 			assert.Zero(t, smtpConnections.Load(), "OAuth failures must not fall back to SMTP")
 		})
 	}
+}
+
+// sentMIMEMessage decodes the Gmail API message of the given send.
+func sentMIMEMessage(t *testing.T, send fakeMailSend) *mail.Message {
+	t.Helper()
+	var body struct {
+		Raw string `json:"raw"`
+	}
+	require.NoError(t, common.Unmarshal(send.body, &body))
+	raw, err := base64.RawURLEncoding.DecodeString(body.Raw)
+	require.NoError(t, err)
+	message, err := mail.ReadMessage(bytes.NewReader(raw))
+	require.NoError(t, err)
+	return message
+}
+
+func TestOAuthEmailSendsFromConfiguredSenderAddress(t *testing.T) {
+	const sharedScopes = "https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Send.Shared https://graph.microsoft.com/User.Read"
+	previousName := common.SystemName
+	common.SystemName = "New API"
+	t.Cleanup(func() { common.SystemName = previousName })
+
+	t.Run("gmail alias is the From address and Message-ID domain", func(t *testing.T) {
+		options := oauthEmailOptions(common.EmailOAuthProviderGoogle)
+		options[common.EmailOAuthFromOption] = "notify@alias.example"
+		configureEmailDelivery(t, options)
+		useEmailOptionsDatabase(t, options)
+		provider := newFakeMailProvider(t)
+
+		require.NoError(t, common.SendEmail("verification", "one@example.com", "123456"))
+
+		require.Len(t, provider.sends, 1)
+		assert.Equal(t, "/gmail/send", provider.sends[0].path)
+		message := sentMIMEMessage(t, provider.sends[0])
+		assert.Equal(t, `"New API" <notify@alias.example>`, message.Header.Get("From"))
+		assert.True(t, strings.HasSuffix(message.Header.Get("Message-ID"), "@alias.example>"), message.Header.Get("Message-ID"))
+		assert.Empty(t, provider.tokenForms[0].Get("scope"), "Google refreshes never carry a scope")
+	})
+
+	t.Run("microsoft shared mailbox is message.from on /me/sendMail", func(t *testing.T) {
+		options := oauthEmailOptions(common.EmailOAuthProviderMicrosoft)
+		options[common.EmailOAuthFromOption] = "shared@contoso.example"
+		options[common.EmailOAuthScopesOption] = sharedScopes
+		configureEmailDelivery(t, options)
+		useEmailOptionsDatabase(t, options)
+		provider := newFakeMailProvider(t)
+
+		require.NoError(t, common.SendEmail("verification", "one@example.com", "123456"))
+
+		require.Len(t, provider.sends, 1)
+		assert.Equal(t, "/graph/me/sendMail", provider.sends[0].path)
+		var body struct {
+			Message struct {
+				From struct {
+					EmailAddress struct {
+						Name    string `json:"name"`
+						Address string `json:"address"`
+					} `json:"emailAddress"`
+				} `json:"from"`
+			} `json:"message"`
+		}
+		require.NoError(t, common.Unmarshal(provider.sends[0].body, &body))
+		assert.Equal(t, "New API", body.Message.From.EmailAddress.Name)
+		assert.Equal(t, "shared@contoso.example", body.Message.From.EmailAddress.Address)
+		assert.Contains(t, strings.Fields(provider.tokenForms[0].Get("scope")), "https://graph.microsoft.com/Mail.Send.Shared",
+			"the refresh asks for the scopes the grant received")
+	})
+
+	t.Run("microsoft authorized mailbox in another case is not a shared mailbox", func(t *testing.T) {
+		options := oauthEmailOptions(common.EmailOAuthProviderMicrosoft)
+		options[common.EmailOAuthFromOption] = "Sender@Contoso.example"
+		configureEmailDelivery(t, options)
+		useEmailOptionsDatabase(t, options)
+		provider := newFakeMailProvider(t)
+
+		require.NoError(t, common.SendEmail("verification", "one@example.com", "123456"))
+		_, sends := provider.counts()
+		assert.Equal(t, 1, sends)
+	})
+}
+
+func TestOAuthEmailSharedMailboxNeverFallsBackToTheAuthorizedMailbox(t *testing.T) {
+	t.Run("grant without Mail.Send.Shared asks for re-authorization", func(t *testing.T) {
+		options := oauthEmailOptions(common.EmailOAuthProviderMicrosoft)
+		options[common.EmailOAuthFromOption] = "shared@contoso.example"
+		options[common.EmailOAuthScopesOption] = "https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read"
+		configureEmailDelivery(t, options)
+		useEmailOptionsDatabase(t, options)
+		provider := newFakeMailProvider(t)
+
+		err := common.SendEmail("verification", "one@example.com", "123456")
+		require.ErrorIs(t, err, common.ErrEmailOAuthSharedReauthorize)
+		tokens, sends := provider.counts()
+		assert.Zero(t, tokens)
+		assert.Zero(t, sends)
+	})
+
+	for name, test := range map[string]struct {
+		body, message string
+	}{
+		"send as denied names the missing permission": {
+			`{"error":{"code":"ErrorSendAsDenied","message":"The user account which was used to submit this request does not have the right to send mail on behalf of the specified sending account."}}`,
+			"The authorized account has no Send As or Send on Behalf permission for shared@contoso.example",
+		},
+		"other 403 only names the address": {
+			`{"error":{"code":"ErrorAccessDenied","message":"Access is denied."}}`,
+			"Sending from shared@contoso.example was refused (HTTP 403)",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			options := oauthEmailOptions(common.EmailOAuthProviderMicrosoft)
+			options[common.EmailOAuthFromOption] = "shared@contoso.example"
+			options[common.EmailOAuthScopesOption] = "Mail.Send Mail.Send.Shared User.Read"
+			configureEmailDelivery(t, options)
+			useEmailOptionsDatabase(t, options)
+			provider := newFakeMailProvider(t)
+			provider.sendStatus, provider.sendBody = http.StatusForbidden, test.body
+
+			err := common.SendEmail("verification", "one@example.com", "123456")
+			require.EqualError(t, err, test.message)
+			assert.NotContains(t, err.Error(), "access-1")
+			_, sends := provider.counts()
+			assert.Equal(t, 1, sends, "the message is not retried from the authorized mailbox")
+		})
+	}
+
+	t.Run("invalid stored sender is refused", func(t *testing.T) {
+		options := oauthEmailOptions(common.EmailOAuthProviderGoogle)
+		options[common.EmailOAuthFromOption] = "a@example.com, b@example.com"
+		configureEmailDelivery(t, options)
+		useEmailOptionsDatabase(t, options)
+		provider := newFakeMailProvider(t)
+
+		require.ErrorIs(t, common.SendEmail("verification", "one@example.com", "123456"), common.ErrEmailOAuthSenderInvalid)
+		_, sends := provider.counts()
+		assert.Zero(t, sends)
+	})
 }

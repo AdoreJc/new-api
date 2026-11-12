@@ -32,12 +32,14 @@ func TestEmailOAuthRotationAndReauthorizationDoNotInterleave(t *testing.T) {
 		common.OptionMapRWMutex.Unlock()
 		DB.Where("1 = 1").Delete(&Option{})
 	})
-	require.NoError(t, SaveEmailOAuthAuthorization("grant-1", "old@example.com"))
+	require.NoError(t, SaveEmailOAuthAuthorization(common.EmailOAuthGrant{RefreshToken: "grant-1", Email: "old@example.com"}))
 
 	reauthorized := make(chan error, 1)
 	emailOAuthAfterDatabaseWrite = func() {
 		emailOAuthAfterDatabaseWrite = nil
-		go func() { reauthorized <- SaveEmailOAuthAuthorization("grant-2", "new@example.com") }()
+		go func() {
+			reauthorized <- SaveEmailOAuthAuthorization(common.EmailOAuthGrant{RefreshToken: "grant-2", Email: "new@example.com"})
+		}()
 		// Give an unserialized re-authorization time to finish inside the
 		// rotation's window. Serialized, it waits for the rotation instead.
 		select {

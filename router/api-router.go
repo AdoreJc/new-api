@@ -227,6 +227,7 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.POST("/email_oauth/authorize", middleware.DisableCache(), controller.StartEmailOAuthAuthorization)
 			optionRoute.POST("/email_oauth/callback", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.EmailOAuthCallback)
 			optionRoute.DELETE("/email_oauth/authorization", controller.RevokeEmailOAuthAuthorization)
+			optionRoute.POST("/email_oauth/test", middleware.CriticalRateLimit(), controller.SendEmailOAuthTestMessage)
 			optionRoute.GET("/model_pricing", controller.GetModelPricingConfig)
 			optionRoute.GET("/model_pricing/issues", controller.GetModelPricingIssues)
 			optionRoute.PATCH("/model_pricing", controller.UpdateModelPricingConfig)

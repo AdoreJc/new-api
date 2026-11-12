@@ -187,6 +187,11 @@ export function EmailSettingsSection({
       }
       const secret = values.EmailOAuthClientSecret.trim()
       if (secret) updates.push({ key: 'EmailOAuthClientSecret', value: secret })
+      // The sender address can change while a mailbox is authorized.
+      const sender = values.EmailOAuthFrom.trim()
+      if (sender !== defaultValues.EmailOAuthFrom.trim()) {
+        updates.push({ key: 'EmailOAuthFrom', value: sender })
+      }
     } else {
       if (sanitized.SMTPServer !== initial.SMTPServer) {
         updates.push({ key: 'SMTPServer', value: sanitized.SMTPServer })
@@ -357,6 +362,9 @@ export function EmailSettingsSection({
                 EmailOAuthSecretConfigured:
                   defaultValues.EmailOAuthSecretConfigured,
                 EmailOAuthEmail: defaultValues.EmailOAuthEmail,
+                EmailOAuthFrom: defaultValues.EmailOAuthFrom,
+                EmailOAuthSharedSendGranted:
+                  defaultValues.EmailOAuthSharedSendGranted,
               }}
             />
           )}

@@ -25,9 +25,12 @@ export const EMAIL_OAUTH_CALLBACK_PATH = '/system-settings/operations/email'
 
 type BackendBody<T> = { success: boolean; message?: string; data?: T }
 
-export async function startEmailOAuthAuthorization() {
+// sender is the sender address about to be saved; its permission is
+// requested with this authorization.
+export async function startEmailOAuthAuthorization(sender: string) {
   const res = await api.post<BackendBody<{ authorization_url: string }>>(
-    '/api/option/email_oauth/authorize'
+    '/api/option/email_oauth/authorize',
+    { sender }
   )
   return requireServerSuccess(res.data)
 }
@@ -40,6 +43,14 @@ export async function completeEmailOAuthAuthorization(request: {
   const res = await api.post<BackendBody<{ email: string }>>(
     '/api/option/email_oauth/callback',
     request
+  )
+  return requireServerSuccess(res.data)
+}
+
+// Sends a test message from the sender address to the authorized mailbox.
+export async function sendEmailOAuthTestMessage() {
+  const res = await api.post<BackendBody<{ to: string; from: string }>>(
+    '/api/option/email_oauth/test'
   )
   return requireServerSuccess(res.data)
 }

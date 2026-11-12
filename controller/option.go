@@ -86,7 +86,8 @@ func GetOptions(c *gin.Context) {
 	optionValues := make(map[string]string)
 	common.OptionMapRWMutex.Lock()
 	for k, v := range common.OptionMap {
-		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" || k == common.EmailOAuthSecretConfiguredOption {
+		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" || k == common.EmailOAuthSecretConfiguredOption ||
+			k == common.EmailOAuthScopesOption || k == common.EmailOAuthSharedSendGrantedOption {
 			continue
 		}
 		value := common.Interface2String(v)
@@ -110,6 +111,8 @@ func GetOptions(c *gin.Context) {
 		Key: "ResendKeyConfigured", Value: strconv.FormatBool(strings.TrimSpace(common.OptionMap["ResendApiKey"]) != ""),
 	}, &model.Option{
 		Key: common.EmailOAuthSecretConfiguredOption, Value: strconv.FormatBool(strings.TrimSpace(common.OptionMap[common.EmailOAuthClientSecretOption]) != ""),
+	}, &model.Option{
+		Key: common.EmailOAuthSharedSendGrantedOption, Value: strconv.FormatBool(common.EmailOAuthSharedSendGranted(common.OptionMap[common.EmailOAuthScopesOption])),
 	})
 	common.OptionMapRWMutex.Unlock()
 	// Display the same effective expressions used by pricing and settlement,

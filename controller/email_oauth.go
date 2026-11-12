@@ -2,11 +2,13 @@ package controller
 
 import (
 	"context"
+	"html"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -28,6 +30,8 @@ type emailOAuthFlowPayload struct {
 	RedirectURI string `json:"redirect_uri"`
 	ClientID    string `json:"client_id"`
 	Tenant      string `json:"tenant"`
+	// Scope is what the consent page asked for; the code is redeemed with it.
+	Scope string `json:"scope"`
 }
 
 func emailOAuthRedirectURI() string {
@@ -44,9 +48,30 @@ func recordEmailOAuthAudit(c *gin.Context, change string, provider string, succe
 	})
 }
 
+// emailOAuthStartRequest optionally carries the sender address the console
+// is about to save, so its permission is requested before it is saved.
+type emailOAuthStartRequest struct {
+	Sender *string `json:"sender"`
+}
+
 // StartEmailOAuthAuthorization creates a one-time state bound to the
 // administrator's browser session and returns the provider consent URL.
 func StartEmailOAuthAuthorization(c *gin.Context) {
+	var request emailOAuthStartRequest
+	if c.Request.ContentLength != 0 {
+		if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+			common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+			return
+		}
+	}
+	pendingSender := ""
+	if request.Sender != nil {
+		pendingSender = strings.TrimSpace(*request.Sender)
+		if err := common.ValidateEmailOAuthSender(pendingSender); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
 	identity, ok := middleware.GetSessionAuthIdentity(c)
 	if !ok {
 		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Sign in to the console in a browser to authorize the sender mailbox"))
@@ -67,7 +92,14 @@ func StartEmailOAuthAuthorization(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	payload, err := common.Marshal(emailOAuthFlowPayload{Verifier: verifier, RedirectURI: redirectURI, ClientID: app.ClientID, Tenant: app.Tenant})
+	common.OptionMapRWMutex.RLock()
+	savedSender := common.OptionMap[common.EmailOAuthFromOption]
+	mailbox := common.OptionMap[common.EmailOAuthEmailOption]
+	common.OptionMapRWMutex.RUnlock()
+	// Both addresses count: the new grant replaces the current one while the
+	// saved sender may still be in use.
+	scope := common.EmailOAuthRequestedScope(app.Provider, mailbox, savedSender, pendingSender)
+	payload, err := common.Marshal(emailOAuthFlowPayload{Verifier: verifier, RedirectURI: redirectURI, ClientID: app.ClientID, Tenant: app.Tenant, Scope: scope})
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -85,7 +117,7 @@ func StartEmailOAuthAuthorization(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	authorizationURL, err := common.EmailOAuthAuthorizeURL(app, redirectURI, state, challenge)
+	authorizationURL, err := common.EmailOAuthAuthorizeURL(app, redirectURI, state, challenge, scope)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -155,18 +187,63 @@ func EmailOAuthCallback(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
-	refreshToken, email, err := common.ExchangeEmailOAuthCode(ctx, app, code, payload.Verifier, payload.RedirectURI)
+	scope := payload.Scope
+	if scope == "" { // A flow started before the scope was recorded.
+		scope = common.EmailOAuthRequestedScope(app.Provider, "")
+	}
+	grant, err := common.ExchangeEmailOAuthCode(ctx, app, code, payload.Verifier, payload.RedirectURI, scope)
 	if err != nil {
 		common.ApiErrorT(c, "Mailbox authorization failed. Try again")
 		return
 	}
-	if err := model.SaveEmailOAuthAuthorization(refreshToken, email); err != nil {
+	// While OAuth sends, keep the saved sender usable: a grant that cannot
+	// send from it (for example another account was chosen) is not saved.
+	common.OptionMapRWMutex.RLock()
+	activeOAuth := common.OptionMap["EmailProvider"] == "oauth"
+	savedSender := common.OptionMap[common.EmailOAuthFromOption]
+	common.OptionMapRWMutex.RUnlock()
+	if activeOAuth {
+		if err := common.ValidateEmailOAuthSenderGrant(app.Provider, savedSender, grant.Email, grant.Scopes); err != nil {
+			common.ApiErrorT(c, "The new authorization cannot send from the saved sender address. Clear the sender address or authorize an account that can send from it")
+			return
+		}
+	}
+	if err := model.SaveEmailOAuthAuthorization(grant); err != nil {
 		common.SysError(common.LogText("failed to save the email oauth authorization: %v", err))
 		common.ApiErrorT(c, "Mailbox authorization failed. Try again")
 		return
 	}
 	success = true
-	common.ApiSuccess(c, gin.H{"email": email, "provider": flow.Provider})
+	common.ApiSuccess(c, gin.H{"email": grant.Email, "provider": flow.Provider})
+}
+
+// SendEmailOAuthTestMessage sends a test message through the OAuth mailbox,
+// from the configured sender address, to the authorized mailbox itself. It
+// works before OAuth is the active sending method, so the sender permission
+// can be checked first.
+func SendEmailOAuthTestMessage(c *gin.Context) {
+	common.OptionMapRWMutex.RLock()
+	mailbox := strings.TrimSpace(common.OptionMap[common.EmailOAuthEmailOption])
+	sender := strings.TrimSpace(common.OptionMap[common.EmailOAuthFromOption])
+	common.OptionMapRWMutex.RUnlock()
+	if mailbox == "" {
+		common.ApiError(c, common.ErrEmailOAuthNotAuthorized)
+		return
+	}
+	if sender == "" {
+		sender = mailbox
+	}
+	subject := i18n.T(c, i18n.MsgEmailOAuthTestSubject, map[string]any{"SystemName": common.SystemName})
+	content := i18n.T(c, i18n.MsgEmailOAuthTestBody, map[string]any{"Sender": sender, "Mailbox": mailbox})
+	err := common.SendOAuthEmail(subject, mailbox, "<p>"+html.EscapeString(content)+"</p>")
+	recordManageAudit(c, "option.update", map[string]any{
+		"key": "EmailOAuthAuthorization", "change": "test", "provider": common.CurrentEmailOAuthApp().Provider, "success": err == nil,
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"to": mailbox, "from": sender})
 }
 
 // RevokeEmailOAuthAuthorization forgets the stored refresh token and mailbox.

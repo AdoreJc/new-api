@@ -27,6 +27,20 @@ import (
 // The HTTP APIs are used instead of SMTP XOAUTH2 because many Microsoft 365
 // tenants disable SMTP AUTH, and gmail.send is narrower than the
 // https://mail.google.com/ scope SMTP needs.
+//
+// An optional sender address (EmailOAuthFrom) sends from another mailbox:
+//   - Google: the MIME From header. It must be a verified "Send mail as"
+//     alias of the authorized account; listing aliases would need a
+//     restricted Gmail scope, so the address is entered by hand.
+//   - Microsoft: message.from on POST /me/sendMail, which needs the delegated
+//     Mail.Send.Shared scope (work or school accounts only) and Send As or
+//     Send on Behalf rights on that mailbox. /users/{from}/sendMail is not
+//     used because it also needs Full Access to the mailbox.
+//
+// Mail.Send.Shared is requested only for a sender address other than the
+// authorized mailbox, so existing grants and personal accounts keep the
+// original scopes. While OAuth sends, a sender the grant cannot use is
+// refused when it is saved; the console authorizes first, then saves.
 const (
 	EmailOAuthProviderGoogle    = "google"
 	EmailOAuthProviderMicrosoft = "microsoft"
@@ -36,10 +50,16 @@ const (
 	EmailOAuthClientIdOption     = "EmailOAuthClientId"
 	EmailOAuthClientSecretOption = "EmailOAuthClientSecret"
 	EmailOAuthTenantOption       = "EmailOAuthTenant"
+	EmailOAuthFromOption         = "EmailOAuthFrom"
 	EmailOAuthRefreshTokenOption = "EmailOAuthRefreshToken"
 	EmailOAuthEmailOption        = "EmailOAuthEmail"
-	// EmailOAuthSecretConfiguredOption is derived for the console only.
-	EmailOAuthSecretConfiguredOption = "EmailOAuthSecretConfigured"
+	// EmailOAuthScopesOption holds the scopes the stored grant received. It
+	// is written by the authorization flow together with the refresh token.
+	EmailOAuthScopesOption = "EmailOAuthScopes"
+	// EmailOAuthSecretConfiguredOption and EmailOAuthSharedSendGrantedOption
+	// are derived for the console only.
+	EmailOAuthSecretConfiguredOption  = "EmailOAuthSecretConfigured"
+	EmailOAuthSharedSendGrantedOption = "EmailOAuthSharedSendGranted"
 )
 
 // EmailOAuthEndpoints holds every provider URL so tests can point them at a
@@ -83,8 +103,9 @@ func SetEmailOAuthEndpointsForTest(endpoints EmailOAuthEndpoints) func() {
 }
 
 const (
-	emailOAuthGoogleScope    = "openid email https://www.googleapis.com/auth/gmail.send"
-	emailOAuthMicrosoftScope = "offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read"
+	emailOAuthGoogleScope          = "openid email https://www.googleapis.com/auth/gmail.send"
+	emailOAuthMicrosoftScope       = "offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read"
+	emailOAuthMicrosoftSharedScope = emailOAuthMicrosoftScope + " https://graph.microsoft.com/Mail.Send.Shared"
 )
 
 var emailOAuthTenantPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$`)
@@ -101,6 +122,12 @@ var (
 	ErrEmailOAuthReauthorize   = NewMessage("The sender mailbox authorization has expired or was revoked. Re-authorize it in the email settings")
 	ErrEmailOAuthAppInvalid    = NewMessage("The OAuth app settings are incomplete or invalid")
 	ErrEmailOAuthRequestFailed = NewMessage("OAuth email request failed")
+	ErrEmailOAuthSenderInvalid = NewMessage("Enter a single sender email address, or leave it blank to send from the authorized mailbox")
+	// ErrEmailOAuthSharedReauthorize is returned instead of sending from the
+	// authorized mailbox when the grant cannot send from the shared one.
+	ErrEmailOAuthSharedReauthorize = NewMessage("Re-authorize the mailbox to send from the shared mailbox")
+	// ErrEmailOAuthSenderNeedsGrant refuses to save such a sender address.
+	ErrEmailOAuthSenderNeedsGrant = NewMessage("Re-authorize the mailbox with this sender address entered before saving it")
 	// ErrEmailOAuthAuthorizationChanged is returned by the rotation store when
 	// the stored refresh token is no longer the one that was refreshed, for
 	// example after a re-authorization. The rotated token is then discarded.
@@ -127,6 +154,8 @@ type emailOAuthConfig struct {
 	EmailOAuthApp
 	RefreshToken string
 	Email        string
+	From         string
+	Scopes       string
 }
 
 // CurrentEmailOAuthApp reads the OAuth app settings from the option map.
@@ -172,10 +201,91 @@ func ValidateEmailOAuthActivation(options map[string]string) error {
 	if err := ValidateEmailOAuthApp(emailOAuthAppFromMap(options)); err != nil {
 		return err
 	}
+	if err := ValidateEmailOAuthSender(options[EmailOAuthFromOption]); err != nil {
+		return err
+	}
 	if strings.TrimSpace(options[EmailOAuthRefreshTokenOption]) == "" || strings.TrimSpace(options[EmailOAuthEmailOption]) == "" {
 		return NewMessage("Authorize the sender mailbox before enabling OAuth sending")
 	}
+	return ValidateEmailOAuthSenderGrant(
+		strings.TrimSpace(options[EmailOAuthProviderOption]),
+		options[EmailOAuthFromOption],
+		options[EmailOAuthEmailOption],
+		options[EmailOAuthScopesOption],
+	)
+}
+
+// emailOAuthSenderNeedsShared reports whether sending from sender through
+// mailbox needs Mail.Send.Shared. With no mailbox authorized yet, any
+// sender may turn out to be another mailbox.
+func emailOAuthSenderNeedsShared(provider, sender, mailbox string) bool {
+	sender, mailbox = strings.TrimSpace(sender), strings.TrimSpace(mailbox)
+	return provider == EmailOAuthProviderMicrosoft && sender != "" && (mailbox == "" || !strings.EqualFold(sender, mailbox))
+}
+
+// ValidateEmailOAuthSenderGrant refuses a sender address the authorized
+// grant cannot send from, so an active OAuth method keeps sending.
+func ValidateEmailOAuthSenderGrant(provider, sender, mailbox, scopes string) error {
+	if strings.TrimSpace(mailbox) == "" || !emailOAuthSenderNeedsShared(provider, sender, mailbox) || EmailOAuthSharedSendGranted(scopes) {
+		return nil
+	}
+	return ErrEmailOAuthSenderNeedsGrant
+}
+
+// ValidateEmailOAuthSender accepts an empty value (send from the authorized
+// mailbox) or exactly one bare address, which ends up in a From header.
+func ValidateEmailOAuthSender(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if len(value) > 254 || strings.ContainsAny(value, "\r\n\x00") {
+		return ErrEmailOAuthSenderInvalid
+	}
+	parsed, err := mail.ParseAddress(value)
+	if err != nil || parsed.Name != "" || parsed.Address != value {
+		return ErrEmailOAuthSenderInvalid
+	}
 	return nil
+}
+
+// EmailOAuthRequestedScope is the scope a new authorization asks for. The
+// shared-mailbox scope is added only when one of senders (the saved and the
+// pending address) is not the currently authorized mailbox.
+func EmailOAuthRequestedScope(provider, mailbox string, senders ...string) string {
+	if provider != EmailOAuthProviderMicrosoft {
+		return emailOAuthGoogleScope
+	}
+	for _, sender := range senders {
+		if emailOAuthSenderNeedsShared(provider, sender, mailbox) {
+			return emailOAuthMicrosoftSharedScope
+		}
+	}
+	return emailOAuthMicrosoftScope
+}
+
+// EmailOAuthSharedSendGranted reports whether a Microsoft grant's scopes
+// include Mail.Send.Shared. Token responses may list a scope as a full or
+// short, URL-encoded or plain name in any case.
+func EmailOAuthSharedSendGranted(scopes string) bool {
+	if decoded, err := url.QueryUnescape(scopes); err == nil {
+		scopes = decoded
+	}
+	for scope := range strings.FieldsSeq(strings.ToLower(scopes)) {
+		if strings.TrimPrefix(scope, "https://graph.microsoft.com/") == "mail.send.shared" {
+			return true
+		}
+	}
+	return false
+}
+
+// emailOAuthRefreshScope asks a Microsoft refresh for the scopes the grant
+// received: a refresh may not ask for more than the original authorization.
+func emailOAuthRefreshScope(scopes string) string {
+	if EmailOAuthSharedSendGranted(scopes) {
+		return emailOAuthMicrosoftSharedScope
+	}
+	return emailOAuthMicrosoftScope
 }
 
 // EmailOAuthPKCE is a fresh code verifier and its S256 challenge.
@@ -200,8 +310,9 @@ func emailOAuthTokenURL(app EmailOAuthApp) string {
 	return emailOAuthEndpoints.GoogleTokenURL
 }
 
-// EmailOAuthAuthorizeURL builds the provider consent URL for the code flow.
-func EmailOAuthAuthorizeURL(app EmailOAuthApp, redirectURI, state, challenge string) (string, error) {
+// EmailOAuthAuthorizeURL builds the provider consent URL for the code flow;
+// scope comes from EmailOAuthRequestedScope.
+func EmailOAuthAuthorizeURL(app EmailOAuthApp, redirectURI, state, challenge, scope string) (string, error) {
 	if err := ValidateEmailOAuthApp(app); err != nil {
 		return "", err
 	}
@@ -212,15 +323,14 @@ func EmailOAuthAuthorizeURL(app EmailOAuthApp, redirectURI, state, challenge str
 		"state":                 {state},
 		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
+		"scope":                 {scope},
 	}
 	base := emailOAuthEndpoints.GoogleAuthorizeURL
 	if app.Provider == EmailOAuthProviderMicrosoft {
 		base = microsoftEndpoint(app.Tenant, "authorize")
-		query.Set("scope", emailOAuthMicrosoftScope)
 		query.Set("response_mode", "query")
 		query.Set("prompt", "select_account")
 	} else {
-		query.Set("scope", emailOAuthGoogleScope)
 		// A refresh token is only issued for offline access, and Google
 		// repeats it on later grants only when consent is shown again.
 		query.Set("access_type", "offline")
@@ -234,16 +344,18 @@ type emailOAuthTokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int64  `json:"expires_in"`
+	Scope        string `json:"scope"`
 	Error        string `json:"error"`
 }
 
 // postEmailOAuthToken calls the token endpoint. Response bodies are never
 // logged: they carry tokens on success and may echo request data on failure.
-func postEmailOAuthToken(ctx context.Context, app EmailOAuthApp, form url.Values) (*emailOAuthTokenResponse, error) {
+// Microsoft requests carry a scope; Google ones never do.
+func postEmailOAuthToken(ctx context.Context, app EmailOAuthApp, form url.Values, microsoftScope string) (*emailOAuthTokenResponse, error) {
 	form.Set("client_id", app.ClientID)
 	form.Set("client_secret", app.ClientSecret)
 	if app.Provider == EmailOAuthProviderMicrosoft {
-		form.Set("scope", emailOAuthMicrosoftScope)
+		form.Set("scope", microsoftScope)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, emailOAuthTokenURL(app), strings.NewReader(form.Encode()))
 	if err != nil {
@@ -273,30 +385,43 @@ func postEmailOAuthToken(ctx context.Context, app EmailOAuthApp, form url.Values
 	return &token, nil
 }
 
-// ExchangeEmailOAuthCode redeems an authorization code and returns the
-// refresh token and the authorized mailbox address.
-func ExchangeEmailOAuthCode(ctx context.Context, app EmailOAuthApp, code, verifier, redirectURI string) (refreshToken string, email string, err error) {
+// EmailOAuthGrant is the result of a completed authorization.
+type EmailOAuthGrant struct {
+	RefreshToken string
+	Email        string
+	// Scopes the access token is valid for; when the provider omits them,
+	// the token is for the requested scopes.
+	Scopes string
+}
+
+// ExchangeEmailOAuthCode redeems an authorization code requested with scope
+// and returns the grant with the authorized mailbox address.
+func ExchangeEmailOAuthCode(ctx context.Context, app EmailOAuthApp, code, verifier, redirectURI, scope string) (EmailOAuthGrant, error) {
 	if err := ValidateEmailOAuthApp(app); err != nil {
-		return "", "", err
+		return EmailOAuthGrant{}, err
 	}
 	token, err := postEmailOAuthToken(ctx, app, url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
 		"redirect_uri":  {redirectURI},
 		"code_verifier": {verifier},
-	})
+	}, scope)
 	if err != nil {
-		return "", "", err
+		return EmailOAuthGrant{}, err
 	}
 	if strings.TrimSpace(token.RefreshToken) == "" {
 		SysError(LogText("email oauth authorization returned no refresh token: provider=%s", app.Provider))
-		return "", "", ErrEmailOAuthRequestFailed
+		return EmailOAuthGrant{}, ErrEmailOAuthRequestFailed
 	}
-	email, err = fetchEmailOAuthMailbox(ctx, app.Provider, token.AccessToken)
+	email, err := fetchEmailOAuthMailbox(ctx, app.Provider, token.AccessToken)
 	if err != nil {
-		return "", "", err
+		return EmailOAuthGrant{}, err
 	}
-	return token.RefreshToken, email, nil
+	scopes := strings.TrimSpace(token.Scope)
+	if scopes == "" {
+		scopes = scope
+	}
+	return EmailOAuthGrant{RefreshToken: token.RefreshToken, Email: email, Scopes: scopes}, nil
 }
 
 func fetchEmailOAuthMailbox(ctx context.Context, provider, accessToken string) (string, error) {
@@ -404,7 +529,7 @@ func emailOAuthAccessTokenFor(ctx context.Context, config emailOAuthConfig) (str
 	token, err := postEmailOAuthToken(ctx, config.EmailOAuthApp, url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {config.RefreshToken},
-	})
+	}, emailOAuthRefreshScope(config.Scopes))
 	if err != nil {
 		emailOAuthState.cached = emailOAuthAccessToken{}
 		return "", err
@@ -453,6 +578,8 @@ func readEmailOAuthConfig() emailOAuthConfig {
 		EmailOAuthApp: emailOAuthAppFromMap(OptionMap),
 		RefreshToken:  strings.TrimSpace(OptionMap[EmailOAuthRefreshTokenOption]),
 		Email:         strings.TrimSpace(OptionMap[EmailOAuthEmailOption]),
+		From:          strings.TrimSpace(OptionMap[EmailOAuthFromOption]),
+		Scopes:        strings.TrimSpace(OptionMap[EmailOAuthScopesOption]),
 	}
 }
 
@@ -468,13 +595,27 @@ func parseEmailRecipients(receiver string) ([]string, error) {
 	return to, nil
 }
 
-func sendOAuthEmail(subject, receiver, content string) error {
+// SendOAuthEmail sends through the authorized mailbox, from the configured
+// sender address when one is set. It never falls back to the authorized
+// mailbox when the sender address cannot be used.
+func SendOAuthEmail(subject, receiver, content string) error {
 	config := readEmailOAuthConfig()
 	if err := ValidateEmailOAuthApp(config.EmailOAuthApp); err != nil {
 		return err
 	}
 	if config.RefreshToken == "" || config.Email == "" {
 		return ErrEmailOAuthNotAuthorized
+	}
+	if err := ValidateEmailOAuthSender(config.From); err != nil {
+		return err
+	}
+	fromAddress := config.Email
+	if config.From != "" {
+		fromAddress = config.From
+	}
+	sharedMailbox := !strings.EqualFold(fromAddress, config.Email)
+	if ValidateEmailOAuthSenderGrant(config.Provider, config.From, config.Email, config.Scopes) != nil {
+		return ErrEmailOAuthSharedReauthorize
 	}
 	to, err := parseEmailRecipients(receiver)
 	if err != nil {
@@ -486,7 +627,7 @@ func sendOAuthEmail(subject, receiver, content string) error {
 	if err != nil {
 		return err
 	}
-	sender := (&mail.Address{Name: SystemName, Address: config.Email}).String()
+	sender := (&mail.Address{Name: SystemName, Address: fromAddress}).String()
 	var endpoint string
 	var payload []byte
 	if config.Provider == EmailOAuthProviderMicrosoft {
@@ -501,9 +642,10 @@ func sendOAuthEmail(subject, receiver, content string) error {
 		for i, address := range to {
 			recipients[i].EmailAddress.Address = address
 		}
+		// A shared mailbox goes in from; Graph sets sender itself.
 		var from graphAddress
 		from.EmailAddress.Name = SystemName
-		from.EmailAddress.Address = config.Email
+		from.EmailAddress.Address = fromAddress
 		var message struct {
 			Message struct {
 				Subject string `json:"subject"`
@@ -524,7 +666,8 @@ func sendOAuthEmail(subject, receiver, content string) error {
 		payload, err = Marshal(message)
 	} else {
 		endpoint = emailOAuthEndpoints.GmailSendURL
-		raw := buildEmailOAuthMIME(sender, config.Email, to, subject, content)
+		// Gmail sends from a verified "Send mail as" alias of the account.
+		raw := buildEmailOAuthMIME(sender, fromAddress, to, subject, content)
 		payload, err = Marshal(map[string]string{"raw": base64.RawURLEncoding.EncodeToString(raw)})
 	}
 	if err != nil {
@@ -557,6 +700,15 @@ func sendOAuthEmail(subject, receiver, content string) error {
 			emailOAuthState.Lock()
 			emailOAuthState.cached = emailOAuthAccessToken{}
 			emailOAuthState.Unlock()
+		}
+		// Graph answers 403 ErrorSendAsDenied when the signed-in user has
+		// neither Send As nor Send on Behalf on the from mailbox. Other
+		// refusals of a shared-mailbox send only name the address.
+		if config.Provider == EmailOAuthProviderMicrosoft && fmt.Sprint(failure.Error.Code) == "ErrorSendAsDenied" {
+			return NewMessage("The authorized account has no Send As or Send on Behalf permission for {{sender}}", map[string]any{"sender": fromAddress})
+		}
+		if sharedMailbox && response.StatusCode == http.StatusForbidden {
+			return NewMessage("Sending from {{sender}} was refused (HTTP {{status}})", map[string]any{"sender": fromAddress, "status": response.StatusCode})
 		}
 		return NewMessage("OAuth email delivery failed (HTTP {{status}})", map[string]any{"status": response.StatusCode})
 	}
