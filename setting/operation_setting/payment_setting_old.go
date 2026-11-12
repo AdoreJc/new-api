@@ -75,12 +75,47 @@ func PayMethodProvider(payMethod map[string]string) string {
 	return PayMethodProviderEpay
 }
 
-// ContainsPayMethod reports whether method is a configured Epay payment method.
+// IsPayMethodEnabled reports whether a PayMethods entry accepts new orders. An
+// entry without "enabled", which is how every entry looked before the field
+// existed, is enabled; only the value "false" switches it off.
+func IsPayMethodEnabled(payMethod map[string]string) bool {
+	return payMethod["enabled"] != "false"
+}
+
+// IsPayMethodTypeDisabled reports whether PayMethods lists methodType and every
+// entry of that type is switched off. Gateways with a built-in entry (stripe,
+// creem, waffo, waffo_pancake) use it to keep that entry hidden as well.
+func IsPayMethodTypeDisabled(methodType string) bool {
+	listed := false
+	for _, payMethod := range PayMethods {
+		if payMethod["type"] != methodType {
+			continue
+		}
+		if IsPayMethodEnabled(payMethod) {
+			return false
+		}
+		listed = true
+	}
+	return listed
+}
+
+// ContainsPayMethod reports whether method is an enabled Epay payment method.
 // Entries routed through Stripe are excluded, so the Epay order endpoints
-// reject them.
+// reject them, and so are switched-off entries.
 func ContainsPayMethod(method string) bool {
 	for _, payMethod := range PayMethods {
-		if payMethod["type"] == method && PayMethodProvider(payMethod) == PayMethodProviderEpay {
+		if payMethod["type"] == method && PayMethodProvider(payMethod) == PayMethodProviderEpay && IsPayMethodEnabled(payMethod) {
+			return true
+		}
+	}
+	return false
+}
+
+// HasEnabledEpayPayMethods reports whether at least one enabled payment method
+// is routed through Epay.
+func HasEnabledEpayPayMethods() bool {
+	for _, payMethod := range PayMethods {
+		if PayMethodProvider(payMethod) == PayMethodProviderEpay && IsPayMethodEnabled(payMethod) {
 			return true
 		}
 	}
@@ -88,7 +123,8 @@ func ContainsPayMethod(method string) bool {
 }
 
 // HasEpayPayMethods reports whether at least one configured payment method is
-// routed through Epay.
+// routed through Epay, switched off or not: callbacks for orders placed before
+// a method was switched off must still be accepted.
 func HasEpayPayMethods() bool {
 	for _, payMethod := range PayMethods {
 		if PayMethodProvider(payMethod) == PayMethodProviderEpay {
@@ -98,14 +134,14 @@ func HasEpayPayMethods() bool {
 	return false
 }
 
-// ContainsStripePayMethod reports whether method is an alipay or wxpay entry
-// configured to pay through Stripe Checkout.
+// ContainsStripePayMethod reports whether method is an enabled alipay or wxpay
+// entry configured to pay through Stripe Checkout.
 func ContainsStripePayMethod(method string) bool {
 	if !slices.Contains(stripeCheckoutPayMethodTypes, method) {
 		return false
 	}
 	for _, payMethod := range PayMethods {
-		if payMethod["type"] == method && PayMethodProvider(payMethod) == PayMethodProviderStripe {
+		if payMethod["type"] == method && PayMethodProvider(payMethod) == PayMethodProviderStripe && IsPayMethodEnabled(payMethod) {
 			return true
 		}
 	}
@@ -114,7 +150,7 @@ func ContainsStripePayMethod(method string) bool {
 
 // ValidatePayMethodsJsonString checks a PayMethods option value before it is
 // saved: provider must be empty, epay or stripe; only alipay and wxpay may use
-// stripe; and a type routed through Stripe may appear only once, because the
+// stripe; enabled must be empty, "true" or "false"; and a type routed through Stripe may appear only once, because the
 // payment endpoints look methods up by type.
 func ValidatePayMethodsJsonString(jsonString string) error {
 	var payMethods []map[string]string
@@ -126,6 +162,11 @@ func ValidatePayMethodsJsonString(jsonString string) error {
 	for _, payMethod := range payMethods {
 		methodType := payMethod["type"]
 		typeCount[methodType]++
+		switch payMethod["enabled"] {
+		case "", "true", "false":
+		default:
+			return common.NewMessage("The enabled field of payment method {{type}} must be true or false", map[string]any{"type": methodType})
+		}
 		switch payMethod["provider"] {
 		case "", PayMethodProviderEpay:
 		case PayMethodProviderStripe:

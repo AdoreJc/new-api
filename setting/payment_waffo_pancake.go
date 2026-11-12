@@ -1,9 +1,9 @@
 package setting
 
-// Waffo Pancake hosted checkout configuration. Gateway is enabled once
-// MerchantID + PrivateKey + ProductID are populated (no separate Enabled
-// flag, matching Stripe / Creem). StoreID + ProductID are operator-bound
-// via SaveWaffoPancakeConfig.
+// Waffo Pancake hosted checkout configuration. Gateway is configured once
+// MerchantID + PrivateKey + ProductID are populated; WaffoPancakeEnabled
+// then switches new orders on or off (webhooks are processed either way).
+// StoreID + ProductID are operator-bound via SaveWaffoPancakeConfig.
 var (
 	WaffoPancakeMerchantID string
 	WaffoPancakePrivateKey string
@@ -12,4 +12,5 @@ var (
 	WaffoPancakeMinTopUp   int     = 1
 	WaffoPancakeStoreID    string
 	WaffoPancakeProductID  string
+	WaffoPancakeEnabled    = true
 )

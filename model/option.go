@@ -92,6 +92,7 @@ func InitOptionMap() {
 	common.OptionMap["CustomCallbackAddress"] = ""
 	common.OptionMap["EpayId"] = ""
 	common.OptionMap["EpayKey"] = ""
+	common.OptionMap["EpayEnabled"] = strconv.FormatBool(operation_setting.EpayEnabled)
 	common.OptionMap["Price"] = strconv.FormatFloat(operation_setting.Price, 'f', -1, 64)
 	common.OptionMap["USDExchangeRate"] = strconv.FormatFloat(operation_setting.USDExchangeRate, 'f', -1, 64)
 	common.OptionMap["MinTopUp"] = strconv.Itoa(operation_setting.MinTopUp)
@@ -101,10 +102,12 @@ func InitOptionMap() {
 	common.OptionMap["StripePriceId"] = setting.StripePriceId
 	common.OptionMap["StripeUnitPrice"] = strconv.FormatFloat(setting.StripeUnitPrice, 'f', -1, 64)
 	common.OptionMap["StripePromotionCodesEnabled"] = strconv.FormatBool(setting.StripePromotionCodesEnabled)
+	common.OptionMap["StripeEnabled"] = strconv.FormatBool(setting.StripeEnabled)
 	common.OptionMap["CreemApiKey"] = setting.CreemApiKey
 	common.OptionMap["CreemProducts"] = setting.CreemProducts
 	common.OptionMap["CreemTestMode"] = strconv.FormatBool(setting.CreemTestMode)
 	common.OptionMap["CreemWebhookSecret"] = setting.CreemWebhookSecret
+	common.OptionMap["CreemEnabled"] = strconv.FormatBool(setting.CreemEnabled)
 	common.OptionMap["WaffoEnabled"] = strconv.FormatBool(setting.WaffoEnabled)
 	common.OptionMap["WaffoApiKey"] = setting.WaffoApiKey
 	common.OptionMap["WaffoPrivateKey"] = setting.WaffoPrivateKey
@@ -128,6 +131,7 @@ func InitOptionMap() {
 	common.OptionMap["WaffoPancakeMinTopUp"] = strconv.Itoa(setting.WaffoPancakeMinTopUp)
 	common.OptionMap["WaffoPancakeStoreID"] = setting.WaffoPancakeStoreID
 	common.OptionMap["WaffoPancakeProductID"] = setting.WaffoPancakeProductID
+	common.OptionMap["WaffoPancakeEnabled"] = strconv.FormatBool(setting.WaffoPancakeEnabled)
 	common.OptionMap["TopupGroupRatio"] = common.TopupGroupRatio2JSONString()
 	common.OptionMap["Chats"] = setting.Chats2JsonString()
 	common.OptionMap["AutoGroups"] = setting.AutoGroups2JsonString()
@@ -536,6 +540,8 @@ func updateOptionMap(key string, value string) (err error) {
 		operation_setting.EpayId = value
 	case "EpayKey":
 		operation_setting.EpayKey = value
+	case "EpayEnabled":
+		operation_setting.EpayEnabled = value == "true"
 	case "Price":
 		operation_setting.Price, _ = strconv.ParseFloat(value, 64)
 	case "USDExchangeRate":
@@ -554,6 +560,8 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.StripeMinTopUp, _ = strconv.Atoi(value)
 	case "StripePromotionCodesEnabled":
 		setting.StripePromotionCodesEnabled = value == "true"
+	case "StripeEnabled":
+		setting.StripeEnabled = value == "true"
 	case "CreemApiKey":
 		setting.CreemApiKey = value
 	case "CreemProducts":
@@ -562,6 +570,8 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.CreemTestMode = value == "true"
 	case "CreemWebhookSecret":
 		setting.CreemWebhookSecret = value
+	case "CreemEnabled":
+		setting.CreemEnabled = value == "true"
 	case "WaffoEnabled":
 		setting.WaffoEnabled = value == "true"
 	case "WaffoApiKey":
@@ -602,6 +612,8 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.WaffoPancakeStoreID = value
 	case "WaffoPancakeProductID":
 		setting.WaffoPancakeProductID = value
+	case "WaffoPancakeEnabled":
+		setting.WaffoPancakeEnabled = value == "true"
 	case "WaffoPancakeUnitPrice":
 		setting.WaffoPancakeUnitPrice, _ = strconv.ParseFloat(value, 64)
 	case "WaffoPancakeMinTopUp":

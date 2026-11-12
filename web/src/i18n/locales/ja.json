@@ -7544,6 +7544,13 @@
     "Payment methods must be a JSON array of objects with string values": "決済方法は、値がすべて文字列のオブジェクトからなる JSON 配列である必要があります",
     "Only alipay and wxpay payment methods can use the Stripe channel, got {{type}}": "Stripe チャネルを使用できるのは alipay と wxpay の決済方法のみです（指定値: {{type}}）",
     "Unsupported payment channel {{provider}} for payment method {{type}}": "決済方法 {{type}} の決済チャネル {{provider}} はサポートされていません",
-    "Payment method {{type}} uses the Stripe channel and must be configured only once": "決済方法 {{type}} は Stripe チャネルを使用するため、1 回だけ設定できます"
+    "Payment method {{type}} uses the Stripe channel and must be configured only once": "決済方法 {{type}} は Stripe チャネルを使用するため、1 回だけ設定できます",
+    "Enable Epay": "Epayを有効化",
+    "Enable Stripe": "Stripeを有効化",
+    "Enable Creem": "Creemを有効化",
+    "When off, this gateway is hidden from users and new orders are rejected. Callbacks for orders already placed are still processed.": "オフにすると、このゲートウェイはユーザーに表示されず、新しい注文は拒否されます。作成済みの注文のコールバックは引き続き処理されます。",
+    "Enable payment method {{name}}": "支払い方法 {{name}} を有効化",
+    "This payment channel is disabled": "この支払いチャネルは無効になっています",
+    "The enabled field of payment method {{type}} must be true or false": "支払い方法 {{type}} の enabled フィールドは true または false である必要があります"
   }
 }

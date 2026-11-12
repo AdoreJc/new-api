@@ -313,6 +313,7 @@ export type BillingSettings = {
   DefaultUseAutoGroup: boolean
   'group_ratio_setting.group_special_usable_group': string
   PayAddress: string
+  EpayEnabled: boolean
   EpayId: string
   EpayKey: string
   Price: number
@@ -326,12 +327,14 @@ export type BillingSettings = {
   'payment_setting.compliance_confirmed_at': number
   'payment_setting.compliance_confirmed_by': number
   'payment_setting.compliance_confirmed_ip': string
+  StripeEnabled: boolean
   StripeApiSecret: string
   StripeWebhookSecret: string
   StripePriceId: string
   StripeUnitPrice: number
   StripeMinTopUp: number
   StripePromotionCodesEnabled: boolean
+  CreemEnabled: boolean
   CreemApiKey: string
   CreemWebhookSecret: string
   CreemTestMode: boolean
@@ -351,6 +354,7 @@ export type BillingSettings = {
   WaffoNotifyUrl: string
   WaffoReturnUrl: string
   WaffoPayMethods: string
+  WaffoPancakeEnabled: boolean
   WaffoPancakeMerchantID: string
   WaffoPancakePrivateKey: string
   WaffoPancakeReturnURL: string

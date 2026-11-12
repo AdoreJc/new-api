@@ -54,6 +54,10 @@ func SubscriptionRequestEpay(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
 	}
+	if !operation_setting.EpayEnabled {
+		common.ApiErrorT(c, "This payment channel is disabled")
+		return
+	}
 
 	var req SubscriptionEpayPayRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.PlanId <= 0 {

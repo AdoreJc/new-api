@@ -135,6 +135,7 @@ const BILLING_SECTIONS = [
       <PaymentSettingsSection
         defaultValues={{
           PayAddress: settings.PayAddress,
+          EpayEnabled: settings.EpayEnabled ?? true,
           EpayId: settings.EpayId,
           EpayKey: settings.EpayKey,
           Price: settings.Price,
@@ -143,16 +144,19 @@ const BILLING_SECTIONS = [
           PayMethods: settings.PayMethods,
           AmountOptions: settings['payment_setting.amount_options'],
           AmountDiscount: settings['payment_setting.amount_discount'],
+          StripeEnabled: settings.StripeEnabled ?? true,
           StripeApiSecret: settings.StripeApiSecret,
           StripeWebhookSecret: settings.StripeWebhookSecret,
           StripePriceId: settings.StripePriceId,
           StripeUnitPrice: settings.StripeUnitPrice,
           StripeMinTopUp: settings.StripeMinTopUp,
           StripePromotionCodesEnabled: settings.StripePromotionCodesEnabled,
+          CreemEnabled: settings.CreemEnabled ?? true,
           CreemApiKey: settings.CreemApiKey,
           CreemWebhookSecret: settings.CreemWebhookSecret,
           CreemTestMode: settings.CreemTestMode,
           CreemProducts: settings.CreemProducts,
+          WaffoPancakeEnabled: settings.WaffoPancakeEnabled ?? true,
         }}
         waffoDefaultValues={{
           WaffoEnabled: settings.WaffoEnabled ?? false,

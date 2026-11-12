@@ -53,6 +53,8 @@ interface Props {
   onOpenChange: (open: boolean) => void
   plan: PlanRecord | null
   enableStripe?: boolean
+  /** False when the administrator switched the Stripe card entry off; Stripe-routed methods stay available. */
+  stripeCardEnabled?: boolean
   enableCreem?: boolean
   enableWaffoPancake?: boolean
   enableOnlineTopUp?: boolean
@@ -84,7 +86,10 @@ export function SubscriptionPurchaseDialog(props: Props) {
   const plan = props.plan?.plan
   if (!plan) return null
 
-  const hasStripe = props.enableStripe && !!plan.stripe_price_id
+  const hasStripe =
+    props.enableStripe &&
+    props.stripeCardEnabled !== false &&
+    !!plan.stripe_price_id
   const hasCreem = props.enableCreem && !!plan.creem_product_id
   const hasWaffoPancake =
     props.enableWaffoPancake && !!plan.waffo_pancake_product_id

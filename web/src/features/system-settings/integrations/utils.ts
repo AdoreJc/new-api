@@ -56,7 +56,7 @@ function extractErrorPosition(
     const lines = jsonString.substring(0, position).split('\n')
     return {
       line: lines.length,
-      column: lines[lines.length - 1].length + 1,
+      column: (lines.at(-1) ?? '').length + 1,
     }
   }
 
@@ -125,4 +125,52 @@ export function getJsonError(
   } catch (error) {
     return formatJsonError(error, trimmed)
   }
+}
+
+type PaymentMethodEntry = { name: string; type: string; enabled?: string }
+
+/**
+ * Whether a PayMethods entry accepts new orders. Entries without "enabled"
+ * predate the switch and are enabled; only "false" switches one off.
+ */
+export function isPaymentMethodEnabled(method: { enabled?: string }) {
+  return method.enabled !== 'false'
+}
+
+/**
+ * Returns the PayMethods JSON with the switch of the entries matching
+ * method's name and type set. Switching on removes the field so the stored
+ * entry looks like one saved before the switch existed.
+ */
+export function setPaymentMethodEnabled(
+  value: string,
+  method: PaymentMethodEntry,
+  enabled: boolean
+): string {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value || '[]')
+  } catch {
+    return value
+  }
+  if (!Array.isArray(parsed)) return value
+
+  const updated = parsed.map((item: unknown) => {
+    if (
+      typeof item !== 'object' ||
+      item === null ||
+      (item as PaymentMethodEntry).name !== method.name ||
+      (item as PaymentMethodEntry).type !== method.type
+    ) {
+      return item
+    }
+    const next: Record<string, unknown> = { ...item }
+    if (enabled) {
+      delete next.enabled
+    } else {
+      next.enabled = 'false'
+    }
+    return next
+  })
+  return JSON.stringify(updated, null, 2)
 }

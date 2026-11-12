@@ -61,7 +61,10 @@ afterEach(() => {
 describe('SubscriptionPurchaseDialog Stripe-routed methods', () => {
   test('with Stripe enabled, clicking a Stripe-routed Alipay method requests Stripe Checkout with that method', async () => {
     vi.mocked(api.post).mockResolvedValue({
-      data: { message: 'success', data: { pay_link: 'https://checkout.example/s' } },
+      data: {
+        message: 'success',
+        data: { pay_link: 'https://checkout.example/s' },
+      },
     })
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     renderWithQueryClient(
@@ -84,6 +87,33 @@ describe('SubscriptionPurchaseDialog Stripe-routed methods', () => {
       '/api/subscription/stripe/pay',
       { plan_id: 7, payment_method: 'alipay' },
     ])
+  })
+
+  test('with the Stripe card entry switched off, only the recurring Stripe button is hidden', () => {
+    const recurringPlan: PlanRecord = {
+      plan: { ...planRecord.plan, stripe_price_id: 'price_123' },
+    }
+    const props = {
+      open: true,
+      onOpenChange: () => {},
+      plan: recurringPlan,
+      enableStripe: true,
+      stripeMethods,
+    }
+    const { unmount } = renderWithQueryClient(
+      <SubscriptionPurchaseDialog {...props} />
+    )
+    expect(screen.getByRole('button', { name: 'Stripe' })).toBeInTheDocument()
+    unmount()
+
+    renderWithQueryClient(
+      <SubscriptionPurchaseDialog {...props} stripeCardEnabled={false} />
+    )
+
+    expect(screen.queryByRole('button', { name: 'Stripe' })).toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Alipay via Stripe' })
+    ).toBeInTheDocument()
   })
 
   test('with Stripe not enabled, Stripe-routed methods are hidden', () => {

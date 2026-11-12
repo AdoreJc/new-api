@@ -34,6 +34,10 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
+	if !setting.StripeEnabled {
+		common.ApiErrorT(c, "This payment channel is disabled")
+		return
+	}
 	paymentMethod := req.PaymentMethod
 	if paymentMethod == "" {
 		paymentMethod = model.PaymentMethodStripe

@@ -29,11 +29,15 @@ func GetTopUpInfo(c *gin.Context) {
 	// 获取支付方式
 	// Each entry carries its provider. Alipay/WeChat Pay entries routed through
 	// Stripe are listed only while Stripe top-up is configured, independent of
-	// whether Epay is configured.
+	// whether Epay is configured. Switched-off entries, and entries whose
+	// gateway is switched off, are not listed.
 	stripeTopUpEnabled := isStripeTopUpEnabled()
 	payMethods := make([]map[string]string, 0, len(operation_setting.PayMethods)+3)
 	if complianceConfirmed {
 		for _, method := range operation_setting.PayMethods {
+			if !operation_setting.IsPayMethodEnabled(method) || !isPayMethodGatewaySwitchedOn(method) {
+				continue
+			}
 			provider := operation_setting.PayMethodProvider(method)
 			if provider == operation_setting.PayMethodProviderStripe && !stripeTopUpEnabled {
 				continue
@@ -48,7 +52,7 @@ func GetTopUpInfo(c *gin.Context) {
 	}
 
 	// 如果启用了 Stripe 支付，添加到支付方法列表
-	if stripeTopUpEnabled {
+	if stripeTopUpEnabled && !operation_setting.IsPayMethodTypeDisabled(model.PaymentMethodStripe) {
 		// 检查是否已经包含 Stripe
 		hasStripe := false
 		for _, method := range payMethods {
@@ -71,7 +75,7 @@ func GetTopUpInfo(c *gin.Context) {
 	}
 
 	// Waffo Pancake is displayed above the standard Waffo gateway.
-	enableWaffoPancake := isWaffoPancakeTopUpEnabled()
+	enableWaffoPancake := isWaffoPancakeTopUpEnabled() && !operation_setting.IsPayMethodTypeDisabled(model.PaymentMethodWaffoPancake)
 	if enableWaffoPancake {
 		hasWaffoPancake := false
 		for _, method := range payMethods {
@@ -92,7 +96,7 @@ func GetTopUpInfo(c *gin.Context) {
 	}
 
 	// 如果启用了 Waffo 支付，添加到支付方法列表
-	enableWaffo := isWaffoTopUpEnabled()
+	enableWaffo := isWaffoTopUpEnabled() && !operation_setting.IsPayMethodTypeDisabled(model.PaymentMethodWaffo)
 	if enableWaffo {
 		hasWaffo := false
 		for _, method := range payMethods {
@@ -116,7 +120,7 @@ func GetTopUpInfo(c *gin.Context) {
 	data := gin.H{
 		"enable_online_topup":              isEpayTopUpEnabled(),
 		"enable_stripe_topup":              isStripeTopUpEnabled(),
-		"enable_creem_topup":               isCreemTopUpEnabled(),
+		"enable_creem_topup":               isCreemTopUpEnabled() && !operation_setting.IsPayMethodTypeDisabled(model.PaymentMethodCreem),
 		"enable_waffo_topup":               enableWaffo,
 		"enable_waffo_pancake_topup":       enableWaffoPancake,
 		"enable_redemption":                complianceConfirmed,
@@ -148,6 +152,27 @@ type EpayRequest struct {
 
 type AmountRequest struct {
 	Amount int64 `json:"amount"`
+}
+
+// isPayMethodGatewaySwitchedOn reports whether the administrator switch of the
+// gateway a PayMethods entry is paid through is on. Entries named after a
+// built-in gateway belong to that gateway; any other entry is paid through
+// Stripe or Epay according to its provider.
+func isPayMethodGatewaySwitchedOn(payMethod map[string]string) bool {
+	switch payMethod["type"] {
+	case model.PaymentMethodStripe:
+		return setting.StripeEnabled
+	case model.PaymentMethodCreem:
+		return setting.CreemEnabled
+	case model.PaymentMethodWaffo:
+		return setting.WaffoEnabled
+	case model.PaymentMethodWaffoPancake:
+		return setting.WaffoPancakeEnabled
+	}
+	if operation_setting.PayMethodProvider(payMethod) == operation_setting.PayMethodProviderStripe {
+		return setting.StripeEnabled
+	}
+	return operation_setting.EpayEnabled
 }
 
 func GetEpayClient() *epay.Client {
@@ -305,6 +330,10 @@ func rejectInvalidTopUpQuota(c *gin.Context, userId int, amount int64) bool {
 }
 
 func RequestEpay(c *gin.Context) {
+	if !operation_setting.EpayEnabled {
+		paymentError(c, common.NewMessage("This payment channel is disabled"))
+		return
+	}
 	var req EpayRequest
 	err := c.ShouldBindJSON(&req)
 	if err != nil {
