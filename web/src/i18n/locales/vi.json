@@ -7749,6 +7749,24 @@
     "Assistant": "Trợ lý",
     "Tool": "Công cụ",
     "Agent context": "Ngữ cảnh agent",
-    "Skipped (agent context only)": "Bỏ qua (chỉ ngữ cảnh agent)"
+    "Skipped (agent context only)": "Bỏ qua (chỉ ngữ cảnh agent)",
+    "Case sensitive": "Phân biệt hoa thường",
+    "Recorded in the audit log": "Được ghi vào nhật ký kiểm toán",
+    "Search fields: all but full prompt": "Trường tìm kiếm: tất cả trừ prompt đầy đủ",
+    "Searching full prompts is recorded in the audit log, including the search pattern and time range.": "Việc tìm kiếm trong prompt đầy đủ được ghi vào nhật ký kiểm toán, bao gồm mẫu tìm kiếm và khoảng thời gian.",
+    "The search pattern is longer than {{max}} characters": "Mẫu tìm kiếm dài hơn {{max}} ký tự",
+    "This does not look like a valid regular expression.": "Đây có vẻ không phải là biểu thức chính quy hợp lệ.",
+    "Patterns use RE2 syntax: no lookaround or backreferences.": "Mẫu dùng cú pháp RE2: không hỗ trợ lookaround hay tham chiếu ngược.",
+    "Scanned {{rows}} events, up to #{{id}}.": "Đã quét {{rows}} sự kiện, đến #{{id}}.",
+    "Scanned {{rows}} events. The search reached the oldest event.": "Đã quét {{rows}} sự kiện. Tìm kiếm đã đến sự kiện cũ nhất.",
+    "Continue search": "Tiếp tục tìm kiếm",
+    "Back to newest": "Về mới nhất",
+    "Delete selected": "Xóa mục đã chọn",
+    "Delete {{count}} selected events? This cannot be undone.": "Xóa {{count}} sự kiện đã chọn? Không thể hoàn tác.",
+    "Unknown keyword search mode": "Chế độ tìm kiếm từ khóa không xác định",
+    "Unknown keyword search field": "Trường tìm kiếm từ khóa không xác định",
+    "Regex and full prompt searches cannot delete by filter because their matches are found by scanning. Select the results and delete them instead": "Tìm kiếm regex và prompt đầy đủ không thể xóa theo bộ lọc vì kết quả được tìm bằng cách quét. Hãy chọn kết quả rồi xóa",
+    "Regex and full prompt searches are paged with a cursor": "Tìm kiếm regex và prompt đầy đủ được phân trang bằng con trỏ",
+    "Invalid regular expression (RE2 syntax): {{error}}": "Biểu thức chính quy không hợp lệ (cú pháp RE2): {{error}}"
   }
 }

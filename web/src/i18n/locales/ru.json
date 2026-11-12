@@ -7749,6 +7749,24 @@
     "Assistant": "Ассистент",
     "Tool": "Инструмент",
     "Agent context": "Контекст агента",
-    "Skipped (agent context only)": "Пропущено (только контекст агента)"
+    "Skipped (agent context only)": "Пропущено (только контекст агента)",
+    "Case sensitive": "С учётом регистра",
+    "Recorded in the audit log": "Записывается в журнал аудита",
+    "Search fields: all but full prompt": "Поля поиска: все, кроме полного промпта",
+    "Searching full prompts is recorded in the audit log, including the search pattern and time range.": "Поиск по полным промптам записывается в журнал аудита вместе с шаблоном поиска и временным диапазоном.",
+    "The search pattern is longer than {{max}} characters": "Шаблон поиска длиннее {{max}} символов",
+    "This does not look like a valid regular expression.": "Похоже, это недопустимое регулярное выражение.",
+    "Patterns use RE2 syntax: no lookaround or backreferences.": "Шаблоны используют синтаксис RE2: без опережающих/ретроспективных проверок и обратных ссылок.",
+    "Scanned {{rows}} events, up to #{{id}}.": "Просмотрено событий: {{rows}}, до #{{id}}.",
+    "Scanned {{rows}} events. The search reached the oldest event.": "Просмотрено событий: {{rows}}. Поиск дошёл до самого старого события.",
+    "Continue search": "Продолжить поиск",
+    "Back to newest": "К самым новым",
+    "Delete selected": "Удалить выбранные",
+    "Delete {{count}} selected events? This cannot be undone.": "Удалить выбранные события ({{count}})? Это действие нельзя отменить.",
+    "Unknown keyword search mode": "Неизвестный режим поиска по ключевому слову",
+    "Unknown keyword search field": "Неизвестное поле поиска по ключевому слову",
+    "Regex and full prompt searches cannot delete by filter because their matches are found by scanning. Select the results and delete them instead": "Поиск по регулярному выражению и по полным промптам не поддерживает удаление по фильтру, так как совпадения находятся сканированием. Выберите результаты и удалите их",
+    "Regex and full prompt searches are paged with a cursor": "Поиск по регулярному выражению и по полным промптам использует постраничный вывод по курсору",
+    "Invalid regular expression (RE2 syntax): {{error}}": "Недопустимое регулярное выражение (синтаксис RE2): {{error}}"
   }
 }

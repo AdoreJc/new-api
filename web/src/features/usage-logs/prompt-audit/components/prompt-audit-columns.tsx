@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { TruncatedCell } from '@/components/data-table'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import dayjs from '@/lib/dayjs'
 
 import type { PromptAuditEvent } from '../api'
@@ -38,6 +39,31 @@ export function usePromptAuditColumns(
   const { t } = useTranslation()
   return useMemo(
     () => [
+      {
+        id: 'select',
+        header: ({ table }) => (
+          <Checkbox
+            checked={table.getIsAllPageRowsSelected()}
+            indeterminate={table.getIsSomePageRowsSelected()}
+            onCheckedChange={(value) =>
+              table.toggleAllPageRowsSelected(!!value)
+            }
+            aria-label={t('Select all')}
+            className='translate-y-[2px]'
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            aria-label={t('Select row')}
+            className='translate-y-[2px]'
+          />
+        ),
+        enableSorting: false,
+        enableHiding: false,
+        size: 40,
+      },
       {
         accessorKey: 'created_at',
         header: t('Time'),

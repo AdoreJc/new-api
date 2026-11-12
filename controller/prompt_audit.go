@@ -1,8 +1,10 @@
 package controller
 
 import (
+	"cmp"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -164,13 +166,24 @@ func GetPromptAuditRuntime(c *gin.Context) {
 	common.ApiSuccess(c, promptaudit.Runtime())
 }
 
+// GetPromptAuditEvents lists events. A plain keyword on the default fields
+// pages with offset and total; a regex or full prompt search scans rows in Go
+// and pages with a cursor instead (see searchPromptAuditEvents).
 func GetPromptAuditEvents(c *gin.Context) {
 	var filter model.PromptAuditEventFilter
 	if err := c.ShouldBindQuery(&filter); err != nil {
 		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
 		return
 	}
+	if err := filter.Validate(); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		return
+	}
 	pageInfo := common.GetPageQuery(c)
+	if scans, _ := filter.Scans(); scans {
+		searchPromptAuditEvents(c, filter, pageInfo.GetPageSize())
+		return
+	}
 	events, total, err := model.ListPromptAuditEvents(filter, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
@@ -179,6 +192,40 @@ func GetPromptAuditEvents(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(events)
 	common.ApiSuccess(c, pageInfo)
+}
+
+// searchPromptAuditEvents runs a scanned search below the cursor query
+// parameter. The scan limits come from PROMPT_AUDIT_SEARCH_MAX_SCAN_ROWS and
+// PROMPT_AUDIT_SEARCH_TIME_BUDGET_SECONDS. A search of full prompts is
+// recorded in the audit log with its pattern but never its matches.
+func searchPromptAuditEvents(c *gin.Context, filter model.PromptAuditEventFilter, pageSize int) {
+	cursor, err := strconv.ParseInt(c.DefaultQuery("cursor", "0"), 10, 64)
+	if err != nil || cursor < 0 {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
+	if _, err := filter.KeywordPattern(); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		return
+	}
+	fields, _ := filter.SearchFields()
+	if slices.Contains(fields, model.PromptAuditKeywordFieldFullPrompt) {
+		recordManageAudit(c, "prompt_audit.events_search", map[string]any{
+			"mode": cmp.Or(filter.KeywordMode, model.PromptAuditKeywordModePlain), "fields": strings.Join(fields, ","),
+			"keyword": strings.TrimSpace(filter.Keyword), "case_sensitive": filter.CaseSensitive,
+			"start_time": filter.StartTime, "end_time": filter.EndTime, "cursor": cursor,
+		})
+	}
+	limits := model.PromptAuditScanLimits{
+		MaxRows:  common.GetEnvOrDefault("PROMPT_AUDIT_SEARCH_MAX_SCAN_ROWS", model.PromptAuditScanDefaultMaxRows),
+		Deadline: time.Now().Add(time.Duration(common.GetEnvOrDefault("PROMPT_AUDIT_SEARCH_TIME_BUDGET_SECONDS", int(model.PromptAuditScanDefaultBudget/time.Second))) * time.Second),
+	}
+	page, err := model.ScanPromptAuditEvents(c.Request.Context(), filter, cursor, pageSize, limits)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, page)
 }
 
 func promptAuditEventID(c *gin.Context) (int64, bool) {
@@ -246,6 +293,10 @@ func PreviewPromptAuditEventDeletion(c *gin.Context) {
 		return
 	}
 	total, maxId, err := model.PreviewPromptAuditEventDeletion(filter)
+	if promptAuditFilterRejected(err) {
+		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		return
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -265,10 +316,22 @@ func DeletePromptAuditEventsByFilter(c *gin.Context) {
 		return
 	}
 	deleted, err := model.DeletePromptAuditEventsByFilter(request.Filter, request.MaxId)
+	if promptAuditFilterRejected(err) {
+		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		return
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	recordManageAudit(c, "prompt_audit.events_delete", map[string]any{"count": deleted, "scope": "filter"})
 	common.ApiSuccess(c, gin.H{"deleted": deleted})
+}
+
+// promptAuditFilterRejected reports a filter refused before any database
+// work: an unknown keyword mode or field, or a scanned search sent to
+// filtered deletion.
+func promptAuditFilterRejected(err error) bool {
+	return errors.Is(err, model.ErrPromptAuditInvalidKeywordMode) || errors.Is(err, model.ErrPromptAuditInvalidKeywordField) ||
+		errors.Is(err, model.ErrPromptAuditScanFilterDelete)
 }

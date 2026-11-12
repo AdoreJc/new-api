@@ -1,8 +1,12 @@
 package model
 
 import (
+	"context"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
@@ -74,6 +78,33 @@ func (e *PromptAuditEvent) fitColumns() {
 	}
 }
 
+// Keyword search modes and fields. Plain mode matches a case-insensitive
+// substring; regex mode matches an RE2 expression in Go, never in the
+// database, so SQLite, MySQL and PostgreSQL return the same rows.
+const (
+	PromptAuditKeywordModePlain       = "plain"
+	PromptAuditKeywordModeRegex       = "regex"
+	PromptAuditKeywordFieldFullPrompt = "full_prompt"
+	// PromptAuditKeywordMaxLength bounds a scanned search pattern in characters.
+	PromptAuditKeywordMaxLength = 512
+)
+
+// promptAuditKeywordFields are the searchable columns. Without a selection a
+// search uses every one except full_prompt, which must be chosen explicitly.
+var promptAuditKeywordFields = []string{"request_id", "username", "token_name", "redacted_preview", "model_name", PromptAuditKeywordFieldFullPrompt}
+
+var (
+	ErrPromptAuditInvalidKeywordMode  = common.NewMessage("Unknown keyword search mode")
+	ErrPromptAuditInvalidKeywordField = common.NewMessage("Unknown keyword search field")
+	ErrPromptAuditKeywordTooLong      = common.NewMessage("The search pattern is longer than {{max}} characters", map[string]any{"max": PromptAuditKeywordMaxLength})
+	// ErrPromptAuditScanFilterDelete rejects filtered deletion of a search
+	// whose matches are only known after scanning rows in Go.
+	ErrPromptAuditScanFilterDelete = common.NewMessage("Regex and full prompt searches cannot delete by filter because their matches are found by scanning. Select the results and delete them instead")
+	// ErrPromptAuditScanFilterList keeps a scanned keyword out of the
+	// paginated SQL listing, which would ignore it.
+	ErrPromptAuditScanFilterList = common.NewMessage("Regex and full prompt searches are paged with a cursor")
+)
+
 // PromptAuditEventFilter narrows event listing and filtered deletion.
 type PromptAuditEventFilter struct {
 	Decision   string `form:"decision" json:"decision"`
@@ -85,12 +116,92 @@ type PromptAuditEventFilter struct {
 	RequestId  string `form:"request_id" json:"request_id"`
 	PromptHash string `form:"prompt_hash" json:"prompt_hash"`
 	Keyword    string `form:"keyword" json:"keyword"`
-	StartTime  int64  `form:"start_time" json:"start_time"`
-	EndTime    int64  `form:"end_time" json:"end_time"`
+	// KeywordMode is plain (default) or regex.
+	KeywordMode string `form:"keyword_mode" json:"keyword_mode"`
+	// KeywordFields is a comma-separated subset of promptAuditKeywordFields.
+	KeywordFields string `form:"keyword_fields" json:"keyword_fields"`
+	// CaseSensitive applies to regex mode; plain mode always ignores case.
+	CaseSensitive bool  `form:"case_sensitive" json:"case_sensitive"`
+	StartTime     int64 `form:"start_time" json:"start_time"`
+	EndTime       int64 `form:"end_time" json:"end_time"`
+}
+
+// SearchFields returns the validated keyword fields, defaulting to every
+// field except full_prompt.
+func (f PromptAuditEventFilter) SearchFields() ([]string, error) {
+	fields := make([]string, 0, len(promptAuditKeywordFields))
+	for field := range strings.SplitSeq(f.KeywordFields, ",") {
+		field = strings.TrimSpace(field)
+		if field == "" || slices.Contains(fields, field) {
+			continue
+		}
+		if !slices.Contains(promptAuditKeywordFields, field) {
+			return nil, ErrPromptAuditInvalidKeywordField
+		}
+		fields = append(fields, field)
+	}
+	if len(fields) == 0 {
+		fields = append(fields, promptAuditKeywordFields[:len(promptAuditKeywordFields)-1]...)
+	}
+	return fields, nil
+}
+
+// Scans reports whether the keyword is matched by reading rows in Go: in
+// regex mode, or when full_prompt is searched, whose LIKE would read the
+// whole table without any bound.
+func (f PromptAuditEventFilter) Scans() (bool, error) {
+	if strings.TrimSpace(f.Keyword) == "" {
+		return false, nil
+	}
+	switch f.KeywordMode {
+	case "", PromptAuditKeywordModePlain:
+	case PromptAuditKeywordModeRegex:
+		return true, nil
+	default:
+		return false, ErrPromptAuditInvalidKeywordMode
+	}
+	fields, err := f.SearchFields()
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(fields, PromptAuditKeywordFieldFullPrompt), nil
+}
+
+// Validate checks the keyword mode and fields.
+func (f PromptAuditEventFilter) Validate() error {
+	if _, err := f.Scans(); err != nil {
+		return err
+	}
+	_, err := f.SearchFields()
+	return err
+}
+
+// KeywordPattern compiles the keyword for scanning. Plain mode becomes a
+// literal, case-insensitive pattern; a regex that does not compile returns a
+// message naming the RE2 error.
+func (f PromptAuditEventFilter) KeywordPattern() (*regexp.Regexp, error) {
+	keyword := strings.TrimSpace(f.Keyword)
+	if utf8.RuneCountInString(keyword) > PromptAuditKeywordMaxLength {
+		return nil, ErrPromptAuditKeywordTooLong
+	}
+	if f.KeywordMode != PromptAuditKeywordModeRegex {
+		return regexp.Compile("(?i)" + regexp.QuoteMeta(keyword))
+	}
+	expression := keyword
+	if !f.CaseSensitive {
+		expression = "(?i)" + expression
+	}
+	pattern, err := regexp.Compile(expression)
+	if err != nil {
+		return nil, common.NewMessage("Invalid regular expression (RE2 syntax): {{error}}", map[string]any{"error": err.Error()})
+	}
+	return pattern, nil
 }
 
 const promptAuditDeleteBatchSize = 500
 
+// apply adds the SQL conditions. A keyword that is matched by scanning is
+// left to scanPromptAuditEvents; callers must not delete with such a filter.
 func (f PromptAuditEventFilter) apply(tx *gorm.DB) *gorm.DB {
 	if f.Decision != "" {
 		tx = tx.Where("decision = ?", f.Decision)
@@ -117,10 +228,22 @@ func (f PromptAuditEventFilter) apply(tx *gorm.DB) *gorm.DB {
 		tx = tx.Where("prompt_hash = ?", strings.ToLower(f.PromptHash))
 	}
 	if keyword := strings.TrimSpace(f.Keyword); keyword != "" {
-		// LOWER on both sides keeps PostgreSQL case-insensitive like MySQL/SQLite.
-		pattern := "%" + strings.ToLower(keyword) + "%"
-		tx = tx.Where("LOWER(request_id) LIKE ? OR LOWER(username) LIKE ? OR LOWER(token_name) LIKE ? OR LOWER(redacted_preview) LIKE ? OR LOWER(model_name) LIKE ?",
-			pattern, pattern, pattern, pattern, pattern)
+		if scans, _ := f.Scans(); !scans {
+			fields, err := f.SearchFields()
+			if err != nil {
+				// Fail closed: an invalid field must never widen a deletion.
+				return tx.Where("1 = 0")
+			}
+			// LOWER on both sides keeps PostgreSQL case-insensitive like MySQL/SQLite.
+			pattern := "%" + strings.ToLower(keyword) + "%"
+			conditions := make([]string, 0, len(fields))
+			args := make([]any, 0, len(fields))
+			for _, field := range fields {
+				conditions = append(conditions, "LOWER("+field+") LIKE ?")
+				args = append(args, pattern)
+			}
+			tx = tx.Where(strings.Join(conditions, " OR "), args...)
+		}
 	}
 	if f.StartTime > 0 {
 		tx = tx.Where("created_at >= ?", f.StartTime)
@@ -158,7 +281,15 @@ func CreatePromptAuditEvents(events []*PromptAuditEvent) (int, error) {
 }
 
 // ListPromptAuditEvents returns one page of events without the full prompt.
+// It serves SQL-only filters; a keyword matched by scanning goes through
+// ScanPromptAuditEvents.
 func ListPromptAuditEvents(filter PromptAuditEventFilter, offset, limit int) ([]*PromptAuditEvent, int64, error) {
+	if err := filter.Validate(); err != nil {
+		return nil, 0, err
+	}
+	if scans, _ := filter.Scans(); scans {
+		return nil, 0, ErrPromptAuditScanFilterList
+	}
 	var total int64
 	if err := filter.apply(DB.Model(&PromptAuditEvent{})).Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -167,6 +298,132 @@ func ListPromptAuditEvents(filter PromptAuditEventFilter, offset, limit int) ([]
 	err := filter.apply(DB.Model(&PromptAuditEvent{})).Omit("full_prompt").
 		Order("id desc").Offset(offset).Limit(limit).Find(&events).Error
 	return events, total, err
+}
+
+// Defaults for one scanned search request.
+const (
+	PromptAuditScanDefaultMaxRows = 20000
+	PromptAuditScanDefaultBudget  = 5 * time.Second
+)
+
+// PromptAuditScanLimits bound one scanned search request.
+type PromptAuditScanLimits struct {
+	// MaxRows is the most candidate rows read and matched.
+	MaxRows int
+	// Deadline ends reading and matching; zero means PromptAuditScanDefaultBudget from now.
+	Deadline time.Time
+}
+
+// Reasons a scanned search stopped before reading every candidate row.
+const (
+	PromptAuditScanStopPageFull   = "page_full"
+	PromptAuditScanStopScanLimit  = "scan_limit"
+	PromptAuditScanStopTimeBudget = "time_budget"
+)
+
+// PromptAuditScanPage is one page of a scanned search. Items never carry the
+// full prompt. When Truncated, rows below NextCursor (the id of the last row
+// read) were not read yet; passing it back as the cursor continues there, so
+// continued pages neither repeat nor skip a row.
+type PromptAuditScanPage struct {
+	Items      []*PromptAuditEvent `json:"items"`
+	Truncated  bool                `json:"truncated"`
+	NextCursor int64               `json:"next_cursor"`
+	Scanned    int                 `json:"scanned"`
+	StopReason string              `json:"stop_reason,omitempty"`
+}
+
+// searchText returns the value of a keyword search field.
+func (e *PromptAuditEvent) searchText(field string) string {
+	switch field {
+	case "request_id":
+		return e.RequestId
+	case "username":
+		return e.Username
+	case "token_name":
+		return e.TokenName
+	case "redacted_preview":
+		return e.RedactedPreview
+	case "model_name":
+		return e.ModelName
+	case PromptAuditKeywordFieldFullPrompt:
+		return string(e.FullPrompt)
+	}
+	return ""
+}
+
+// ScanPromptAuditEvents finds events whose searched fields match the keyword
+// pattern. The other filters run in SQL; the remaining rows are read newest
+// first in id batches (keyset, below cursor when it is set), with only id and
+// the searched columns, and matched in Go. It stops once limit events match,
+// MaxRows rows were read or the deadline passed, and always reads at least one
+// row so a continued search makes progress.
+func ScanPromptAuditEvents(ctx context.Context, filter PromptAuditEventFilter, cursor int64, limit int, limits PromptAuditScanLimits) (*PromptAuditScanPage, error) {
+	if err := filter.Validate(); err != nil {
+		return nil, err
+	}
+	pattern, err := filter.KeywordPattern()
+	if err != nil {
+		return nil, err
+	}
+	fields, _ := filter.SearchFields()
+	if limits.MaxRows <= 0 {
+		limits.MaxRows = PromptAuditScanDefaultMaxRows
+	}
+	if limits.Deadline.IsZero() {
+		limits.Deadline = time.Now().Add(PromptAuditScanDefaultBudget)
+	}
+	limit = max(limit, 1)
+	// Full prompts can be 64K characters each, so read fewer per batch.
+	batchSize := 1000
+	if slices.Contains(fields, PromptAuditKeywordFieldFullPrompt) {
+		batchSize = 100
+	}
+	columns := append([]string{"id"}, fields...)
+	page := &PromptAuditScanPage{Items: []*PromptAuditEvent{}}
+	hits := make([]int64, 0, limit)
+scan:
+	for {
+		size := min(batchSize, limits.MaxRows-page.Scanned)
+		query := filter.apply(DB.WithContext(ctx).Model(&PromptAuditEvent{})).Select(columns)
+		if cursor > 0 {
+			query = query.Where("id < ?", cursor)
+		}
+		var rows []*PromptAuditEvent
+		if err := query.Order("id desc").Limit(size).Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		for i, row := range rows {
+			cursor = row.Id
+			page.Scanned++
+			if slices.ContainsFunc(fields, func(field string) bool { return pattern.MatchString(row.searchText(field)) }) {
+				hits = append(hits, row.Id)
+			}
+			var reason string
+			switch {
+			case len(hits) >= limit:
+				reason = PromptAuditScanStopPageFull
+			case page.Scanned >= limits.MaxRows:
+				reason = PromptAuditScanStopScanLimit
+			case time.Now().After(limits.Deadline):
+				reason = PromptAuditScanStopTimeBudget
+			}
+			if reason == "" {
+				continue
+			}
+			if i < len(rows)-1 || len(rows) == size {
+				page.Truncated, page.NextCursor, page.StopReason = true, cursor, reason
+			}
+			break scan
+		}
+		if len(rows) < size {
+			break
+		}
+	}
+	if len(hits) > 0 {
+		err = DB.WithContext(ctx).Omit("full_prompt").Where("id IN ?", hits).Order("id desc").Find(&page.Items).Error
+	}
+	return page, err
 }
 
 func GetPromptAuditEvent(id int64) (*PromptAuditEvent, error) {
@@ -189,6 +446,9 @@ func DeletePromptAuditEventsByIds(ids []int64) (int64, error) {
 // highest matching id, which bounds a later DeletePromptAuditEventsByFilter so
 // events recorded after the preview are not deleted.
 func PreviewPromptAuditEventDeletion(filter PromptAuditEventFilter) (int64, int64, error) {
+	if err := filter.deletable(); err != nil {
+		return 0, 0, err
+	}
 	var summary struct {
 		Total int64
 		MaxId int64
@@ -201,9 +461,24 @@ func PreviewPromptAuditEventDeletion(filter PromptAuditEventFilter) (int64, int6
 // batches. Ids are read first because LIMIT on DELETE is not portable (the
 // SQLite dialect drops it and would delete everything in one long lock).
 func DeletePromptAuditEventsByFilter(filter PromptAuditEventFilter, maxId int64) (int64, error) {
+	if err := filter.deletable(); err != nil {
+		return 0, err
+	}
 	return deletePromptAuditEventsInBatches(func() *gorm.DB {
 		return filter.apply(DB.Model(&PromptAuditEvent{})).Where("id <= ?", maxId)
 	})
+}
+
+// deletable rejects filters whose keyword is matched by scanning: apply
+// leaves that keyword out, so deleting with it would remove non-matching rows.
+func (f PromptAuditEventFilter) deletable() error {
+	if err := f.Validate(); err != nil {
+		return err
+	}
+	if scans, _ := f.Scans(); scans {
+		return ErrPromptAuditScanFilterDelete
+	}
+	return nil
 }
 
 // CleanupPromptAuditEvents deletes events created before the cutoff.

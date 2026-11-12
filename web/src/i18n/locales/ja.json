@@ -7749,6 +7749,24 @@
     "Assistant": "アシスタント",
     "Tool": "ツール",
     "Agent context": "エージェントコンテキスト",
-    "Skipped (agent context only)": "スキップ（エージェントコンテキストのみ）"
+    "Skipped (agent context only)": "スキップ（エージェントコンテキストのみ）",
+    "Case sensitive": "大文字と小文字を区別",
+    "Recorded in the audit log": "監査ログに記録されます",
+    "Search fields: all but full prompt": "検索フィールド：完全なプロンプト以外のすべて",
+    "Searching full prompts is recorded in the audit log, including the search pattern and time range.": "完全なプロンプトの検索は、検索パターンと期間とともに監査ログに記録されます。",
+    "The search pattern is longer than {{max}} characters": "検索パターンが {{max}} 文字を超えています",
+    "This does not look like a valid regular expression.": "有効な正規表現ではないようです。",
+    "Patterns use RE2 syntax: no lookaround or backreferences.": "パターンは RE2 構文です：先読み・後読みや後方参照は使えません。",
+    "Scanned {{rows}} events, up to #{{id}}.": "{{rows}} 件のイベントを #{{id}} までスキャンしました。",
+    "Scanned {{rows}} events. The search reached the oldest event.": "{{rows}} 件のイベントをスキャンしました。最も古いイベントまで検索しました。",
+    "Continue search": "検索を続ける",
+    "Back to newest": "最新に戻る",
+    "Delete selected": "選択項目を削除",
+    "Delete {{count}} selected events? This cannot be undone.": "選択した {{count}} 件のイベントを削除しますか？元に戻せません。",
+    "Unknown keyword search mode": "不明なキーワード検索モードです",
+    "Unknown keyword search field": "不明なキーワード検索フィールドです",
+    "Regex and full prompt searches cannot delete by filter because their matches are found by scanning. Select the results and delete them instead": "正規表現検索と完全なプロンプト検索は、スキャンで一致を見つけるため、フィルターによる削除はできません。結果を選択して削除してください",
+    "Regex and full prompt searches are paged with a cursor": "正規表現検索と完全なプロンプト検索はカーソルでページングされます",
+    "Invalid regular expression (RE2 syntax): {{error}}": "正規表現が無効です（RE2 構文）：{{error}}"
   }
 }

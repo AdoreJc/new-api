@@ -17,12 +17,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { TFunction } from 'i18next'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { DataTablePage, useDataTable } from '@/components/data-table'
+import {
+  DataTableBulkActions,
+  DataTablePage,
+  useDataTable,
+} from '@/components/data-table'
 import { SectionPageLayout } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
@@ -35,6 +40,7 @@ import {
   LogsFilterToolbar,
 } from '../components/logs-filter-toolbar'
 import {
+  batchDeletePromptAuditEvents,
   deletePromptAuditEvent,
   deletePromptAuditEventsByFilter,
   getPromptAuditEvents,
@@ -43,12 +49,30 @@ import {
   type PromptAuditEventFilter,
 } from './api'
 import { usePromptAuditColumns } from './components/prompt-audit-columns'
+import { PromptAuditKeywordOptions } from './components/prompt-audit-keyword-options'
+import { PromptAuditScanStatus } from './components/prompt-audit-scan-status'
+import {
+  isScannedPromptAuditSearch,
+  promptAuditRegexProblem,
+} from './lib/keyword-search'
 
 const EMPTY_EVENTS: PromptAuditEvent[] = []
 
 type PendingDeletion =
   | { kind: 'one'; event: PromptAuditEvent }
+  | { kind: 'selected'; ids: number[] }
   | { kind: 'filter'; total: number; maxId: number }
+
+function deletePendingEvents(
+  deletion: PendingDeletion,
+  filter: PromptAuditEventFilter
+) {
+  if (deletion.kind === 'one') return deletePromptAuditEvent(deletion.event.id)
+  if (deletion.kind === 'selected') {
+    return batchDeletePromptAuditEvents(deletion.ids)
+  }
+  return deletePromptAuditEventsByFilter(filter, deletion.maxId)
+}
 
 export function PromptAuditEvents() {
   const { t } = useTranslation()
@@ -57,11 +81,19 @@ export function PromptAuditEvents() {
   const [filter, setFilter] = useState<PromptAuditEventFilter>({})
   const [page, setPage] = useState({ pageIndex: 0, pageSize: 20 })
   const [pending, setPending] = useState<PendingDeletion | null>(null)
+  // A regex or full prompt search pages with a cursor instead of a page index.
+  const [cursor, setCursor] = useState<number | undefined>(undefined)
+  const scanned = isScannedPromptAuditSearch(filter)
 
   const query = useQuery({
-    queryKey: ['prompt-audit', 'events', filter, page],
+    queryKey: ['prompt-audit', 'events', filter, page, cursor],
     queryFn: () =>
-      getPromptAuditEvents(filter, page.pageIndex + 1, page.pageSize),
+      getPromptAuditEvents(
+        filter,
+        scanned ? 1 : page.pageIndex + 1,
+        page.pageSize,
+        scanned ? cursor : undefined
+      ),
     retry: false,
   })
   const onDelete = useCallback(
@@ -73,13 +105,13 @@ export function PromptAuditEvents() {
     columns,
     data: query.data?.items ?? EMPTY_EVENTS,
     getRowId: (event) => String(event.id),
-    totalCount: query.data?.total ?? 0,
+    totalCount: query.data?.total ?? query.data?.items.length ?? 0,
     pagination: page,
     onPaginationChange: (updater) =>
       setPage((previous) =>
         typeof updater === 'function' ? updater(previous) : updater
       ),
-    enableRowSelection: false,
+    enableRowSelection: true,
     enableSorting: false,
     manualFiltering: true,
     manualPagination: true,
@@ -98,12 +130,11 @@ export function PromptAuditEvents() {
   })
   const remove = useMutation({
     mutationFn: (deletion: PendingDeletion) =>
-      deletion.kind === 'one'
-        ? deletePromptAuditEvent(deletion.event.id)
-        : deletePromptAuditEventsByFilter(filter, deletion.maxId),
+      deletePendingEvents(deletion, filter),
     onSuccess: (data) => {
       toast.success(t('Deleted {{count}} events', { count: data.deleted }))
       setPending(null)
+      table.resetRowSelection()
       void queryClient.invalidateQueries({
         queryKey: ['prompt-audit', 'events'],
       })
@@ -112,7 +143,15 @@ export function PromptAuditEvents() {
   })
 
   const apply = (next: PromptAuditEventFilter) => {
+    if (
+      next.keyword_mode === 'regex' &&
+      promptAuditRegexProblem(next.keyword ?? '')
+    ) {
+      return
+    }
     setFilter(next)
+    setCursor(undefined)
+    table.resetRowSelection()
     setPage((previous) => ({ ...previous, pageIndex: 0 }))
   }
   const textFilter = (
@@ -180,6 +219,14 @@ export function PromptAuditEvents() {
         />
       </LogsFilterField>
       {textFilter('keyword', t('Search user, key, model or preview'))}
+      <LogsFilterField wide>
+        <PromptAuditKeywordOptions
+          draft={draft}
+          onChange={(patch) =>
+            setDraft((previous) => ({ ...previous, ...patch }))
+          }
+        />
+      </LogsFilterField>
     </>
   )
   const advancedFilters = (
@@ -191,9 +238,14 @@ export function PromptAuditEvents() {
   const advancedCount = [draft.group, draft.request_id].filter(Boolean).length
   const activeCount =
     advancedCount +
-    [draft.decision, draft.keyword, draft.start_time, draft.end_time].filter(
-      (value) => value !== undefined
-    ).length
+    [
+      draft.decision,
+      draft.keyword,
+      draft.keyword_mode,
+      draft.keyword_fields,
+      draft.start_time,
+      draft.end_time,
+    ].filter((value) => value !== undefined).length
 
   return (
     <SectionPageLayout fixedContent>
@@ -211,6 +263,43 @@ export function PromptAuditEvents() {
                 : t('No records')
             }
             paginationInFooter
+            showPagination={!scanned}
+            afterTable={
+              scanned && query.data ? (
+                <PromptAuditScanStatus
+                  page={query.data}
+                  continued={cursor !== undefined}
+                  loading={query.isFetching}
+                  onContinue={(next) => {
+                    table.resetRowSelection()
+                    setCursor(next)
+                  }}
+                  onRestart={() => {
+                    table.resetRowSelection()
+                    setCursor(undefined)
+                  }}
+                />
+              ) : undefined
+            }
+            bulkActions={
+              <DataTableBulkActions table={table} entityName='event'>
+                <Button
+                  type='button'
+                  size='sm'
+                  variant='destructive'
+                  onClick={() =>
+                    setPending({
+                      kind: 'selected',
+                      ids: table
+                        .getSelectedRowModel()
+                        .rows.map((row) => row.original.id),
+                    })
+                  }
+                >
+                  {t('Delete selected')}
+                </Button>
+              </DataTableBulkActions>
+            }
             className='h-auto min-h-0 flex-1'
             applyHeaderSize
             getColumnClassName={() => 'py-2'}
@@ -236,16 +325,18 @@ export function PromptAuditEvents() {
                   apply({})
                 }}
                 actionEnd={
-                  <Button
-                    type='button'
-                    size='sm'
-                    variant='outline'
-                    className='text-destructive'
-                    disabled={preview.isPending}
-                    onClick={() => preview.mutate()}
-                  >
-                    {t('Delete matching events')}
-                  </Button>
+                  scanned ? undefined : (
+                    <Button
+                      type='button'
+                      size='sm'
+                      variant='outline'
+                      className='text-destructive'
+                      disabled={preview.isPending}
+                      onClick={() => preview.mutate()}
+                    >
+                      {t('Delete matching events')}
+                    </Button>
+                  )
                 }
               />
             }
@@ -258,14 +349,7 @@ export function PromptAuditEvents() {
           if (!open) setPending(null)
         }}
         title={t('Delete prompt audit events')}
-        desc={
-          pending?.kind === 'filter'
-            ? t(
-                'Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.',
-                { count: pending.total }
-              )
-            : t('Delete this event? This cannot be undone.')
-        }
+        desc={pendingDeletionText(pending, t)}
         destructive
         confirmText={t('Delete')}
         isLoading={remove.isPending}
@@ -275,4 +359,22 @@ export function PromptAuditEvents() {
       />
     </SectionPageLayout>
   )
+}
+
+function pendingDeletionText(
+  pending: PendingDeletion | null,
+  t: TFunction
+): string {
+  if (pending?.kind === 'filter') {
+    return t(
+      'Delete {{count}} events that match the applied filters? Events recorded after this preview are kept. This cannot be undone.',
+      { count: pending.total }
+    )
+  }
+  if (pending?.kind === 'selected') {
+    return t('Delete {{count}} selected events? This cannot be undone.', {
+      count: pending.ids.length,
+    })
+  }
+  return t('Delete this event? This cannot be undone.')
 }

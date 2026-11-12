@@ -7749,6 +7749,24 @@
     "Assistant": "Assistant",
     "Tool": "Tool",
     "Agent context": "Agent context",
-    "Skipped (agent context only)": "Skipped (agent context only)"
+    "Skipped (agent context only)": "Skipped (agent context only)",
+    "Case sensitive": "Case sensitive",
+    "Recorded in the audit log": "Recorded in the audit log",
+    "Search fields: all but full prompt": "Search fields: all but full prompt",
+    "Searching full prompts is recorded in the audit log, including the search pattern and time range.": "Searching full prompts is recorded in the audit log, including the search pattern and time range.",
+    "The search pattern is longer than {{max}} characters": "The search pattern is longer than {{max}} characters",
+    "This does not look like a valid regular expression.": "This does not look like a valid regular expression.",
+    "Patterns use RE2 syntax: no lookaround or backreferences.": "Patterns use RE2 syntax: no lookaround or backreferences.",
+    "Scanned {{rows}} events, up to #{{id}}.": "Scanned {{rows}} events, up to #{{id}}.",
+    "Scanned {{rows}} events. The search reached the oldest event.": "Scanned {{rows}} events. The search reached the oldest event.",
+    "Continue search": "Continue search",
+    "Back to newest": "Back to newest",
+    "Delete selected": "Delete selected",
+    "Delete {{count}} selected events? This cannot be undone.": "Delete {{count}} selected events? This cannot be undone.",
+    "Unknown keyword search mode": "Unknown keyword search mode",
+    "Unknown keyword search field": "Unknown keyword search field",
+    "Regex and full prompt searches cannot delete by filter because their matches are found by scanning. Select the results and delete them instead": "Regex and full prompt searches cannot delete by filter because their matches are found by scanning. Select the results and delete them instead",
+    "Regex and full prompt searches are paged with a cursor": "Regex and full prompt searches are paged with a cursor",
+    "Invalid regular expression (RE2 syntax): {{error}}": "Invalid regular expression (RE2 syntax): {{error}}"
   }
 }
