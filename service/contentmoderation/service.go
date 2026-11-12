@@ -49,10 +49,12 @@ const (
 	recordBatchSize     = 50
 	recordFlushInterval = time.Second
 	hashRefreshInterval = time.Minute
+	hashFullReloadEvery = 10 * time.Minute
 	cleanupInterval     = time.Hour
 	cleanupEvery        = 24 * time.Hour
 	hitEmailInterval    = time.Hour
-	disposalQueueWait   = 2 * time.Second
+	// disposalQueueWait may run on the request path, so it stays short.
+	disposalQueueWait = 50 * time.Millisecond
 	// maxFlaggedHashes bounds the hash blocklist; the oldest go first.
 	maxFlaggedHashes = 100000
 	maxHitEmailUsers = 10000
@@ -129,9 +131,11 @@ type Service struct {
 	keywords  atomic.Pointer[keywordIndex]
 	keywordMu sync.Mutex
 
-	hashMu     sync.RWMutex
-	hashes     map[string]struct{}
-	hashLoaded atomic.Bool
+	hashMu       sync.RWMutex
+	hashes       map[string]struct{}
+	hashLoaded   atomic.Bool
+	hashVersion  atomic.Value
+	hashLoadedAt atomic.Int64
 
 	emailMu   sync.Mutex
 	lastEmail map[int]time.Time
@@ -244,31 +248,39 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 		s.metrics.skipped.Add(1)
 		return nil
 	}
-	if storage.Size() > maxBodyBytes {
-		s.metrics.tooLarge.Add(1)
-		return nil
-	}
-	body, err := storage.Bytes()
-	if err != nil {
-		s.metrics.skipped.Add(1)
-		return nil
-	}
 	var input Input
 	keywordText := ""
 	useKeywords := config.KeywordMode != content_moderation_setting.KeywordModeAPIOnly
-	multipartPrompt := ""
-	if protocol == ProtocolImages {
-		// Image edits send their prompt as a multipart form field.
-		multipartPrompt = MultipartPrompt(c.Request.Header.Get("Content-Type"), body)
-	}
-	if multipartPrompt != "" {
+	contentType := c.Request.Header.Get("Content-Type")
+	if protocol == ProtocolImages && isMultipartForm(contentType) {
+		// Image edits send their prompt as multipart form fields. The form is
+		// streamed so file parts are skipped without loading them, whatever
+		// the body size, and every prompt field the upstream receives is read.
+		reader, err := storage.NewReader()
+		if err != nil {
+			s.metrics.skipped.Add(1)
+			return nil
+		}
+		prompts := MultipartPrompts(contentType, reader)
+		_ = reader.Close()
 		semantic := collector{}
-		semantic.addText(multipartPrompt)
-		input.Text, keywordText = joinParts(semantic.parts), joinParts([]string{multipartPrompt})
+		for _, prompt := range prompts {
+			semantic.addText(prompt)
+		}
+		input.Text, keywordText = joinParts(semantic.parts), joinParts(prompts)
 		if runes := []rune(input.Text); len(runes) > maxInputRunes {
 			input.Text = string(runes[:maxInputRunes])
 		}
 	} else {
+		if storage.Size() > maxBodyBytes {
+			s.metrics.tooLarge.Add(1)
+			return nil
+		}
+		body, err := storage.Bytes()
+		if err != nil {
+			s.metrics.skipped.Add(1)
+			return nil
+		}
 		input = ExtractInput(protocol, body)
 		if useKeywords {
 			keywordText = ExtractKeywordText(protocol, body)
@@ -330,7 +342,7 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 			event := item.event
 			event.CreatedAt = s.now().Unix()
 			event.Action, event.Flagged, event.HighestCategory, event.HighestScore = model.ContentModerationActionAllow, true, model.ContentModerationKeywordCategory, 1
-			event.InputExcerpt = Excerpt(keywordText)
+			event.InputExcerpt = Excerpt(keywordExcerptSource(input.Text, keywordText))
 			if blocking {
 				event.Action = model.ContentModerationActionKeywordBlock
 			}
@@ -759,8 +771,18 @@ func (s *Service) addHash(hash string) {
 }
 
 // refreshHashes reloads the blocklist from the database, which holds the
-// entries of every node and admin deletions.
+// entries of every node and admin deletions. It reads the whole table only
+// when a one-row summary shows the table changed since the last load, and
+// at least every hashFullReloadEvery in case a change kept the summary.
 func (s *Service) refreshHashes() error {
+	version, err := model.ContentModerationFlaggedHashesVersion()
+	if err != nil {
+		return err
+	}
+	fresh := s.now().Unix()-s.hashLoadedAt.Load() < int64(hashFullReloadEvery/time.Second)
+	if s.hashLoaded.Load() && fresh && s.hashVersion.Load() == version {
+		return nil
+	}
 	hashes, err := model.ListContentModerationFlaggedHashes()
 	if err != nil {
 		return err
@@ -772,8 +794,21 @@ func (s *Service) refreshHashes() error {
 	s.hashMu.Lock()
 	s.hashes = loaded
 	s.hashMu.Unlock()
+	s.hashVersion.Store(version)
+	s.hashLoadedAt.Store(s.now().Unix())
 	s.hashLoaded.Store(true)
 	return nil
+}
+
+// hashBlocklistInUse reports whether any request can consult the blocklist:
+// it is enabled and either the global mode is on or a replaced ScopePolicy
+// may moderate requests while the global mode is off.
+func hashBlocklistInUse(config *content_moderation_setting.Config) bool {
+	if !config.HashBlocklistEnabled {
+		return false
+	}
+	_, defaultPolicy := currentScopePolicy().(ConfigScopePolicy)
+	return config.Mode != content_moderation_setting.ModeOff || !defaultPolicy
 }
 
 // ForgetHash removes a hash from this node's cache after an admin deletion.
@@ -807,7 +842,7 @@ func (s *Service) maintenanceLoop(ctx context.Context) {
 				common.SysError(common.LogText("failed to load content moderation keyword lists: %s", err.Error()))
 			}
 		}
-		if snapshot.Config.HashBlocklistEnabled && !s.hashLoaded.Load() {
+		if hashBlocklistInUse(&snapshot.Config) && !s.hashLoaded.Load() {
 			if err := s.refreshHashes(); err != nil {
 				common.SysError(common.LogText("failed to load the content moderation hash blocklist: %s", err.Error()))
 			}
@@ -817,7 +852,7 @@ func (s *Service) maintenanceLoop(ctx context.Context) {
 			return
 		case <-hashTicker.C:
 			s.engine.forget(snapshot.Keys)
-			if !snapshot.Config.HashBlocklistEnabled {
+			if !hashBlocklistInUse(&snapshot.Config) {
 				s.hashLoaded.Store(false)
 				continue
 			}

@@ -411,6 +411,20 @@ func CleanupContentModerationFlaggedHashes(before int64, maxRows int64) (int64, 
 	}
 }
 
+// ContentModerationFlaggedHashesVersion summarizes the blocklist in one row
+// (count and the oldest and newest entry times) so a node can skip reading
+// the whole table when nothing changed.
+func ContentModerationFlaggedHashesVersion() (string, error) {
+	var summary struct {
+		Total  int64
+		Oldest int64
+		Newest int64
+	}
+	err := DB.Model(&ContentModerationFlaggedHash{}).
+		Select("COUNT(*) AS total, COALESCE(MIN(created_at), 0) AS oldest, COALESCE(MAX(created_at), 0) AS newest").Scan(&summary).Error
+	return fmt.Sprintf("%d/%d/%d", summary.Total, summary.Oldest, summary.Newest), err
+}
+
 // ClearContentModerationFlaggedHashes deletes the whole blocklist.
 func ClearContentModerationFlaggedHashes() (int64, error) {
 	result := DB.Where("1 = 1").Delete(&ContentModerationFlaggedHash{})

@@ -1,7 +1,6 @@
 package contentmoderation
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -32,8 +31,9 @@ const (
 	// maxImageDataURLBytes skips inline images the engine would reject anyway.
 	maxImageDataURLBytes = 12 << 20
 	maxExcerptRunes      = 240
-	// maxPromptFieldBytes bounds the multipart prompt field that is read.
-	maxPromptFieldBytes = 256 << 10
+	excerptWindowRunes   = 4 * maxExcerptRunes
+	// maxPromptFieldBytes bounds the multipart prompt text that is read.
+	maxPromptFieldBytes = 1 << 20
 )
 
 // Input is the latest user message prepared for moderation.
@@ -103,24 +103,36 @@ func joinParts(parts []string) string {
 	return strings.Join(strings.Fields(strings.Join(parts, "\n")), " ")
 }
 
-// MultipartPrompt reads the "prompt" field of a multipart/form-data body,
-// which is how image edit requests send their prompt.
-func MultipartPrompt(contentType string, body []byte) string {
+func isMultipartForm(contentType string) bool {
 	mediaType, params, err := mime.ParseMediaType(contentType)
-	if err != nil || mediaType != "multipart/form-data" || params["boundary"] == "" {
-		return ""
+	return err == nil && mediaType == "multipart/form-data" && params["boundary"] != ""
+}
+
+// MultipartPrompts streams a multipart/form-data body and returns the value
+// of every non-file "prompt" field, in order; the upstream receives all of
+// them. File parts are skipped as they are read, so the body size does not
+// matter; prompt text is read up to maxPromptFieldBytes in total.
+func MultipartPrompts(contentType string, body io.Reader) []string {
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil || params["boundary"] == "" {
+		return nil
 	}
-	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
-	for {
+	reader := multipart.NewReader(body, params["boundary"])
+	var prompts []string
+	remaining := int64(maxPromptFieldBytes)
+	for remaining > 0 {
 		part, err := reader.NextPart()
 		if err != nil {
-			return ""
+			break
 		}
-		if part.FormName() == "prompt" && part.FileName() == "" {
-			value, _ := io.ReadAll(io.LimitReader(part, maxPromptFieldBytes))
-			return string(value)
+		if part.FormName() != "prompt" || part.FileName() != "" {
+			continue
 		}
+		value, _ := io.ReadAll(io.LimitReader(part, remaining))
+		remaining -= int64(len(value))
+		prompts = append(prompts, string(value))
 	}
+	return prompts
 }
 
 func collectLatestUserMessage(protocol string, body []byte, keepReminders bool) collector {
@@ -314,9 +326,33 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\b[A-Za-z0-9+/_-]{48,}={0,2}`),
 }
 
+var reminderBlock = regexp.MustCompile(`(?s)<system-reminder>.*?</system-reminder>`)
+
+// keywordExcerptSource picks the text an event excerpt is taken from for a
+// keyword hit: the user's own words when there are any, else the keyword
+// text with complete reminder blocks removed, else the keyword text itself
+// (the keyword was inside a reminder).
+func keywordExcerptSource(semantic, keywordText string) string {
+	if semantic != "" {
+		return semantic
+	}
+	if stripped := joinParts([]string{reminderBlock.ReplaceAllString(keywordText, " ")}); stripped != "" {
+		return stripped
+	}
+	return keywordText
+}
+
 // Excerpt returns the first characters of the input with URLs, credentials,
 // e-mail addresses and long tokens replaced, for display on the event page.
+//
+// Only a leading window of the text, four times the excerpt length, is
+// redacted, so a large input costs no more than a short one. A secret cut at
+// the window's edge could reach the excerpt only if redaction shortened the
+// window by most of its length.
 func Excerpt(text string) string {
+	if runes := []rune(text); len(runes) > excerptWindowRunes {
+		text = string(runes[:excerptWindowRunes])
+	}
 	for _, pattern := range secretPatterns {
 		text = pattern.ReplaceAllString(text, "[redacted]")
 	}

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -923,22 +924,46 @@ func TestMultipartImageEditPrompt(t *testing.T) {
 	useConfig(t, moderationConfig(content_moderation_setting.ModePreBlock, server.URL), []string{"k1"})
 	s := newService()
 
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	file, err := writer.CreateFormFile("image", "a.png")
-	require.NoError(t, err)
-	_, _ = file.Write([]byte("\x89PNG not really"))
-	require.NoError(t, writer.WriteField("prompt", "an attack scene"))
-	require.NoError(t, writer.Close())
-	assert.Equal(t, "an attack scene", MultipartPrompt(writer.FormDataContentType(), body.Bytes()))
-	assert.Empty(t, MultipartPrompt("application/json", body.Bytes()))
-
-	c, _ := relayContext(body.String())
-	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	// form builds an image edit with a file part of fileBytes bytes followed
+	// by the given prompt fields.
+	form := func(fileBytes int, prompts ...string) (*bytes.Buffer, string) {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		file, err := writer.CreateFormFile("image", "a.png")
+		require.NoError(t, err)
+		_, err = file.Write(bytes.Repeat([]byte{0x89}, fileBytes))
+		require.NoError(t, err)
+		require.NoError(t, writer.WriteField("prompt", prompts[0]))
+		for _, prompt := range prompts[1:] {
+			require.NoError(t, writer.WriteField("prompt", prompt))
+		}
+		require.NoError(t, writer.Close())
+		return &body, writer.FormDataContentType()
+	}
 	info := reminderInfo(ProtocolImages)
 	info.RequestURLPath = "/v1/images/edits"
-	require.NotNil(t, s.checkRelay(c, info), "the prompt of a multipart image edit is moderated")
+
+	body, contentType := form(16, "a calm lake", "an attack scene")
+	assert.Equal(t, []string{"a calm lake", "an attack scene"}, MultipartPrompts(contentType, bytes.NewReader(body.Bytes())),
+		"every prompt field the upstream receives is read")
+	assert.Empty(t, MultipartPrompts("application/json", bytes.NewReader(body.Bytes())))
+	c, _ := relayContext(body.String())
+	c.Request.Header.Set("Content-Type", contentType)
+	require.NotNil(t, s.checkRelay(c, info), "a flagged second prompt field is blocked")
 	assert.Equal(t, int64(1), server.calls.Load())
+	server.mu.Lock()
+	assert.Contains(t, server.inputs[0], "a calm lake an attack scene")
+	server.mu.Unlock()
+
+	// A file larger than the JSON body limit does not skip the prompt.
+	previousLimit := constant.MaxRequestBodyMB
+	constant.MaxRequestBodyMB = 128
+	t.Cleanup(func() { constant.MaxRequestBodyMB = previousLimit })
+	body, contentType = form(maxBodyBytes+1024, "an attack scene")
+	c, _ = relayContext(body.String())
+	c.Request.Header.Set("Content-Type", contentType)
+	require.NotNil(t, s.checkRelay(c, info), "a large image does not hide the prompt")
+	assert.Zero(t, s.metrics.tooLarge.Load())
 }
 
 func TestEngineNeverFollowsRedirects(t *testing.T) {
@@ -1009,4 +1034,40 @@ func TestKeywordSearchTreatsWildcardsLiterally(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, want, total, keyword)
 	}
+}
+
+func TestKeywordExcerptSkipsLeadingReminders(t *testing.T) {
+	longReminder := "<system-reminder>" + strings.Repeat("context ", 200) + "</system-reminder>"
+	tests := []struct{ name, semantic, keywordText, want string }{
+		{"user words win", "buy now", longReminder + " buy now", "buy now"},
+		{"reminder before the keyword is dropped", "", longReminder + " cheap pills", "cheap pills"},
+		{"keyword inside the reminder keeps it", "", "<system-reminder>cheap pills</system-reminder>", "<system-reminder>cheap pills</system-reminder>"},
+	}
+	for _, test := range tests {
+		assert.Equal(t, test.want, keywordExcerptSource(test.semantic, test.keywordText), test.name)
+	}
+	assert.Len(t, []rune(Excerpt(strings.Repeat("token ", 100000))), maxExcerptRunes, "a large input is cut before redaction")
+}
+
+func TestHashBlocklistLoadsOnlyWhenUsable(t *testing.T) {
+	setupDB(t)
+	config := content_moderation_setting.DefaultConfig()
+	config.HashBlocklistEnabled = true
+	assert.False(t, hashBlocklistInUse(&config), "off with the default policy: nothing reads the blocklist")
+	SetScopePolicy(fixedPolicy{Decision{Moderate: true, Mode: "rule", Action: ActionBlock, SampleRate: 100}})
+	t.Cleanup(func() { SetScopePolicy(nil) })
+	assert.True(t, hashBlocklistInUse(&config), "a replaced policy may moderate while the global mode is off")
+	SetScopePolicy(nil)
+	config.Mode = content_moderation_setting.ModeObserve
+	assert.True(t, hashBlocklistInUse(&config))
+	config.HashBlocklistEnabled = false
+	assert.False(t, hashBlocklistInUse(&config))
+
+	s := newService()
+	require.NoError(t, model.AddContentModerationFlaggedHash(strings.Repeat("a", 64), 100))
+	require.NoError(t, s.refreshHashes())
+	assert.True(t, s.hashListed(strings.Repeat("a", 64)))
+	require.NoError(t, model.AddContentModerationFlaggedHash(strings.Repeat("b", 64), 200))
+	require.NoError(t, s.refreshHashes())
+	assert.True(t, s.hashListed(strings.Repeat("b", 64)), "a changed table is read again")
 }
