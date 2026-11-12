@@ -100,15 +100,10 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 			}
 		}
 	}
-	// Codex backend requires the `instructions` field to be present. Like the
-	// Codex CLI, a request without instructions carries the model's Codex base
-	// instructions.
-	if codexInstructionsEmpty(request.Instructions) {
-		b, err := common.Marshal(codexBaseInstructions(request.Model))
-		if err != nil {
-			return nil, err
-		}
-		request.Instructions = b
+	// Codex backend requires the `instructions` field to be present.
+	// Keep it consistent with Codex CLI behavior by defaulting to an empty string.
+	if len(request.Instructions) == 0 {
+		request.Instructions = json.RawMessage(`""`)
 	}
 
 	// The ChatGPT backend answers "Unsupported parameter" for these; chat
@@ -312,10 +307,12 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	req.Set("Authorization", "Bearer "+accessToken)
 	req.Set("chatgpt-account-id", accountID)
 
-	// One Codex CLI identity whatever the client claimed; header overrides
-	// of the channel still apply afterwards.
-	service.SetCodexIdentityHeaders(*req)
-	removeResponsesExperimentalBeta(*req)
+	if req.Get("OpenAI-Beta") == "" {
+		req.Set("OpenAI-Beta", "responses=experimental")
+	}
+	if req.Get("originator") == "" {
+		req.Set("originator", "codex_cli_rs")
+	}
 
 	// chatgpt.com/backend-api/codex/responses is strict about Content-Type.
 	// Clients may omit it or include parameters like `application/json; charset=utf-8`,

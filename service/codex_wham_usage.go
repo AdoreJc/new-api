@@ -155,5 +155,7 @@ func setCodexWhamRequestHeaders(req *http.Request, accessToken string, accountID
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("chatgpt-account-id", accountID)
 	req.Header.Set("Accept", "application/json")
-	SetCodexIdentityHeaders(req.Header)
+	if req.Header.Get("originator") == "" {
+		req.Header.Set("originator", "codex_cli_rs")
+	}
 }

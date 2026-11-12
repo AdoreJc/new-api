@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -233,85 +232,6 @@ func TestConvertCodexRequestNormalizesInput(t *testing.T) {
 			if tt.wantInclude != nil {
 				assert.Equal(t, tt.wantInclude, body["include"])
 			}
-		})
-	}
-}
-
-// A request without instructions carries the model's Codex CLI base
-// instructions; the channel system prompt still takes precedence.
-func TestConvertCodexRequestFillsBaseInstructions(t *testing.T) {
-	tests := []struct {
-		name    string
-		model   string
-		setting dto.ChannelSettings
-		want    string
-	}{
-		{name: "codex model", model: "gpt-5.3-codex-spark", want: codexBaseInstructions("gpt-5.3-codex-spark")},
-		{name: "gpt-5.5", model: "gpt-5.5", want: codexBaseInstructions("gpt-5.5")},
-		{name: "channel system prompt", model: "gpt-5.5", setting: dto.ChannelSettings{SystemPrompt: "channel rules"}, want: "channel rules"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			body := convertCodexRequest(t, relayconstant.RelayModeResponses, dto.OpenAIResponsesRequest{
-				Model: tt.model, Input: json.RawMessage(`"hi"`),
-			}, tt.setting)
-			assert.Equal(t, tt.want, body["instructions"])
-		})
-	}
-	assert.True(t, strings.HasPrefix(codexBaseInstructions("gpt-5.3-codex-spark"), "You are Codex, based on GPT-5."))
-	assert.True(t, strings.HasPrefix(codexBaseInstructions("gpt-5.6-sol"), "You are Codex, a coding agent based on GPT-5."))
-	assert.NotEqual(t, codexBaseInstructions("gpt-5.1"), codexBaseInstructions("gpt-5.2"))
-	assert.NotContains(t, codexBaseInstructions("gpt-5.5"), "\r")
-}
-
-// Outbound requests carry one Codex CLI identity whatever the client sent,
-// without the responses=experimental beta; a channel header override still
-// wins.
-func TestCodexOutboundIdentityHeaders(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	var got http.Header
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = r.Header.Clone()
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(upstream.Close)
-
-	for _, tt := range []struct {
-		name          string
-		override      map[string]any
-		wantUserAgent string
-	}{
-		{name: "client identity replaced", wantUserAgent: service.CodexUserAgent()},
-		{name: "header override wins", override: map[string]any{"User-Agent": "custom-agent"}, wantUserAgent: "custom-agent"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-			c.Request.Header.Set("User-Agent", "OpenAI/Python 1.0")
-			info := &relaycommon.RelayInfo{
-				ChannelMeta: &relaycommon.ChannelMeta{
-					ChannelType:     constant.ChannelTypeCodex,
-					ChannelBaseUrl:  upstream.URL,
-					ApiKey:          `{"access_token":"fake-access-token","account_id":"acct-test"}`,
-					HeadersOverride: tt.override,
-				},
-				RelayMode: relayconstant.RelayModeResponses,
-			}
-			header := http.Header{}
-			header.Set("OpenAI-Beta", "responses=experimental, assistants=v2")
-			header.Set("User-Agent", "OpenAI/Python 1.0")
-			require.NoError(t, (&Adaptor{}).SetupRequestHeader(c, &header, info))
-			assert.Equal(t, service.CodexUserAgent(), header.Get("User-Agent"))
-			assert.Equal(t, "codex_cli_rs", header.Get("originator"))
-			assert.Equal(t, service.CodexClientVersion(), header.Get("version"))
-			assert.True(t, strings.HasPrefix(header.Get("User-Agent"), "codex_cli_rs/"+service.CodexClientVersion()+" "))
-			assert.Equal(t, "assistants=v2", header.Get("OpenAI-Beta"))
-
-			resp, err := (&Adaptor{}).DoRequest(c, info, strings.NewReader(`{}`))
-			require.NoError(t, err)
-			service.CloseResponseBodyGracefully(resp.(*http.Response))
-			assert.Equal(t, tt.wantUserAgent, got.Get("User-Agent"))
-			assert.Equal(t, "codex_cli_rs", got.Get("originator"))
 		})
 	}
 }

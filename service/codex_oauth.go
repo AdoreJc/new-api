@@ -127,8 +127,6 @@ func refreshCodexOAuthToken(
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", CodexUserAgent())
-	req.Header.Set("originator", CodexOriginator)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -290,6 +288,8 @@ const (
 	codexOAuthAuthorizeURL = "https://auth.openai.com/oauth/authorize"
 	codexOAuthRedirectURI  = "http://localhost:1455/auth/callback"
 	codexOAuthScope        = "openid profile email offline_access"
+	codexOAuthUserAgent    = "codex_cli_rs/0.146.0 (Ubuntu 22.4.0; x86_64) xterm-256color"
+	codexOAuthOriginator   = "codex_cli_rs"
 )
 
 // CodexOAuthTokenURL is a variable so tests can point the code exchange and
@@ -398,8 +398,8 @@ func ExchangeCodexAuthorizationCodeWithProxy(ctx context.Context, code string, v
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", CodexUserAgent())
-	req.Header.Set("originator", CodexOriginator)
+	req.Header.Set("User-Agent", codexOAuthUserAgent)
+	req.Header.Set("originator", codexOAuthOriginator)
 
 	resp, err := noRedirectClient(client).Do(req)
 	if err != nil {

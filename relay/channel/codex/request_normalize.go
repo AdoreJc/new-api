@@ -3,7 +3,6 @@ package codex
 import (
 	"bytes"
 	"encoding/json"
-	"net/http"
 	"slices"
 	"strings"
 
@@ -169,37 +168,4 @@ func ensureCodexReasoningInclude(request *dto.OpenAIResponsesRequest) error {
 	}
 	request.Include = encoded
 	return nil
-}
-
-// codexInstructionsEmpty reports a missing, null or blank string instructions.
-func codexInstructionsEmpty(instructions json.RawMessage) bool {
-	trimmed := bytes.TrimSpace(instructions)
-	if len(trimmed) == 0 || string(trimmed) == "null" {
-		return true
-	}
-	var text string
-	return common.Unmarshal(trimmed, &text) == nil && strings.TrimSpace(text) == ""
-}
-
-// removeResponsesExperimentalBeta drops the responses=experimental beta,
-// which the Codex CLI does not send to the ChatGPT backend; other beta values
-// stay.
-func removeResponsesExperimentalBeta(header http.Header) {
-	values := header.Values("OpenAI-Beta")
-	if len(values) == 0 {
-		return
-	}
-	var kept []string
-	for _, value := range values {
-		for part := range strings.SplitSeq(value, ",") {
-			part = strings.TrimSpace(part)
-			if part != "" && !strings.EqualFold(part, "responses=experimental") {
-				kept = append(kept, part)
-			}
-		}
-	}
-	header.Del("OpenAI-Beta")
-	if len(kept) > 0 {
-		header.Set("OpenAI-Beta", strings.Join(kept, ","))
-	}
 }

@@ -160,19 +160,18 @@ func seedCodexChannel(t *testing.T, id int, refreshToken string) {
 	t.Cleanup(func() { model.DB.Exec("DELETE FROM channels WHERE id = ?", id) })
 }
 
-// The refresh request names the Codex scope and client; an answer without a
+// The refresh request names the Codex scope; an answer without a
 // rotated refresh token keeps the old one and a returned id_token updates the
 // account. A refresh token rejected for good disables the channel and is not
 // sent again; a transient failure leaves the channel alone.
 func TestRefreshCodexChannelCredential(t *testing.T) {
 	var calls int
 	var lastForm url.Values
-	var lastHeader http.Header
 	answer := func(w http.ResponseWriter) {}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		require.NoError(t, r.ParseForm())
-		lastForm, lastHeader = r.PostForm, r.Header.Clone()
+		lastForm = r.PostForm
 		answer(w)
 	}))
 	t.Cleanup(server.Close)
@@ -193,8 +192,6 @@ func TestRefreshCodexChannelCredential(t *testing.T) {
 		assert.Equal(t, idToken, key.IDToken)
 		assert.Equal(t, "acct-new", key.AccountID)
 		assert.Equal(t, "openid profile email", lastForm.Get("scope"))
-		assert.Equal(t, CodexUserAgent(), lastHeader.Get("User-Agent"))
-		assert.Equal(t, CodexOriginator, lastHeader.Get("originator"))
 	})
 
 	t.Run("access token already renewed by another caller", func(t *testing.T) {
