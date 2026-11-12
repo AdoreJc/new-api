@@ -7726,6 +7726,7 @@
     "Violent": "暴力",
     "not selected": "未選択",
     "{{chars}} characters in {{count}} messages": "{{count}} 件のメッセージ、計 {{chars}} 文字",
-    "{{chunks}} chunks in {{ms}} ms": "{{chunks}} 分割、{{ms}} ミリ秒"
+    "{{chunks}} chunks in {{ms}} ms": "{{chunks}} 分割、{{ms}} ミリ秒",
+    "Save prompt audit settings": "プロンプト監査の設定を保存"
   }
 }

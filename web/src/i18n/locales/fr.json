@@ -7726,6 +7726,7 @@
     "Violent": "Violence",
     "not selected": "non sélectionnée",
     "{{chars}} characters in {{count}} messages": "{{chars}} caractères dans {{count}} messages",
-    "{{chunks}} chunks in {{ms}} ms": "{{chunks}} segments en {{ms}} ms"
+    "{{chunks}} chunks in {{ms}} ms": "{{chunks}} segments en {{ms}} ms",
+    "Save prompt audit settings": "Enregistrer les paramètres d'audit des prompts"
   }
 }

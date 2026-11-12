@@ -49,7 +49,11 @@ import {
 } from '../../components/settings-form-layout'
 import { SettingsPageFormActions } from '../../components/settings-page-context'
 import { SettingsSection } from '../../components/settings-section'
-import { getPromptAuditConfig, updatePromptAuditConfig } from './api'
+import {
+  getPromptAuditConfig,
+  updatePromptAuditConfig,
+  type PromptAuditConfigResponse,
+} from './api'
 import { PromptAuditEndpointFields } from './endpoint-fields'
 import {
   PROMPT_AUDIT_SCANNER_LABELS,
@@ -92,41 +96,10 @@ const NUMBER_FIELDS = [
 
 export function PromptAuditSection() {
   const { t } = useTranslation()
-  const queryClient = useQueryClient()
   const config = useQuery({
     queryKey: CONFIG_QUERY_KEY,
     queryFn: getPromptAuditConfig,
   })
-  const form = useForm<PromptAuditFormInput, unknown, PromptAuditFormValues>({
-    resolver: zodResolver(promptAuditFormSchema),
-  })
-  useEffect(() => {
-    if (config.data) form.reset(toPromptAuditFormValues(config.data))
-  }, [config.data, form])
-
-  const save = useMutation({
-    mutationFn: (values: PromptAuditFormValues) => {
-      if (!config.data)
-        throw new Error(t('Failed to load prompt audit settings'))
-      return updatePromptAuditConfig(
-        toPromptAuditConfigRequest(values, config.data.config)
-      )
-    },
-    onSuccess: (data) => {
-      queryClient.setQueryData(CONFIG_QUERY_KEY, data)
-      void queryClient.invalidateQueries({
-        queryKey: ['prompt-audit', 'runtime'],
-      })
-      toast.success(t('Prompt audit settings saved'))
-    },
-    onError: (error) => {
-      handleServerError(error)
-      void config.refetch()
-    },
-  })
-  const onSubmit = form.handleSubmit((values) => save.mutate(values))
-  const allGroups = form.watch('all_groups')
-
   if (config.isPending) return <LoadingState />
   if (config.isError || !config.data) {
     return (
@@ -136,6 +109,49 @@ export function PromptAuditSection() {
       />
     )
   }
+  return (
+    <PromptAuditForm
+      data={config.data}
+      onSaveFailed={() => void config.refetch()}
+    />
+  )
+}
+
+// The form mounts only with loaded settings so every control starts
+// controlled with its saved value.
+function PromptAuditForm(props: {
+  data: PromptAuditConfigResponse
+  onSaveFailed: () => void
+}) {
+  const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const form = useForm<PromptAuditFormInput, unknown, PromptAuditFormValues>({
+    resolver: zodResolver(promptAuditFormSchema),
+    defaultValues: toPromptAuditFormValues(props.data),
+  })
+  useEffect(() => {
+    form.reset(toPromptAuditFormValues(props.data))
+  }, [props.data, form])
+
+  const save = useMutation({
+    mutationFn: (values: PromptAuditFormValues) =>
+      updatePromptAuditConfig(
+        toPromptAuditConfigRequest(values, props.data.config)
+      ),
+    onSuccess: (data) => {
+      queryClient.setQueryData(CONFIG_QUERY_KEY, data)
+      void queryClient.invalidateQueries({
+        queryKey: ['prompt-audit', 'runtime'],
+      })
+      toast.success(t('Prompt audit settings saved'))
+    },
+    onError: (error) => {
+      handleServerError(error)
+      props.onSaveFailed()
+    },
+  })
+  const onSubmit = form.handleSubmit((values) => save.mutate(values))
+  const allGroups = form.watch('all_groups')
 
   return (
     <SettingsSection title={t('Prompt Audit')}>
@@ -210,7 +226,7 @@ export function PromptAuditSection() {
                   )}
                 </FormDescription>
                 <div className='grid gap-2 sm:grid-cols-2'>
-                  {config.data.scanners.map((scanner) => {
+                  {props.data.scanners.map((scanner) => {
                     const checked = (field.value ?? []).includes(scanner)
                     return (
                       <label

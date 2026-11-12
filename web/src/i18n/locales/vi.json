@@ -7726,6 +7726,7 @@
     "Violent": "Bạo lực",
     "not selected": "chưa chọn",
     "{{chars}} characters in {{count}} messages": "{{chars}} ký tự trong {{count}} tin nhắn",
-    "{{chunks}} chunks in {{ms}} ms": "{{chunks}} đoạn trong {{ms}} ms"
+    "{{chunks}} chunks in {{ms}} ms": "{{chunks}} đoạn trong {{ms}} ms",
+    "Save prompt audit settings": "Lưu cài đặt kiểm duyệt prompt"
   }
 }

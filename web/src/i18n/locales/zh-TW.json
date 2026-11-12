@@ -7726,6 +7726,7 @@
     "Violent": "暴力",
     "not selected": "未選取",
     "{{chars}} characters in {{count}} messages": "{{count}} 段訊息，共 {{chars}} 個字元",
-    "{{chunks}} chunks in {{ms}} ms": "{{chunks}} 段，耗時 {{ms}} 毫秒"
+    "{{chunks}} chunks in {{ms}} ms": "{{chunks}} 段，耗時 {{ms}} 毫秒",
+    "Save prompt audit settings": "儲存提示詞稽核設定"
   }
 }
