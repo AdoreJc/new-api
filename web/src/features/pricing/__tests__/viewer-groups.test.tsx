@@ -96,7 +96,7 @@ describe('model card groups', () => {
     expect(screen.getByText('$2.5')).toBeInTheDocument()
   })
 
-  it('shows the base price in RMB at the recharge price when the viewer can use no group', () => {
+  it('shows the base price in USD at the recharge price when the viewer can use no group', () => {
     render(
       <ModelCard
         model={dedicatedOnlyModel}
@@ -106,7 +106,7 @@ describe('model card groups', () => {
       />
     )
 
-    expect(screen.getByText('¥34')).toBeInTheDocument()
+    expect(screen.getByText('$34')).toBeInTheDocument()
     expect(screen.queryByText(/NaN/)).not.toBeInTheDocument()
   })
 

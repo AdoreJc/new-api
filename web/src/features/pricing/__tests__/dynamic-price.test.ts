@@ -242,7 +242,7 @@ describe('task dynamic pricing', () => {
     assert.equal(summary.tier?.label, 'std')
     assert.equal(summary.primaryEntries[0]?.value, 0.4)
     assert.equal(summary.primaryEntries[0]?.unit, 'second')
-    assert.equal(summary.primaryEntries[0]?.formatted, '¥2.4')
+    assert.equal(summary.primaryEntries[0]?.formatted, '$2.4')
   })
 
   test('falls back for a non-canonical task expression', () => {
@@ -276,8 +276,8 @@ describe('task dynamic pricing', () => {
     const summary = getDynamicPricingSummary(model, summaryOptions)
 
     assert.ok(summary)
-    assert.equal(summary.primaryEntries[0]?.formattedRange, '¥2.4 – ¥4.8')
-    assert.equal(summary.primaryEntries[0]?.formatted, '¥2.4')
+    assert.equal(summary.primaryEntries[0]?.formattedRange, '$2.4 – $4.8')
+    assert.equal(summary.primaryEntries[0]?.formatted, '$2.4')
   })
 
   test('omits a task price range when every tier has the same unit price', () => {
@@ -542,7 +542,7 @@ describe('task dynamic pricing', () => {
 
     assert.ok(example)
     assert.equal(example.label, '720p · 5s')
-    assert.equal(example.formatted, '¥6.3504')
+    assert.equal(example.formatted, '$6.3504')
   })
 
   test('returns null when the expression is not canonical or examples are missing', () => {
@@ -701,7 +701,7 @@ describe('shared plugin price summaries', () => {
       field: 'seconds',
       minValue: 0.4,
       maxValue: 1.2,
-      formattedRange: '¥2.4 – ¥7.2',
+      formattedRange: '$2.4 – $7.2',
       unit: 'second',
     })
   })
@@ -792,7 +792,7 @@ describe('shared plugin price summaries', () => {
     expect(getCardExamplePrice(model, summaryOptions)).toEqual({
       label: 'Beta sample',
       total: 3,
-      formatted: '¥18',
+      formatted: '$18',
     })
   })
 })

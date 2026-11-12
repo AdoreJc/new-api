@@ -24,9 +24,9 @@ import {
 
 /**
  * Currency of the recharge price display. The "Price" setting (`priceRate`)
- * is the RMB a user pays through the recharge channel for $1 of credit.
+ * is the US dollars a user pays for $1 of credit; the site settles in USD.
  */
-export const RECHARGE_PRICE_CURRENCY_LABEL = 'CNY'
+export const RECHARGE_PRICE_CURRENCY_LABEL = 'USD'
 
 export type ModelPriceDisplayMode = {
   showRechargePrice?: boolean
@@ -37,11 +37,12 @@ export type ModelPriceDisplayMode = {
  * Format a model price stored in USD for the model marketplace.
  *
  * - Standard mode: the site display currency (formatBillingCurrencyFromUSD).
- * - Recharge mode: what the price costs through the RMB recharge channel,
- *   `amountUSD × priceRate`, always shown as ¥. It does not depend on the
- *   quota display type or on `usd_exchange_rate`.
+ * - Recharge mode: what the price costs when paying for credit,
+ *   `amountUSD × priceRate`, always shown in US dollars ($). It does not
+ *   depend on the quota display type and is not divided by
+ *   `usd_exchange_rate`.
  *
- * Example: quota display USD, priceRate 6.8, model price $2 → "¥13.6".
+ * Example: quota display CNY, priceRate 1.2, model price $2 → "$2.4".
  */
 export function formatModelPriceFromUSD(
   amountUSD: number,

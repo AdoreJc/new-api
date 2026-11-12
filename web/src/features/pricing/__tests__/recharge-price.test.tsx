@@ -36,9 +36,10 @@ import {
 } from '../lib/price'
 import type { PricingModel } from '../types'
 
-// Production settings: the site settles in USD (exchange rate 1) and the
-// recharge channel sells $1 of credit for ¥6.8.
-const PRICE_RATE = 6.8
+// The site settles in USD. PRICE_RATE is the "Price" setting (US dollars paid
+// for $1 of credit); a value other than 1 shows that recharge prices still
+// multiply by it. Production runs with Price = 1 (see the production case).
+const PRICE_RATE = 1.5
 const groupRatio = { default: 1, vip: 2 }
 
 const tokenModel: PricingModel = {
@@ -144,15 +145,15 @@ afterEach(() => {
 describe.each(sites)('recharge price on a $name', (site) => {
   beforeEach(() => useSite(site.currency))
 
-  it('shows token, cached and group token prices as RMB at the recharge price', () => {
+  it('shows token, cached and group token prices in USD at the recharge price', () => {
     expect(formatPrice(tokenModel, 'input', 'M', true, PRICE_RATE, 7)).toBe(
-      '¥13.6'
+      '$3'
     )
     expect(formatPrice(tokenModel, 'output', 'M', true, PRICE_RATE, 7)).toBe(
-      '¥40.8'
+      '$9'
     )
     expect(formatPrice(tokenModel, 'cache', 'M', true, PRICE_RATE, 7)).toBe(
-      '¥1.36'
+      '$0.3'
     )
     expect(
       formatGroupPrice(
@@ -165,24 +166,24 @@ describe.each(sites)('recharge price on a $name', (site) => {
         7,
         groupRatio
       )
-    ).toBe('¥27.2')
+    ).toBe('$6')
   })
 
-  it('shows per-request and group per-request prices as RMB at the recharge price', () => {
-    expect(formatRequestPrice(requestModel, true, PRICE_RATE, 7)).toBe('¥3.4')
+  it('shows per-request and group per-request prices in USD at the recharge price', () => {
+    expect(formatRequestPrice(requestModel, true, PRICE_RATE, 7)).toBe('$0.75')
     expect(
       formatFixedPrice(requestModel, 'vip', true, PRICE_RATE, 7, groupRatio)
-    ).toBe('¥6.8')
+    ).toBe('$1.5')
   })
 
-  it('shows tiered expression and task usage prices as RMB at the recharge price', () => {
+  it('shows tiered expression and task usage prices in USD at the recharge price', () => {
     const tiered = getDynamicPricingSummary(tieredModel, recharge)
     expect(tiered?.primaryEntries.map((entry) => entry.formatted)).toEqual([
-      '¥13.6',
-      '¥40.8',
+      '$3',
+      '$9',
     ])
     const task = getDynamicPricingSummary(taskModel, recharge)
-    expect(task?.primaryEntries[0]?.formatted).toBe('¥3.4')
+    expect(task?.primaryEntries[0]?.formatted).toBe('$0.75')
   })
 
   it('keeps standard prices in the site display currency when the recharge switch is off', () => {
@@ -200,30 +201,40 @@ describe.each(sites)('recharge price on a $name', (site) => {
   })
 })
 
+describe('recharge price with the production settings', () => {
+  it('shows the USD price unchanged when Price is 1 on a USD site', () => {
+    expect(formatPrice(tokenModel, 'input', 'M', true, 1, 1)).toBe('$2')
+    expect(formatRequestPrice(requestModel, true, 1, 1)).toBe('$0.5')
+    expect(
+      formatGroupPrice(tokenModel, 'vip', 'input', 'M', true, 1, 1, groupRatio)
+    ).toBe('$4')
+  })
+})
+
 describe('recharge price currency label', () => {
-  it('labels token prices CNY per 1M tokens in recharge mode on a USD site', () => {
+  it('labels token prices USD per 1M tokens in recharge mode', () => {
     render(
       <ModelPriceCell
         model={tokenModel}
         options={{ showRechargePrice: true, priceRate: PRICE_RATE }}
       />
     )
-    expect(screen.getByText('CNY / 1M tokens')).toBeInTheDocument()
-    expect(screen.getByText('13.6')).toBeInTheDocument()
+    expect(screen.getByText('USD / 1M tokens')).toBeInTheDocument()
+    expect(screen.getByText('3')).toBeInTheDocument()
   })
 
-  it('labels per-request prices CNY per request in recharge mode on a USD site', () => {
+  it('labels per-request prices USD per request in recharge mode', () => {
     render(
       <ModelPriceCell
         model={requestModel}
         options={{ showRechargePrice: true, priceRate: PRICE_RATE }}
       />
     )
-    expect(screen.getByText('CNY / request')).toBeInTheDocument()
-    expect(screen.getByText('3.4')).toBeInTheDocument()
+    expect(screen.getByText('USD / request')).toBeInTheDocument()
+    expect(screen.getByText('0.75')).toBeInTheDocument()
   })
 
-  it('keeps the USD label when the recharge switch is off', () => {
+  it('shows the plain USD price when the recharge switch is off', () => {
     render(
       <ModelPriceCell
         model={tokenModel}
@@ -234,7 +245,24 @@ describe('recharge price currency label', () => {
     expect(screen.getByText('2')).toBeInTheDocument()
   })
 
-  it('labels recharge prices CNY on a TOKENS site', () => {
+  it('labels recharge prices USD on a CNY site without converting to RMB', () => {
+    useSite({ quotaDisplayType: 'CNY', usdExchangeRate: 7 })
+    render(
+      <ModelPriceCell
+        model={tokenModel}
+        options={{
+          showRechargePrice: true,
+          priceRate: PRICE_RATE,
+          usdExchangeRate: 7,
+        }}
+      />
+    )
+    expect(screen.getByText('USD / 1M tokens')).toBeInTheDocument()
+    expect(screen.getByText('3')).toBeInTheDocument()
+    expect(screen.queryByText(/CNY/)).not.toBeInTheDocument()
+  })
+
+  it('labels recharge prices USD on a TOKENS site', () => {
     useSite({ quotaDisplayType: 'TOKENS' })
     render(
       <ModelPriceCell
@@ -242,24 +270,25 @@ describe('recharge price currency label', () => {
         options={{ showRechargePrice: true, priceRate: PRICE_RATE }}
       />
     )
-    expect(screen.getByText('CNY / 1M tokens')).toBeInTheDocument()
+    expect(screen.getByText('USD / 1M tokens')).toBeInTheDocument()
   })
 })
 
 describe('recharge price in the tiered pricing breakdown', () => {
-  it('shows tier token prices as RMB at the recharge price on a USD site', () => {
+  it('shows tier token prices in USD at the recharge price on a CNY site', () => {
+    useSite({ quotaDisplayType: 'CNY', usdExchangeRate: 7 })
     render(
       <DynamicPricingBreakdown
         billingExpr={tieredModel.billing_expr}
         taskPriceOptions={{
           showRechargePrice: true,
           priceRate: PRICE_RATE,
-          usdExchangeRate: 1,
+          usdExchangeRate: 7,
         }}
       />
     )
-    expect(screen.getAllByText('¥13.6000').length).toBeGreaterThan(0)
-    expect(screen.queryByText('$2.0000')).not.toBeInTheDocument()
+    expect(screen.getAllByText('$3.0000').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/¥/)).not.toBeInTheDocument()
   })
 
   it('keeps tier token prices in USD when the recharge switch is off', () => {
@@ -274,5 +303,6 @@ describe('recharge price in the tiered pricing breakdown', () => {
       />
     )
     expect(screen.getAllByText('$2.0000').length).toBeGreaterThan(0)
+    expect(screen.queryByText('$3.0000')).not.toBeInTheDocument()
   })
 })

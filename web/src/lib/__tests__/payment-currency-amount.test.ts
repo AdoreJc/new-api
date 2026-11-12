@@ -48,12 +48,12 @@ afterEach(() => {
 
 describe('formatPaymentCurrencyAmount', () => {
   test.each<CurrencyDisplayType>(['USD', 'CNY', 'CUSTOM', 'TOKENS'])(
-    'always renders Epay amounts as ¥ when the display type is %s',
+    'always renders payment amounts as $ when the display type is %s',
     (displayType) => {
       setDisplayType(displayType)
 
-      expect(formatPaymentCurrencyAmount(203.93, { locale: 'en-US' })).toBe(
-        '¥203.93'
+      expect(formatPaymentCurrencyAmount(27.94, { locale: 'en-US' })).toBe(
+        '$27.94'
       )
     }
   )
@@ -61,29 +61,27 @@ describe('formatPaymentCurrencyAmount', () => {
   test('does not apply any exchange rate', () => {
     setDisplayType('CNY')
 
-    expect(formatPaymentCurrencyAmount(73, { locale: 'en-US' })).toBe('¥73')
+    expect(formatPaymentCurrencyAmount(73, { locale: 'en-US' })).toBe('$73')
   })
 
-  test('differs from formatLocalCurrencyAmount under the USD display type', () => {
-    setDisplayType('USD')
+  test('differs from formatLocalCurrencyAmount under the CNY display type', () => {
+    setDisplayType('CNY')
 
-    expect(formatLocalCurrencyAmount(203.93, { locale: 'en-US' })).toBe(
-      '$203.93'
-    )
-    expect(formatPaymentCurrencyAmount(203.93, { locale: 'en-US' })).toBe(
-      '¥203.93'
+    expect(formatLocalCurrencyAmount(27.94, { locale: 'en-US' })).toBe('¥27.94')
+    expect(formatPaymentCurrencyAmount(27.94, { locale: 'en-US' })).toBe(
+      '$27.94'
     )
   })
 
   test('uses at most two fraction digits and does not abbreviate', () => {
     expect(formatPaymentCurrencyAmount(203.926, { locale: 'en-US' })).toBe(
-      '¥203.93'
+      '$203.93'
     )
     expect(formatPaymentCurrencyAmount(0.126, { locale: 'en-US' })).toBe(
-      '¥0.13'
+      '$0.13'
     )
     expect(formatPaymentCurrencyAmount(12345.6, { locale: 'en-US' })).toBe(
-      '¥12,345.6'
+      '$12,345.6'
     )
   })
 
@@ -93,17 +91,17 @@ describe('formatPaymentCurrencyAmount', () => {
         locale: 'en-US',
         digitsLarge: 4,
       })
-    ).toBe('¥1.2346')
+    ).toBe('$1.2346')
   })
 
-  test('keeps the CNY currency for zh locales', () => {
-    setDisplayType('USD')
+  test('keeps the plain $ symbol for zh locales', () => {
+    setDisplayType('CNY')
 
-    expect(formatPaymentCurrencyAmount(203.93, { locale: 'zh-CN' })).toBe(
-      '¥203.93'
+    expect(formatPaymentCurrencyAmount(27.94, { locale: 'zh-CN' })).toBe(
+      '$27.94'
     )
-    expect(formatPaymentCurrencyAmount(203.93, { locale: 'zh-TW' })).toBe(
-      '¥203.93'
+    expect(formatPaymentCurrencyAmount(27.94, { locale: 'zh-TW' })).toBe(
+      '$27.94'
     )
   })
 

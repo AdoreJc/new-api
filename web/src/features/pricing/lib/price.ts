@@ -102,8 +102,8 @@ function hasRatio(value: number | null | undefined): boolean {
 }
 
 /*
- * Recharge prices: `showWithRecharge` turns the USD price into the RMB paid
- * through the recharge channel (USD × `priceRate`, shown as ¥) — see
+ * Recharge prices: `showWithRecharge` turns the USD price into the US dollars
+ * paid for that credit (USD × `priceRate`, shown as $) — see
  * formatModelPriceFromUSD. The positional `_usdExchangeRate` argument is kept
  * for call-site compatibility; recharge prices no longer divide by it.
  */
