@@ -31,6 +31,7 @@ import (
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/service/contentmoderation"
 	"github.com/QuantumNous/new-api/service/promptaudit"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -138,6 +139,10 @@ func main() {
 
 	// Prompt audit workers, event writer and retention cleanup (idle until enabled)
 	promptaudit.Start()
+
+	// Content moderation workers, recorder, hash blocklist refresh and
+	// retention cleanup (idle while moderation is off)
+	contentmoderation.Start()
 
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()

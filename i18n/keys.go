@@ -54,6 +54,9 @@ const (
 	MsgRelayRetryNoAvailableChannel      = "relay.retry_no_available_channel"
 	MsgRelayAccessTokenUnsupported       = "relay.access_token_unsupported"
 
+	// A request blocked by content moderation; names no category.
+	MsgContentModerationBlocked = "content_moderation.blocked"
+
 	MsgQuotaBoundSubscriptionInsufficient          = "quota.bound_subscription_insufficient"
 	MsgRelaySubscriptionAccountLimited             = "relay.subscription_account_limited"
 	MsgRelaySubscriptionAccountLimitedNoReset      = "relay.subscription_account_limited_no_reset"
@@ -92,6 +95,11 @@ const (
 	MsgEmailSecurityNoticeSubject = "email.security_notice.subject"
 	MsgEmailSecurityNoticeChanged = "email.security_notice.changed"
 	MsgEmailSecurityNoticeAdvice  = "email.security_notice.advice"
+
+	MsgEmailContentModerationHitSubject      = "email.content_moderation.hit_subject"
+	MsgEmailContentModerationHitBody         = "email.content_moderation.hit_body"
+	MsgEmailContentModerationDisabledSubject = "email.content_moderation.disabled_subject"
+	MsgEmailContentModerationDisabledBody    = "email.content_moderation.disabled_body"
 
 	MsgSecurityEventPasswordUpdated      = "email.security_event.password_updated"
 	MsgSecurityEventEmailChangeRequested = "email.security_event.email_change_requested"

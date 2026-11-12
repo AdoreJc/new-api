@@ -231,6 +231,29 @@ func SetApiRouter(router *gin.Engine) {
 			promptAuditRoute.POST("/events/delete-preview", controller.PreviewPromptAuditEventDeletion)
 			promptAuditRoute.POST("/events/delete-by-filter", controller.DeletePromptAuditEventsByFilter)
 		}
+		// Content moderation stores excerpts of user input and can disable
+		// users, so the whole group is root-only.
+		contentModerationRoute := apiRouter.Group("/content_moderation")
+		contentModerationRoute.Use(middleware.RootAuth())
+		{
+			contentModerationRoute.GET("/config", controller.GetContentModerationConfig)
+			contentModerationRoute.PUT("/config", controller.UpdateContentModerationConfig)
+			contentModerationRoute.POST("/allowlist", controller.UpdateContentModerationAllowlist)
+			contentModerationRoute.POST("/probe", middleware.CriticalRateLimit(), controller.ProbeContentModerationEngine)
+			contentModerationRoute.GET("/runtime", controller.GetContentModerationRuntime)
+			contentModerationRoute.GET("/events", controller.GetContentModerationEvents)
+			contentModerationRoute.GET("/events/:id", controller.GetContentModerationEvent)
+			contentModerationRoute.DELETE("/events/:id", controller.DeleteContentModerationEvent)
+			contentModerationRoute.POST("/events/batch-delete", controller.BatchDeleteContentModerationEvents)
+			contentModerationRoute.POST("/events/delete-preview", controller.PreviewContentModerationEventDeletion)
+			contentModerationRoute.POST("/events/delete-by-filter", controller.DeleteContentModerationEventsByFilter)
+			contentModerationRoute.DELETE("/hashes/:hash", controller.DeleteContentModerationHash)
+			contentModerationRoute.DELETE("/hashes", controller.ClearContentModerationHashes)
+			contentModerationRoute.GET("/keyword_lists", controller.GetContentModerationKeywordLists)
+			contentModerationRoute.GET("/keyword_lists/:name", controller.GetContentModerationKeywordList)
+			contentModerationRoute.PUT("/keyword_lists/:name", controller.SaveContentModerationKeywordList)
+			contentModerationRoute.DELETE("/keyword_lists/:name", controller.DeleteContentModerationKeywordList)
+		}
 		optionRoute := apiRouter.Group("/option")
 		optionRoute.Use(middleware.RootAuth())
 		{

@@ -493,6 +493,22 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'option.update': 'Updated system setting {{key}}',
   'prompt_audit.event_view': 'Viewed prompt audit event {{id}}',
   'prompt_audit.events_delete': 'Deleted {{count}} prompt audit events',
+  'content_moderation.events_delete':
+    'Deleted {{count}} content moderation events',
+  'content_moderation.allowlist_add':
+    'Added user {{target_user_id}} to the content moderation allowlist',
+  'content_moderation.allowlist_remove':
+    'Removed user {{target_user_id}} from the content moderation allowlist',
+  'content_moderation.hash_delete':
+    'Removed input hash {{hash}} from the content moderation blocklist',
+  'content_moderation.hashes_clear':
+    'Cleared {{count}} input hashes from the content moderation blocklist',
+  'content_moderation.keyword_list_save':
+    'Saved content moderation keyword list {{name}} ({{count}} keywords)',
+  'content_moderation.keyword_list_delete':
+    'Deleted content moderation keyword list {{name}}',
+  'content_moderation.auto_disable':
+    'Content moderation disabled user {{username}} (ID: {{target_user_id}}) after {{violations}} flagged requests',
   'option.passkey_domains':
     'Updated Passkey domains: removed {{domains}}; affected {{known}}; unknown {{unknown}}',
   'option.passkey_domains_confirmed':
