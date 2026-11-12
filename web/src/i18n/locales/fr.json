@@ -7544,6 +7544,13 @@
     "Payment methods must be a JSON array of objects with string values": "Les moyens de paiement doivent être un tableau JSON d’objets dont les valeurs sont des chaînes",
     "Only alipay and wxpay payment methods can use the Stripe channel, got {{type}}": "Seuls les moyens de paiement alipay et wxpay peuvent utiliser le canal Stripe, reçu {{type}}",
     "Unsupported payment channel {{provider}} for payment method {{type}}": "Canal de paiement {{provider}} non pris en charge pour le moyen de paiement {{type}}",
-    "Payment method {{type}} uses the Stripe channel and must be configured only once": "Le moyen de paiement {{type}} utilise le canal Stripe et ne doit être configuré qu’une seule fois"
+    "Payment method {{type}} uses the Stripe channel and must be configured only once": "Le moyen de paiement {{type}} utilise le canal Stripe et ne doit être configuré qu’une seule fois",
+    "Enable Epay": "Activer Epay",
+    "Enable Stripe": "Activer Stripe",
+    "Enable Creem": "Activer Creem",
+    "When off, this gateway is hidden from users and new orders are rejected. Callbacks for orders already placed are still processed.": "Désactivée, cette passerelle est masquée aux utilisateurs et les nouvelles commandes sont refusées. Les rappels des commandes déjà passées sont toujours traités.",
+    "Enable payment method {{name}}": "Activer le moyen de paiement {{name}}",
+    "This payment channel is disabled": "Ce canal de paiement est désactivé",
+    "The enabled field of payment method {{type}} must be true or false": "Le champ enabled du moyen de paiement {{type}} doit valoir true ou false"
   }
 }

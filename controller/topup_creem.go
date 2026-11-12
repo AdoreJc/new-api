@@ -65,6 +65,10 @@ type CreemAdaptor struct {
 }
 
 func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
+	if !setting.CreemEnabled {
+		paymentError(c, common.NewMessage("This payment channel is disabled"))
+		return
+	}
 	if req.PaymentMethod != model.PaymentMethodCreem {
 		paymentError(c, common.NewMessage("Unsupported payment channel"))
 		return

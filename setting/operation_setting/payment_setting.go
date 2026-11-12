@@ -15,6 +15,10 @@ type PaymentSetting struct {
 
 const CurrentComplianceTermsVersion = "v1"
 
+// EpayEnabled is the administrator switch for new Epay orders. Epay callbacks
+// for existing orders are processed whatever its value.
+var EpayEnabled = true
+
 // 默认配置
 var paymentSetting = PaymentSetting{
 	AmountOptions:  []int{10, 20, 50, 100, 200, 500},

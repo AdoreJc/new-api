@@ -60,6 +60,8 @@ export type PaymentMethodData = {
   color?: string
   /** Gateway the method is paid through; omitted means Epay. */
   provider?: string
+  /** "false" switches the method off for new orders; omitted means enabled. */
+  enabled?: string
 }
 
 type PaymentMethodDialogProps = {

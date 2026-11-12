@@ -67,6 +67,9 @@ func TestValidatePayMethodsJsonString(t *testing.T) {
 		{"unknown provider", `[{"name":"Alipay","type":"alipay","provider":"paypal"}]`, "Unsupported payment channel paypal for payment method alipay"},
 		{"stripe type configured twice", `[{"name":"A","type":"alipay","provider":"stripe"},{"name":"B","type":"alipay"}]`, "Payment method alipay uses the Stripe channel and must be configured only once"},
 		{"non-string value", `[{"name":"Custom","type":"custom1","min_topup":50}]`, "Payment methods must be a JSON array of objects with string values"},
+		{"enabled switch values", `[{"name":"Alipay","type":"alipay","enabled":"false"},{"name":"Custom","type":"custom1","enabled":"true"}]`, ""},
+		{"boolean enabled value", `[{"name":"Alipay","type":"alipay","enabled":false}]`, "Payment methods must be a JSON array of objects with string values"},
+		{"unknown enabled value", `[{"name":"Alipay","type":"alipay","enabled":"no"}]`, "The enabled field of payment method alipay must be true or false"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -340,6 +340,10 @@ func getWaffoPancakeBuyerIdentity(user *model.User) string {
 }
 
 func RequestWaffoPancakePay(c *gin.Context) {
+	if !setting.WaffoPancakeEnabled || operation_setting.IsPayMethodTypeDisabled(model.PaymentMethodWaffoPancake) {
+		paymentError(c, common.NewMessage("This payment channel is disabled"))
+		return
+	}
 	if !isWaffoPancakeTopUpEnabled() {
 		paymentError(c, common.NewMessage("Waffo Pancake configuration is incomplete"))
 		return

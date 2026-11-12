@@ -54,6 +54,7 @@ import { confirmPaymentCompliance } from '../api'
 import {
   SettingsForm,
   SettingsSwitchContent,
+  SettingsSwitchField,
   SettingsSwitchItem,
 } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
@@ -102,6 +103,7 @@ const paymentSchema = z.object({
     if (!trimmed) return true
     return /^https?:\/\//.test(trimmed)
   }, 'Provide a valid callback URL starting with http:// or https://'),
+  EpayEnabled: z.boolean(),
   EpayId: z.string(),
   EpayKey: z.string(),
   Price: z.coerce.number().min(0),
@@ -143,12 +145,14 @@ const paymentSchema = z.object({
       })
     }
   }),
+  StripeEnabled: z.boolean(),
   StripeApiSecret: z.string(),
   StripeWebhookSecret: z.string(),
   StripePriceId: z.string(),
   StripeUnitPrice: z.coerce.number().min(0),
   StripeMinTopUp: z.coerce.number().min(0),
   StripePromotionCodesEnabled: z.boolean(),
+  CreemEnabled: z.boolean(),
   CreemApiKey: z.string(),
   CreemWebhookSecret: z.string(),
   CreemTestMode: z.boolean(),
@@ -175,6 +179,7 @@ const paymentSchema = z.object({
   WaffoMinTopUp: z.coerce.number().min(1),
   WaffoNotifyUrl: z.string(),
   WaffoReturnUrl: z.string(),
+  WaffoPancakeEnabled: z.boolean(),
   WaffoPancakeMerchantID: z.string(),
   WaffoPancakePrivateKey: z.string(),
   WaffoPancakeReturnURL: z.string(),
@@ -419,6 +424,12 @@ export function PaymentSettingsSection({
   }, [defaultsSignature, form])
 
   const onSubmit = async (values: PaymentFormValues) => {
+    const gatewaySwitchKeys = [
+      'EpayEnabled',
+      'StripeEnabled',
+      'CreemEnabled',
+      'WaffoPancakeEnabled',
+    ] as const
     const sanitized = {
       PayAddress: removeTrailingSlash(values.PayAddress),
       EpayId: values.EpayId.trim(),
@@ -509,6 +520,12 @@ export function PaymentSettingsSection({
     }
 
     const updates: Array<{ key: string; value: string | number | boolean }> = []
+
+    for (const key of gatewaySwitchKeys) {
+      if (values[key] !== initialRef.current[key]) {
+        updates.push({ key, value: values[key] })
+      }
+    }
 
     if (sanitized.PayAddress !== initial.PayAddress) {
       updates.push({ key: 'PayAddress', value: sanitized.PayAddress })
@@ -1148,6 +1165,18 @@ export function PaymentSettingsSection({
                   </p>
                 </div>
 
+                <SettingsSwitchField
+                  controlId='payment-epay-enabled'
+                  checked={currentFormValues.EpayEnabled}
+                  onCheckedChange={(checked) =>
+                    setPaymentValue('EpayEnabled', checked)
+                  }
+                  label={t('Enable Epay')}
+                  description={t(
+                    'When off, this gateway is hidden from users and new orders are rejected. Callbacks for orders already placed are still processed.'
+                  )}
+                />
+
                 <Alert>
                   <ShieldAlert className='h-4 w-4' />
                   <AlertTitle>{t('Epay safety reminder')}</AlertTitle>
@@ -1266,6 +1295,18 @@ export function PaymentSettingsSection({
                     {t('Configuration for Stripe payment integration')}
                   </p>
                 </div>
+
+                <SettingsSwitchField
+                  controlId='payment-stripe-enabled'
+                  checked={currentFormValues.StripeEnabled}
+                  onCheckedChange={(checked) =>
+                    setPaymentValue('StripeEnabled', checked)
+                  }
+                  label={t('Enable Stripe')}
+                  description={t(
+                    'When off, this gateway is hidden from users and new orders are rejected. Callbacks for orders already placed are still processed.'
+                  )}
+                />
 
                 <div className='rounded-md bg-blue-50 p-4 text-sm text-blue-900 dark:bg-blue-950 dark:text-blue-100'>
                   <p className='mb-2 font-medium'>
@@ -1459,6 +1500,18 @@ export function PaymentSettingsSection({
                   </p>
                 </div>
 
+                <SettingsSwitchField
+                  controlId='payment-creem-enabled'
+                  checked={currentFormValues.CreemEnabled}
+                  onCheckedChange={(checked) =>
+                    setPaymentValue('CreemEnabled', checked)
+                  }
+                  label={t('Enable Creem')}
+                  description={t(
+                    'When off, this gateway is hidden from users and new orders are rejected. Callbacks for orders already placed are still processed.'
+                  )}
+                />
+
                 <div className='rounded-md bg-blue-50 p-4 text-sm text-blue-900 dark:bg-blue-950 dark:text-blue-100'>
                   <p className='mb-2 font-medium'>
                     {t('Webhook Configuration:')}
@@ -1613,6 +1666,18 @@ export function PaymentSettingsSection({
               value='waffo-pancake'
               className={paymentTabContentClassName}
             >
+              <SettingsSwitchField
+                className='mb-6'
+                controlId='payment-waffo-pancake-enabled'
+                checked={currentFormValues.WaffoPancakeEnabled}
+                onCheckedChange={(checked) =>
+                  setPaymentValue('WaffoPancakeEnabled', checked)
+                }
+                label={t('Enable Waffo Pancake')}
+                description={t(
+                  'When off, this gateway is hidden from users and new orders are rejected. Callbacks for orders already placed are still processed.'
+                )}
+              />
               <WaffoPancakeSettingsSection
                 defaultValues={waffoPancakeDefaultValues}
                 values={waffoPancakeValues}

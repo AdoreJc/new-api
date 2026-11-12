@@ -23,6 +23,10 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
 	}
+	if !setting.CreemEnabled {
+		common.ApiErrorT(c, "This payment channel is disabled")
+		return
+	}
 
 	var req SubscriptionCreemPayRequest
 

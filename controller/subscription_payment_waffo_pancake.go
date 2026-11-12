@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 	"github.com/thanhpk/randstr"
@@ -22,6 +23,10 @@ type SubscriptionWaffoPancakePayRequest struct {
 
 func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
+		return
+	}
+	if !setting.WaffoPancakeEnabled || operation_setting.IsPayMethodTypeDisabled(model.PaymentMethodWaffoPancake) {
+		common.ApiErrorT(c, "This payment channel is disabled")
 		return
 	}
 

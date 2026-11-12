@@ -7544,6 +7544,13 @@
     "Payment methods must be a JSON array of objects with string values": "支付方式必須是 JSON 陣列，且每項的值都是字串",
     "Only alipay and wxpay payment methods can use the Stripe channel, got {{type}}": "只有 alipay 和 wxpay 支付方式可以使用 Stripe 渠道，目前為 {{type}}",
     "Unsupported payment channel {{provider}} for payment method {{type}}": "支付方式 {{type}} 的支付渠道 {{provider}} 不受支援",
-    "Payment method {{type}} uses the Stripe channel and must be configured only once": "支付方式 {{type}} 使用 Stripe 渠道，只能設定一次"
+    "Payment method {{type}} uses the Stripe channel and must be configured only once": "支付方式 {{type}} 使用 Stripe 渠道，只能設定一次",
+    "Enable Epay": "啟用易支付",
+    "Enable Stripe": "啟用 Stripe",
+    "Enable Creem": "啟用 Creem",
+    "When off, this gateway is hidden from users and new orders are rejected. Callbacks for orders already placed are still processed.": "關閉後，使用者看不到此支付管道，新訂單會被拒絕；已建立訂單的支付回呼仍會正常處理。",
+    "Enable payment method {{name}}": "啟用支付方式 {{name}}",
+    "This payment channel is disabled": "該支付管道已關閉",
+    "The enabled field of payment method {{type}} must be true or false": "支付方式 {{type}} 的 enabled 欄位必須為 true 或 false"
   }
 }

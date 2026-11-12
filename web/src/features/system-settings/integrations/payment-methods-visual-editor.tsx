@@ -30,6 +30,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import { Switch } from '@/components/ui/switch'
 
 import { safeJsonParseWithValidation } from '../utils/json-parser'
 import { isArray } from '../utils/json-validators'
@@ -37,6 +38,7 @@ import {
   PaymentMethodDialog,
   type PaymentMethodData,
 } from './payment-method-dialog'
+import { isPaymentMethodEnabled, setPaymentMethodEnabled } from './utils'
 
 type PaymentMethodsVisualEditorProps = {
   value: string
@@ -130,7 +132,8 @@ export function PaymentMethodsVisualEditor({
         (!('icon' in item) || typeof item.icon === 'string') &&
         (!('min_topup' in item) || typeof item.min_topup === 'string') &&
         (!('color' in item) || typeof item.color === 'string') &&
-        (!('provider' in item) || typeof item.provider === 'string')
+        (!('provider' in item) || typeof item.provider === 'string') &&
+        (!('enabled' in item) || typeof item.enabled === 'string')
     )
   }, [value])
 
@@ -165,7 +168,11 @@ export function PaymentMethodsVisualEditor({
           item.type === editData.type
       )
       if (index !== -1) {
-        updatedArray[index] = data
+        // The dialog does not edit the switch, so an edit keeps it.
+        updatedArray[index] =
+          editData.enabled === undefined
+            ? data
+            : { ...data, enabled: editData.enabled }
       } else {
         updatedArray.push(data)
       }
@@ -197,6 +204,18 @@ export function PaymentMethodsVisualEditor({
 
     onChange(JSON.stringify(updatedArray, null, 2))
   }
+
+  const handleToggleEnabled = (method: PaymentMethodData, enabled: boolean) => {
+    onChange(setPaymentMethodEnabled(value, method, enabled))
+  }
+
+  const renderEnabledSwitch = (method: PaymentMethodData) => (
+    <Switch
+      checked={isPaymentMethodEnabled(method)}
+      onCheckedChange={(checked) => handleToggleEnabled(method, checked)}
+      aria-label={t('Enable payment method {{name}}', { name: method.name })}
+    />
+  )
 
   const handleEdit = (method: PaymentMethodData) => {
     setEditData(method)
@@ -368,6 +387,11 @@ export function PaymentMethodsVisualEditor({
                   ),
               },
               {
+                id: 'enabled',
+                header: t('Enabled'),
+                cell: (method) => renderEnabledSwitch(method),
+              },
+              {
                 id: 'actions',
                 header: t('Actions'),
                 className: 'text-right',
@@ -396,6 +420,7 @@ export function PaymentMethodsVisualEditor({
                 method.min_topup,
                 method.color,
                 method.provider,
+                method.enabled,
               ]
                 .filter(Boolean)
                 .join('-')
@@ -414,7 +439,8 @@ export function PaymentMethodsVisualEditor({
                         </span>
                       )}
                     </div>
-                    <div className='flex gap-1'>
+                    <div className='flex items-center gap-1'>
+                      {renderEnabledSwitch(method)}
                       <Button
                         type='button'
                         variant='ghost'

@@ -107,8 +107,11 @@ func TestWaffoWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	setting.WaffoApiKey = "api"
 	require.True(t, isWaffoWebhookEnabled())
 
+	// WaffoEnabled only switches new orders; callbacks for existing orders
+	// are still accepted.
 	setting.WaffoEnabled = false
-	require.False(t, isWaffoWebhookEnabled())
+	require.True(t, isWaffoWebhookEnabled())
+	require.False(t, isWaffoTopUpEnabled())
 
 	setting.WaffoEnabled = true
 	setting.WaffoSandbox = true
@@ -132,9 +135,8 @@ func TestWaffoPancakeWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 		setting.WaffoPancakeProductID = originalProductID
 	})
 
-	// Presence of all three credentials enables the gateway. Webhook public
-	// keys are bundled in the SDK and there is no separate Enabled toggle —
-	// clear any of the three fields to disable.
+	// Presence of all three credentials configures the gateway. Webhook public
+	// keys are bundled in the SDK; WaffoPancakeEnabled only switches new orders.
 	setting.WaffoPancakeMerchantID = ""
 	setting.WaffoPancakePrivateKey = "private"
 	setting.WaffoPancakeProductID = "product"

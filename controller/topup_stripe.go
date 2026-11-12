@@ -70,6 +70,10 @@ func (*StripeAdaptor) RequestAmount(c *gin.Context, req *StripePayRequest) {
 }
 
 func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
+	if !setting.StripeEnabled {
+		paymentError(c, common.NewMessage("This payment channel is disabled"))
+		return
+	}
 	if !isStripeCheckoutPaymentMethod(req.PaymentMethod) {
 		paymentError(c, common.NewMessage("Unsupported payment channel"))
 		return
@@ -142,12 +146,16 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 }
 
 // isStripeCheckoutPaymentMethod reports whether a wallet or subscription order may
-// pay through Stripe Checkout with paymentMethod: the built-in "stripe" method,
-// or an alipay/wxpay method the administrator routed through Stripe while
+// pay through Stripe Checkout with paymentMethod while the Stripe switch is on:
+// the built-in "stripe" method unless its PayMethods entry is switched off, or
+// an enabled alipay/wxpay method the administrator routed through Stripe while
 // Stripe top-up (and with it the Stripe webhook) is enabled.
 func isStripeCheckoutPaymentMethod(paymentMethod string) bool {
+	if !setting.StripeEnabled {
+		return false
+	}
 	if paymentMethod == model.PaymentMethodStripe {
-		return true
+		return !operation_setting.IsPayMethodTypeDisabled(model.PaymentMethodStripe)
 	}
 	return isStripeTopUpEnabled() && operation_setting.ContainsStripePayMethod(paymentMethod)
 }

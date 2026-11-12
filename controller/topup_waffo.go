@@ -149,6 +149,10 @@ func RequestWaffoPay(c *gin.Context) {
 		paymentError(c, common.NewMessage("Waffo payment is not enabled"))
 		return
 	}
+	if operation_setting.IsPayMethodTypeDisabled(model.PaymentMethodWaffo) {
+		paymentError(c, common.NewMessage("This payment channel is disabled"))
+		return
+	}
 
 	var req WaffoPayRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

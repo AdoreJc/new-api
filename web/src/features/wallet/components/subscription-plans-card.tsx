@@ -67,6 +67,7 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
+import { PAYMENT_TYPES } from '../constants'
 import { getEpayPayMethods, getStripeRoutedPayMethods } from '../lib/payment'
 import type { TopupInfo } from '../types'
 
@@ -130,6 +131,11 @@ export function SubscriptionPlansCard({
   const epayMethods = useMemo(
     () => getEpayPayMethods(topupInfo?.pay_methods),
     [topupInfo?.pay_methods]
+  )
+  // The server lists the built-in Stripe card entry unless the administrator
+  // switched it off.
+  const stripeCardEnabled = !!topupInfo?.pay_methods?.some(
+    (m) => m.type === PAYMENT_TYPES.STRIPE
   )
   const stripeRoutedMethods = useMemo(
     () => getStripeRoutedPayMethods(topupInfo?.pay_methods),
@@ -680,6 +686,7 @@ export function SubscriptionPlansCard({
         }}
         plan={selectedPlan}
         enableStripe={enableStripe}
+        stripeCardEnabled={stripeCardEnabled}
         enableCreem={enableCreem}
         enableWaffoPancake={enableWaffoPancake}
         enableOnlineTopUp={enableOnlineTopUp}

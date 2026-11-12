@@ -7,11 +7,28 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
 
+// Each gateway has two checks:
+//
+//   - is<Gateway>WebhookEnabled: the gateway is configured well enough to verify
+//     and settle callbacks. It ignores the administrator's gateway and
+//     payment-method switches, so an order created before a switch was turned
+//     off is still credited, expired or failed when its callback arrives.
+//   - is<Gateway>TopUpEnabled: the gateway also accepts new orders, which needs
+//     its administrator switch to be on as well.
+
 func isPaymentComplianceConfirmed() bool {
 	return operation_setting.IsPaymentComplianceConfirmed()
 }
 
 func isStripeTopUpEnabled() bool {
+	return setting.StripeEnabled && isStripeWebhookEnabled()
+}
+
+func isStripeWebhookConfigured() bool {
+	return strings.TrimSpace(setting.StripeWebhookSecret) != ""
+}
+
+func isStripeWebhookEnabled() bool {
 	if !isPaymentComplianceConfirmed() {
 		return false
 	}
@@ -20,15 +37,11 @@ func isStripeTopUpEnabled() bool {
 		strings.TrimSpace(setting.StripePriceId) != ""
 }
 
-func isStripeWebhookConfigured() bool {
-	return strings.TrimSpace(setting.StripeWebhookSecret) != ""
-}
-
-func isStripeWebhookEnabled() bool {
-	return isStripeTopUpEnabled()
-}
-
 func isCreemTopUpEnabled() bool {
+	return setting.CreemEnabled && isCreemConfigured()
+}
+
+func isCreemConfigured() bool {
 	if !isPaymentComplianceConfirmed() {
 		return false
 	}
@@ -43,18 +56,13 @@ func isCreemWebhookConfigured() bool {
 }
 
 func isCreemWebhookEnabled() bool {
-	return isCreemTopUpEnabled() && isCreemWebhookConfigured()
+	return isCreemConfigured() && isCreemWebhookConfigured()
 }
 
+// isWaffoTopUpEnabled uses the existing WaffoEnabled option as Waffo's gateway
+// switch.
 func isWaffoTopUpEnabled() bool {
-	if !isPaymentComplianceConfirmed() {
-		return false
-	}
-	if !setting.WaffoEnabled {
-		return false
-	}
-
-	return isWaffoWebhookConfigured()
+	return setting.WaffoEnabled && isWaffoWebhookEnabled()
 }
 
 func isWaffoWebhookConfigured() bool {
@@ -70,33 +78,29 @@ func isWaffoWebhookConfigured() bool {
 }
 
 func isWaffoWebhookEnabled() bool {
-	return isWaffoTopUpEnabled()
+	return isPaymentComplianceConfirmed() && isWaffoWebhookConfigured()
 }
 
 func isWaffoPancakeTopUpEnabled() bool {
-	if !isPaymentComplianceConfirmed() {
-		return false
-	}
-	// Presence-of-credentials = enabled. Webhook public keys ship inside
+	return setting.WaffoPancakeEnabled && isWaffoPancakeWebhookEnabled()
+}
+
+func isWaffoPancakeWebhookConfigured() bool {
+	// Presence-of-credentials = configured. Webhook public keys ship inside
 	// the SDK; mode (test/prod) is read from each event.
 	return strings.TrimSpace(setting.WaffoPancakeMerchantID) != "" &&
 		strings.TrimSpace(setting.WaffoPancakePrivateKey) != "" &&
 		strings.TrimSpace(setting.WaffoPancakeProductID) != ""
 }
 
-func isWaffoPancakeWebhookConfigured() bool {
-	return isWaffoPancakeTopUpEnabled()
-}
-
 func isWaffoPancakeWebhookEnabled() bool {
-	return isWaffoPancakeTopUpEnabled()
+	return isPaymentComplianceConfirmed() && isWaffoPancakeWebhookConfigured()
 }
 
 func isEpayTopUpEnabled() bool {
-	if !isPaymentComplianceConfirmed() {
-		return false
-	}
-	return isEpayWebhookConfigured() && operation_setting.HasEpayPayMethods()
+	return operation_setting.EpayEnabled &&
+		isEpayWebhookEnabled() &&
+		operation_setting.HasEnabledEpayPayMethods()
 }
 
 func isEpayWebhookConfigured() bool {
@@ -106,5 +110,8 @@ func isEpayWebhookConfigured() bool {
 }
 
 func isEpayWebhookEnabled() bool {
-	return isEpayTopUpEnabled()
+	if !isPaymentComplianceConfirmed() {
+		return false
+	}
+	return isEpayWebhookConfigured() && operation_setting.HasEpayPayMethods()
 }
