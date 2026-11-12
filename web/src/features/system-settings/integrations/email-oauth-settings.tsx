@@ -103,16 +103,17 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
     oauthProvider !== props.saved.EmailOAuthProvider ||
     clientId.trim() !== props.saved.EmailOAuthClientId.trim() ||
     tenant.trim() !== props.saved.EmailOAuthTenant.trim() ||
-    secret.trim() !== '' ||
-    // The saved sender address decides whether the shared-mailbox
-    // permission is requested, and the test email uses it.
-    sender.trim() !== props.saved.EmailOAuthFrom.trim()
+    secret.trim() !== ''
+  // The sender address is sent with the authorization request, so the
+  // mailbox is authorized first and the address saved after; the test email
+  // uses the saved one.
+  const senderUnsaved = sender.trim() !== props.saved.EmailOAuthFrom.trim()
   const appSaved =
     props.saved.EmailOAuthClientId.trim() !== '' &&
     props.saved.EmailOAuthSecretConfigured
 
   const authorize = useMutation({
-    mutationFn: startEmailOAuthAuthorization,
+    mutationFn: () => startEmailOAuthAuthorization(sender.trim()),
     onSuccess: (response) => {
       const url = response.data?.authorization_url
       // The consent page belongs to the provider, outside this app.
@@ -144,15 +145,25 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
     revoke.isPending ||
     sendTest.isPending
   const microsoft = oauthProvider === 'microsoft'
-  const savedSender = props.saved.EmailOAuthFrom.trim()
   // Sending from a shared Microsoft mailbox needs a grant that includes
-  // Mail.Send.Shared; the server refuses instead of using the mailbox.
-  const sharedNeedsReauthorization =
+  // Mail.Send.Shared. The server refuses to save or use such an address
+  // without it, instead of sending from the authorized mailbox.
+  const needsSharedGrant = (address: string) =>
     microsoft &&
     authorized &&
-    savedSender !== '' &&
-    savedSender.toLowerCase() !== authorizedEmail.toLowerCase() &&
+    address !== '' &&
+    address.toLowerCase() !== authorizedEmail.toLowerCase() &&
     !props.saved.EmailOAuthSharedSendGranted
+  let sharedGrantWarning = ''
+  if (needsSharedGrant(props.saved.EmailOAuthFrom.trim())) {
+    sharedGrantWarning = t(
+      'Re-authorize the mailbox to send from the shared mailbox'
+    )
+  } else if (needsSharedGrant(sender.trim())) {
+    sharedGrantWarning = t(
+      'Re-authorize the mailbox with this sender address entered before saving it'
+    )
+  }
   const consoleLinks = microsoft
     ? [
         {
@@ -240,7 +251,7 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
               </p>
               <p>
                 {t(
-                  'To send from a shared mailbox, give the authorized account Send As permission on it in the Exchange admin center (Mailboxes > the shared mailbox > Delegation), enter it as the sender address below, save, and re-authorize.'
+                  'To send from a shared mailbox, give the authorized account Send As permission on it in the Exchange admin center (Mailboxes > the shared mailbox > Delegation), enter it as the sender address below, re-authorize, then save.'
                 )}
               </p>
             </>
@@ -365,7 +376,7 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
                     'Optional. Leave blank to send from the authorized mailbox. A shared mailbox needs Send As or Send on Behalf permission for the authorized account and works only with work or school accounts.'
                   )
                 : t(
-                    'Optional. Leave blank to send from the authorized mailbox. Must be a verified "Send mail as" address of this Gmail account, or the message may bounce.'
+                    'Optional. Leave blank to send from the authorized mailbox. Use a verified "Send mail as" address of this Gmail account; for other addresses Gmail may replace the From with the account address or bounce the message. Check the From line of the test email.'
                   )}
             </FormDescription>
             <FormMessage />
@@ -410,7 +421,7 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
             <Button
               type='button'
               variant='outline'
-              disabled={busy || appUnsaved}
+              disabled={busy || appUnsaved || senderUnsaved}
               onClick={() => sendTest.mutate()}
             >
               {t('Send test email')}
@@ -427,9 +438,9 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
             </Button>
           )}
         </div>
-        {sharedNeedsReauthorization && (
+        {sharedGrantWarning && (
           <p className='text-destructive text-sm' role='alert'>
-            {t('Re-authorize the mailbox to send from the shared mailbox')}
+            {sharedGrantWarning}
           </p>
         )}
         <FormDescription>{authorizeHint}</FormDescription>

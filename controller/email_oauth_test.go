@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -351,4 +352,100 @@ func TestEmailOAuthTestMessageSendsFromTheSenderAddress(t *testing.T) {
 	assert.Equal(t, "shared@contoso.example", body.Message.From.EmailAddress.Address)
 	require.Len(t, body.Message.ToRecipients, 1)
 	assert.Equal(t, "sender@contoso.example", body.Message.ToRecipients[0].EmailAddress.Address)
+}
+
+// updateEmailOption saves one option through the console endpoint.
+func updateEmailOption(t *testing.T, identity service.AuthIdentity, key string, value any) string {
+	t.Helper()
+	body, err := common.Marshal(OptionUpdateRequest{Key: key, Value: value})
+	require.NoError(t, err)
+	return securityEnrollmentRequest(http.MethodPut, "/api/option/", string(body), "", identity, UpdateOption).Body.String()
+}
+
+func TestEmailOAuthSharedSenderIsSavedOnlyWithAGrantThatCanUseIt(t *testing.T) {
+	const refused = `"message_key":"Re-authorize the mailbox with this sender address entered before saving it"`
+	identity, _ := setupEmailOAuthAuthorization(t, common.EmailOAuthProviderMicrosoft)
+	require.NoError(t, model.SaveEmailOAuthAuthorization(common.EmailOAuthGrant{
+		RefreshToken: "refresh-1", Email: "sender@contoso.example", Scopes: "https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read",
+	}))
+
+	// A draft is allowed while OAuth is not the sending method, but
+	// selecting OAuth with it is refused.
+	assert.Contains(t, updateEmailOption(t, identity, common.EmailOAuthFromOption, "shared@contoso.example"), `"success":true`)
+	assert.Contains(t, updateEmailOption(t, identity, "EmailProvider", "oauth"), refused)
+	assert.Equal(t, "smtp", common.OptionMap["EmailProvider"])
+	assert.Contains(t, updateEmailOption(t, identity, common.EmailOAuthFromOption, ""), `"success":true`)
+	assert.Contains(t, updateEmailOption(t, identity, "EmailProvider", "oauth"), `"success":true`)
+
+	// While OAuth sends: a shared sender is refused without Mail.Send.Shared,
+	// and the authorized mailbox itself (any case) is accepted.
+	assert.Contains(t, updateEmailOption(t, identity, common.EmailOAuthFromOption, "shared@contoso.example"), refused)
+	assert.Empty(t, common.OptionMap[common.EmailOAuthFromOption])
+	assert.Contains(t, updateEmailOption(t, identity, common.EmailOAuthFromOption, "Sender@Contoso.example"), `"success":true`)
+
+	require.NoError(t, model.SaveEmailOAuthAuthorization(common.EmailOAuthGrant{
+		RefreshToken: "refresh-2", Email: "sender@contoso.example", Scopes: "Mail.Send Mail.Send.Shared User.Read",
+	}))
+	assert.Contains(t, updateEmailOption(t, identity, common.EmailOAuthFromOption, "shared@contoso.example"), `"success":true`)
+	assert.Equal(t, "shared@contoso.example", common.OptionMap[common.EmailOAuthFromOption])
+}
+
+func TestEmailOAuthAuthorizeAsksForSharedScopeOnlyForAnotherMailbox(t *testing.T) {
+	const shared = "https://graph.microsoft.com/Mail.Send.Shared"
+	for _, test := range []struct {
+		name, saved, body string
+		wantShared        bool
+	}{
+		{"no sender", "", "", false},
+		{"pending shared sender", "", `{"sender":"shared@contoso.example"}`, true},
+		{"pending sender is the authorized mailbox", "", `{"sender":"SENDER@contoso.example"}`, false},
+		{"saved shared sender while the pending one is cleared", "shared@contoso.example", `{"sender":""}`, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			identity, _ := setupEmailOAuthAuthorization(t, common.EmailOAuthProviderMicrosoft)
+			common.OptionMap[common.EmailOAuthEmailOption] = "sender@contoso.example"
+			common.OptionMap[common.EmailOAuthFromOption] = test.saved
+			response := securityEnrollmentRequest(http.MethodPost, "/api/option/email_oauth/authorize", test.body, "", identity, StartEmailOAuthAuthorization)
+			var result securityEnrollmentResponse
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			require.True(t, result.Success, response.Body.String())
+			var data struct {
+				AuthorizationURL string `json:"authorization_url"`
+			}
+			require.NoError(t, common.Unmarshal(result.Data, &data))
+			authorizationURL, err := url.Parse(data.AuthorizationURL)
+			require.NoError(t, err)
+			scopes := strings.Fields(authorizationURL.Query().Get("scope"))
+			assert.Equal(t, test.wantShared, slices.Contains(scopes, shared), scopes)
+		})
+	}
+
+	t.Run("invalid pending sender", func(t *testing.T) {
+		identity, _ := setupEmailOAuthAuthorization(t, common.EmailOAuthProviderMicrosoft)
+		response := securityEnrollmentRequest(http.MethodPost, "/api/option/email_oauth/authorize", `{"sender":"a@example.com, b@example.com"}`, "", identity, StartEmailOAuthAuthorization)
+		assert.Contains(t, response.Body.String(), `"message_key":"Enter a single sender email address, or leave it blank to send from the authorized mailbox"`)
+		var flows int64
+		require.NoError(t, model.DB.Model(&model.AuthFlow{}).Where("purpose = ?", model.AuthFlowPurposeEmailOAuth).Count(&flows).Error)
+		assert.Zero(t, flows)
+	})
+}
+
+func TestEmailOAuthReauthorizationKeepsTheActiveSenderUsable(t *testing.T) {
+	identity, provider := setupEmailOAuthAuthorization(t, common.EmailOAuthProviderMicrosoft)
+	require.NoError(t, model.SaveEmailOAuthAuthorization(common.EmailOAuthGrant{
+		RefreshToken: "refresh-1", Email: "sender@contoso.example", Scopes: "Mail.Send Mail.Send.Shared User.Read",
+	}))
+	assert.Contains(t, updateEmailOption(t, identity, common.EmailOAuthFromOption, "shared@contoso.example"), `"success":true`)
+	assert.Contains(t, updateEmailOption(t, identity, "EmailProvider", "oauth"), `"success":true`)
+	// The consent screen returned a grant without Mail.Send.Shared.
+	provider.issue = func(url.Values) (int, string) {
+		return http.StatusOK, `{"access_token":"access-1","expires_in":3600,"refresh_token":"refresh-narrow","scope":"https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read"}`
+	}
+
+	authorization := startEmailOAuth(t, identity)
+	assert.Contains(t, strings.Fields(authorization.Get("scope")), "https://graph.microsoft.com/Mail.Send.Shared")
+	response := completeEmailOAuth(identity, `{"state":"`+authorization.Get("state")+`","code":"auth-code"}`)
+	assert.Contains(t, response.Body.String(), `"message_key":"The new authorization cannot send from the saved sender address. Clear the sender address or authorize an account that can send from it"`)
+	assert.Equal(t, "refresh-1", storedOption(t, common.EmailOAuthRefreshTokenOption))
+	assert.Equal(t, "refresh-1", common.OptionMap[common.EmailOAuthRefreshTokenOption])
 }

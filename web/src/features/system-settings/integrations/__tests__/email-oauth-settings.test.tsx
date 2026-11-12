@@ -245,7 +245,9 @@ describe('OAuth mailbox settings', () => {
     await waitFor(() =>
       expect(assign).toHaveBeenCalledWith('https://accounts.example/consent')
     )
-    expect(post).toHaveBeenCalledWith('/api/option/email_oauth/authorize')
+    expect(post).toHaveBeenCalledWith('/api/option/email_oauth/authorize', {
+      sender: '',
+    })
   })
 
   it('shows the authorized mailbox, locks the app and selects OAuth on save', async () => {
@@ -309,6 +311,39 @@ describe('OAuth mailbox settings', () => {
       key: 'EmailOAuthFrom',
       value: 'shared@example.com',
     })
+  })
+
+  it('authorizes with a new sender address before it is saved', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      data: { success: true, data: { authorization_url: 'https://x/consent' } },
+    })
+    vi.spyOn(window, 'location', 'get').mockReturnValue({
+      ...window.location,
+      assign: vi.fn(),
+    })
+    const user = renderEmail({
+      ...savedApp,
+      EmailProvider: 'oauth',
+      EmailOAuthProvider: 'microsoft',
+      EmailOAuthEmail: 'sender@contoso.example',
+    })
+    await user.type(
+      screen.getByRole('textbox', { name: 'Sender email address' }),
+      'shared@contoso.example'
+    )
+    expect(
+      screen.getByText(
+        'Re-authorize the mailbox with this sender address entered before saving it'
+      )
+    ).toBeVisible()
+    await user.click(
+      screen.getByRole('button', { name: 'Re-authorize mailbox' })
+    )
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/api/option/email_oauth/authorize', {
+        sender: 'shared@contoso.example',
+      })
+    )
   })
 
   it('rejects a sender field holding more than one address', async () => {

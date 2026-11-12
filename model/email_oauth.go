@@ -62,7 +62,7 @@ func validateEmailDeliveryOption(key, value string) error {
 	}
 	common.OptionMapRWMutex.RLock()
 	settings := make(map[string]string, len(emailDeliveryOptionKeys)+2)
-	for _, name := range slices.Concat(emailDeliveryOptionKeys, []string{common.EmailOAuthRefreshTokenOption, common.EmailOAuthEmailOption}) {
+	for _, name := range slices.Concat(emailDeliveryOptionKeys, []string{common.EmailOAuthRefreshTokenOption, common.EmailOAuthEmailOption, common.EmailOAuthScopesOption}) {
 		settings[name] = common.OptionMap[name]
 	}
 	common.OptionMapRWMutex.RUnlock()

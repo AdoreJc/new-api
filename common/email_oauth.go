@@ -37,8 +37,10 @@ import (
 //     Send on Behalf rights on that mailbox. /users/{from}/sendMail is not
 //     used because it also needs Full Access to the mailbox.
 //
-// Mail.Send.Shared is requested only while a sender address is set, so
-// existing grants and personal accounts keep the original scopes.
+// Mail.Send.Shared is requested only for a sender address other than the
+// authorized mailbox, so existing grants and personal accounts keep the
+// original scopes. While OAuth sends, a sender the grant cannot use is
+// refused when it is saved; the console authorizes first, then saves.
 const (
 	EmailOAuthProviderGoogle    = "google"
 	EmailOAuthProviderMicrosoft = "microsoft"
@@ -124,6 +126,8 @@ var (
 	// ErrEmailOAuthSharedReauthorize is returned instead of sending from the
 	// authorized mailbox when the grant cannot send from the shared one.
 	ErrEmailOAuthSharedReauthorize = NewMessage("Re-authorize the mailbox to send from the shared mailbox")
+	// ErrEmailOAuthSenderNeedsGrant refuses to save such a sender address.
+	ErrEmailOAuthSenderNeedsGrant = NewMessage("Re-authorize the mailbox with this sender address entered before saving it")
 	// ErrEmailOAuthAuthorizationChanged is returned by the rotation store when
 	// the stored refresh token is no longer the one that was refreshed, for
 	// example after a re-authorization. The rotated token is then discarded.
@@ -203,7 +207,29 @@ func ValidateEmailOAuthActivation(options map[string]string) error {
 	if strings.TrimSpace(options[EmailOAuthRefreshTokenOption]) == "" || strings.TrimSpace(options[EmailOAuthEmailOption]) == "" {
 		return NewMessage("Authorize the sender mailbox before enabling OAuth sending")
 	}
-	return nil
+	return ValidateEmailOAuthSenderGrant(
+		strings.TrimSpace(options[EmailOAuthProviderOption]),
+		options[EmailOAuthFromOption],
+		options[EmailOAuthEmailOption],
+		options[EmailOAuthScopesOption],
+	)
+}
+
+// emailOAuthSenderNeedsShared reports whether sending from sender through
+// mailbox needs Mail.Send.Shared. With no mailbox authorized yet, any
+// sender may turn out to be another mailbox.
+func emailOAuthSenderNeedsShared(provider, sender, mailbox string) bool {
+	sender, mailbox = strings.TrimSpace(sender), strings.TrimSpace(mailbox)
+	return provider == EmailOAuthProviderMicrosoft && sender != "" && (mailbox == "" || !strings.EqualFold(sender, mailbox))
+}
+
+// ValidateEmailOAuthSenderGrant refuses a sender address the authorized
+// grant cannot send from, so an active OAuth method keeps sending.
+func ValidateEmailOAuthSenderGrant(provider, sender, mailbox, scopes string) error {
+	if strings.TrimSpace(mailbox) == "" || !emailOAuthSenderNeedsShared(provider, sender, mailbox) || EmailOAuthSharedSendGranted(scopes) {
+		return nil
+	}
+	return ErrEmailOAuthSenderNeedsGrant
 }
 
 // ValidateEmailOAuthSender accepts an empty value (send from the authorized
@@ -224,13 +250,16 @@ func ValidateEmailOAuthSender(value string) error {
 }
 
 // EmailOAuthRequestedScope is the scope a new authorization asks for. The
-// shared-mailbox scope is added only while a sender address is set.
-func EmailOAuthRequestedScope(provider, sender string) string {
+// shared-mailbox scope is added only when one of senders (the saved and the
+// pending address) is not the currently authorized mailbox.
+func EmailOAuthRequestedScope(provider, mailbox string, senders ...string) string {
 	if provider != EmailOAuthProviderMicrosoft {
 		return emailOAuthGoogleScope
 	}
-	if strings.TrimSpace(sender) != "" {
-		return emailOAuthMicrosoftSharedScope
+	for _, sender := range senders {
+		if emailOAuthSenderNeedsShared(provider, sender, mailbox) {
+			return emailOAuthMicrosoftSharedScope
+		}
 	}
 	return emailOAuthMicrosoftScope
 }
@@ -585,7 +614,7 @@ func SendOAuthEmail(subject, receiver, content string) error {
 		fromAddress = config.From
 	}
 	sharedMailbox := !strings.EqualFold(fromAddress, config.Email)
-	if sharedMailbox && config.Provider == EmailOAuthProviderMicrosoft && !EmailOAuthSharedSendGranted(config.Scopes) {
+	if ValidateEmailOAuthSenderGrant(config.Provider, config.From, config.Email, config.Scopes) != nil {
 		return ErrEmailOAuthSharedReauthorize
 	}
 	to, err := parseEmailRecipients(receiver)
@@ -673,10 +702,13 @@ func SendOAuthEmail(subject, receiver, content string) error {
 			emailOAuthState.Unlock()
 		}
 		// Graph answers 403 ErrorSendAsDenied when the signed-in user has
-		// neither Send As nor Send on Behalf on the from mailbox.
-		if config.Provider == EmailOAuthProviderMicrosoft &&
-			(fmt.Sprint(failure.Error.Code) == "ErrorSendAsDenied" || (sharedMailbox && response.StatusCode == http.StatusForbidden)) {
+		// neither Send As nor Send on Behalf on the from mailbox. Other
+		// refusals of a shared-mailbox send only name the address.
+		if config.Provider == EmailOAuthProviderMicrosoft && fmt.Sprint(failure.Error.Code) == "ErrorSendAsDenied" {
 			return NewMessage("The authorized account has no Send As or Send on Behalf permission for {{sender}}", map[string]any{"sender": fromAddress})
+		}
+		if sharedMailbox && response.StatusCode == http.StatusForbidden {
+			return NewMessage("Sending from {{sender}} was refused (HTTP {{status}})", map[string]any{"sender": fromAddress, "status": response.StatusCode})
 		}
 		return NewMessage("OAuth email delivery failed (HTTP {{status}})", map[string]any{"status": response.StatusCode})
 	}

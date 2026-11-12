@@ -48,9 +48,30 @@ func recordEmailOAuthAudit(c *gin.Context, change string, provider string, succe
 	})
 }
 
+// emailOAuthStartRequest optionally carries the sender address the console
+// is about to save, so its permission is requested before it is saved.
+type emailOAuthStartRequest struct {
+	Sender *string `json:"sender"`
+}
+
 // StartEmailOAuthAuthorization creates a one-time state bound to the
 // administrator's browser session and returns the provider consent URL.
 func StartEmailOAuthAuthorization(c *gin.Context) {
+	var request emailOAuthStartRequest
+	if c.Request.ContentLength != 0 {
+		if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+			common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+			return
+		}
+	}
+	pendingSender := ""
+	if request.Sender != nil {
+		pendingSender = strings.TrimSpace(*request.Sender)
+		if err := common.ValidateEmailOAuthSender(pendingSender); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
 	identity, ok := middleware.GetSessionAuthIdentity(c)
 	if !ok {
 		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Sign in to the console in a browser to authorize the sender mailbox"))
@@ -72,9 +93,12 @@ func StartEmailOAuthAuthorization(c *gin.Context) {
 		return
 	}
 	common.OptionMapRWMutex.RLock()
-	sender := common.OptionMap[common.EmailOAuthFromOption]
+	savedSender := common.OptionMap[common.EmailOAuthFromOption]
+	mailbox := common.OptionMap[common.EmailOAuthEmailOption]
 	common.OptionMapRWMutex.RUnlock()
-	scope := common.EmailOAuthRequestedScope(app.Provider, sender)
+	// Both addresses count: the new grant replaces the current one while the
+	// saved sender may still be in use.
+	scope := common.EmailOAuthRequestedScope(app.Provider, mailbox, savedSender, pendingSender)
 	payload, err := common.Marshal(emailOAuthFlowPayload{Verifier: verifier, RedirectURI: redirectURI, ClientID: app.ClientID, Tenant: app.Tenant, Scope: scope})
 	if err != nil {
 		common.ApiError(c, err)
@@ -171,6 +195,18 @@ func EmailOAuthCallback(c *gin.Context) {
 	if err != nil {
 		common.ApiErrorT(c, "Mailbox authorization failed. Try again")
 		return
+	}
+	// While OAuth sends, keep the saved sender usable: a grant that cannot
+	// send from it (for example another account was chosen) is not saved.
+	common.OptionMapRWMutex.RLock()
+	activeOAuth := common.OptionMap["EmailProvider"] == "oauth"
+	savedSender := common.OptionMap[common.EmailOAuthFromOption]
+	common.OptionMapRWMutex.RUnlock()
+	if activeOAuth {
+		if err := common.ValidateEmailOAuthSenderGrant(app.Provider, savedSender, grant.Email, grant.Scopes); err != nil {
+			common.ApiErrorT(c, "The new authorization cannot send from the saved sender address. Clear the sender address or authorize an account that can send from it")
+			return
+		}
 	}
 	if err := model.SaveEmailOAuthAuthorization(grant); err != nil {
 		common.SysError(common.LogText("failed to save the email oauth authorization: %v", err))

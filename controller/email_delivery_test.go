@@ -737,12 +737,17 @@ func TestOAuthEmailSharedMailboxNeverFallsBackToTheAuthorizedMailbox(t *testing.
 		assert.Zero(t, sends)
 	})
 
-	for name, reply := range map[string]struct {
-		status int
-		body   string
+	for name, test := range map[string]struct {
+		body, message string
 	}{
-		"send as denied": {http.StatusForbidden, `{"error":{"code":"ErrorSendAsDenied","message":"The user account which was used to submit this request does not have the right to send mail on behalf of the specified sending account."}}`},
-		"other 403":      {http.StatusForbidden, `{"error":{"code":"ErrorAccessDenied","message":"Access is denied."}}`},
+		"send as denied names the missing permission": {
+			`{"error":{"code":"ErrorSendAsDenied","message":"The user account which was used to submit this request does not have the right to send mail on behalf of the specified sending account."}}`,
+			"The authorized account has no Send As or Send on Behalf permission for shared@contoso.example",
+		},
+		"other 403 only names the address": {
+			`{"error":{"code":"ErrorAccessDenied","message":"Access is denied."}}`,
+			"Sending from shared@contoso.example was refused (HTTP 403)",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			options := oauthEmailOptions(common.EmailOAuthProviderMicrosoft)
@@ -751,13 +756,11 @@ func TestOAuthEmailSharedMailboxNeverFallsBackToTheAuthorizedMailbox(t *testing.
 			configureEmailDelivery(t, options)
 			useEmailOptionsDatabase(t, options)
 			provider := newFakeMailProvider(t)
-			provider.sendStatus, provider.sendBody = reply.status, reply.body
+			provider.sendStatus, provider.sendBody = http.StatusForbidden, test.body
 
 			err := common.SendEmail("verification", "one@example.com", "123456")
-			require.EqualError(t, err, "The authorized account has no Send As or Send on Behalf permission for shared@contoso.example")
-			var message *common.Message
-			require.ErrorAs(t, err, &message)
-			assert.Equal(t, "shared@contoso.example", message.Params["sender"])
+			require.EqualError(t, err, test.message)
+			assert.NotContains(t, err.Error(), "access-1")
 			_, sends := provider.counts()
 			assert.Equal(t, 1, sends, "the message is not retried from the authorized mailbox")
 		})
