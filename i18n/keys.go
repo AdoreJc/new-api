@@ -141,4 +141,7 @@ const (
 	MsgSubscriptionUsageCodexWeekly          = "subscription_usage.codex_weekly"
 	MsgSubscriptionUsageCodexWindow          = "subscription_usage.codex_window"
 	MsgSubscriptionUsagePassiveSample        = "subscription_usage.passive_sample"
+	MsgSubscriptionUsageSubscription         = "subscription_usage.subscription"
+	MsgSubscriptionUsageUpstreamStatus       = "subscription_usage.upstream_status"
+	MsgSubscriptionUsageUnavailable          = "subscription_usage.unavailable"
 )

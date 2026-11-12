@@ -34,7 +34,11 @@ import {
 import { createServerError } from '@/lib/server-error-message'
 
 import { getSelfSubscriptionUsage } from '../../api'
-import { buildCcSwitchUsageScript } from '../../lib/cc-switch-usage-script'
+import {
+  buildCcSwitchUsageScript,
+  CC_SWITCH_HOURS_PLACEHOLDER,
+  CC_SWITCH_MINUTES_PLACEHOLDER,
+} from '../../lib/cc-switch-usage-script'
 import {
   BOUND_CHANNEL_TYPE_CODEX,
   boundAccountLabelKey,
@@ -138,6 +142,11 @@ export function SubscriptionUsageDialog(props: SubscriptionUsageDialogProps) {
       noSubscription: t('No bound subscription'),
       resetsInPrefix: resetsInPrefix ?? '',
       resetsInSuffix: resetsInSuffix ?? '',
+      hoursMinutes: t('{{hours}}h {{minutes}}m', {
+        hours: CC_SWITCH_HOURS_PLACEHOLDER,
+        minutes: CC_SWITCH_MINUTES_PLACEHOLDER,
+      }),
+      minutes: t('{{minutes}}m', { minutes: CC_SWITCH_MINUTES_PLACEHOLDER }),
     }
   )
 

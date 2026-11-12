@@ -267,7 +267,8 @@ func (u subscriptionAccountUsage) upstreamSucceeded() bool {
 }
 
 // loadSubscriptionAccountUsage returns the usage windows of the account
-// behind ch, asking upstream at most once per service.SubscriptionUsageCacheTTL.
+// behind ch, asking upstream at most once per service.SubscriptionUsageCacheTTL
+// after a success and per service.SubscriptionUsageFailureTTL after a failure.
 // A non-nil error means upstream gave no answer; an upstream failure status
 // is reported by UpstreamStatus instead.
 func loadSubscriptionAccountUsage(ctx context.Context, ch *model.Channel) (subscriptionAccountUsage, error) {
@@ -301,6 +302,7 @@ func loadSubscriptionAccountUsage(ctx context.Context, ch *model.Channel) (subsc
 				claudeUsageRequestTimeout,
 				common.LogText("failed to fetch claude usage for subscription"),
 				"Failed to fetch usage. Please try again later",
+				true,
 			)
 			if err != nil {
 				return usage, false, err

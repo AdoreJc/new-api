@@ -7597,6 +7597,8 @@
     "Copy CC Switch usage script": "CC Switch 用の使用量スクリプトをコピー",
     "Paste into CC Switch as the custom usage script of a provider that uses an API key of this account": "このアカウントの API キーを使うプロバイダーのカスタム使用量スクリプトとして CC Switch に貼り付けてください",
     "Resets in {{time}}": "{{time}}後にリセット",
-    "No bound subscription": "紐付けられたサブスクリプションがありません"
+    "No bound subscription": "紐付けられたサブスクリプションがありません",
+    "{{hours}}h {{minutes}}m": "{{hours}}時間{{minutes}}分",
+    "{{minutes}}m": "{{minutes}}分"
   }
 }

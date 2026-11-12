@@ -95,6 +95,7 @@ func GetSubscriptionSelfResetCredits(c *gin.Context) {
 			claudeUsageRequestTimeout,
 			common.LogText("failed to fetch claude reset credits for subscription"),
 			"Failed to fetch reset credit details. Please try again later",
+			false,
 		)
 		if err != nil {
 			common.ApiError(c, err)
@@ -160,6 +161,7 @@ func ResetSubscriptionSelfUsage(c *gin.Context) {
 			claudeResetRequestTimeout,
 			common.LogText("failed to reset claude usage for subscription"),
 			"Failed to reset usage. Please try again later",
+			false,
 		)
 		outcome, _ := payload.(*service.ClaudeResetOutcome)
 		switch {

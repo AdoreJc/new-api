@@ -110,7 +110,7 @@ func fetchClaudeChannelOAuthData(c *gin.Context, fetch claudeOAuthFetchFunc, tim
 		return
 	}
 
-	statusCode, payload, err := claudeChannelOAuthFetch(c.Request.Context(), ch, fetch, timeout, logPrefix, userMessage)
+	statusCode, payload, err := claudeChannelOAuthFetch(c.Request.Context(), ch, fetch, timeout, logPrefix, userMessage, false)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -132,9 +132,13 @@ func fetchClaudeChannelOAuthData(c *gin.Context, fetch claudeOAuthFetchFunc, tim
 }
 
 // claudeChannelOAuthFetch runs fetch with the channel's access token and
-// retries once after a forced refresh when upstream answers 401. A non-nil
+// retries once after a forced refresh when upstream answers 401. With
+// refreshCooldown, which the subscriber usage endpoints set because clients
+// poll them, a forced refresh happens at most once per
+// service.SubscriptionUsageRefreshCooldown and channel; inside the cooldown
+// the retry only picks up a key another caller already renewed. A non-nil
 // error is ready for common.ApiError; upstream statuses are not errors.
-func claudeChannelOAuthFetch(ctx context.Context, ch *model.Channel, fetch claudeOAuthFetchFunc, timeout time.Duration, logPrefix string, userMessage string) (statusCode int, payload any, err error) {
+func claudeChannelOAuthFetch(ctx context.Context, ch *model.Channel, fetch claudeOAuthFetchFunc, timeout time.Duration, logPrefix string, userMessage string, refreshCooldown bool) (statusCode int, payload any, err error) {
 	key, err := service.ParseClaudeOAuthKey(ch.Key)
 	if err != nil {
 		common.SysError(common.LogText("failed to parse oauth key: %s", err.Error()))
@@ -155,12 +159,13 @@ func claudeChannelOAuthFetch(ctx context.Context, ch *model.Channel, fetch claud
 
 	statusCode, payload, err = fetch(fetchCtx, client, ch, key.AccessToken)
 	if err == nil && statusCode == http.StatusUnauthorized && key.RefreshToken != "" {
+		force := !refreshCooldown || service.ClaimSubscriptionUsageRefresh(ch.Id, time.Now())
 		refreshCtx, refreshCancel := context.WithTimeout(ctx, 20*time.Second)
-		refreshedKey, _, refreshErr := service.RefreshClaudeChannelCredential(refreshCtx, ch.Id, service.ClaudeCredentialRefreshOptions{ResetCaches: true, Force: true})
+		refreshedKey, _, refreshErr := service.RefreshClaudeChannelCredential(refreshCtx, ch.Id, service.ClaudeCredentialRefreshOptions{ResetCaches: true, Force: force})
 		refreshCancel()
 		if refreshErr != nil {
 			common.SysError(common.LogText("%s: token refresh after upstream %d failed: %s", logPrefix, statusCode, refreshErr.Error()))
-		} else {
+		} else if force || refreshedKey.AccessToken != key.AccessToken {
 			retryCtx, retryCancel := context.WithTimeout(ctx, timeout)
 			defer retryCancel()
 			statusCode, payload, err = fetch(retryCtx, client, ch, refreshedKey.AccessToken)

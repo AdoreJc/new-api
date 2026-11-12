@@ -7597,6 +7597,8 @@
     "Copy CC Switch usage script": "Copier le script d'utilisation CC Switch",
     "Paste into CC Switch as the custom usage script of a provider that uses an API key of this account": "Collez-le dans CC Switch comme script d'utilisation personnalisé d'un fournisseur qui utilise une clé API de ce compte",
     "Resets in {{time}}": "Réinitialisation dans {{time}}",
-    "No bound subscription": "Aucun abonnement lié"
+    "No bound subscription": "Aucun abonnement lié",
+    "{{hours}}h {{minutes}}m": "{{hours}} h {{minutes}} min",
+    "{{minutes}}m": "{{minutes}} min"
   }
 }

@@ -7597,6 +7597,8 @@
     "Copy CC Switch usage script": "Sao chép tập lệnh mức sử dụng CC Switch",
     "Paste into CC Switch as the custom usage script of a provider that uses an API key of this account": "Dán vào CC Switch làm tập lệnh mức sử dụng tùy chỉnh của nhà cung cấp dùng khóa API của tài khoản này",
     "Resets in {{time}}": "Đặt lại sau {{time}}",
-    "No bound subscription": "Không có gói đăng ký được liên kết"
+    "No bound subscription": "Không có gói đăng ký được liên kết",
+    "{{hours}}h {{minutes}}m": "{{hours}} giờ {{minutes}} phút",
+    "{{minutes}}m": "{{minutes}} phút"
   }
 }

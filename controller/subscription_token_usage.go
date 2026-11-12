@@ -48,6 +48,10 @@ type TokenSubscriptionUsageItem struct {
 	ResetsAt string `json:"resetsAt,omitempty"`
 	// Notes such as a window filled from sampled response headers
 	Extra string `json:"extra,omitempty"`
+	// False on the one row of a subscription whose usage could not be
+	// fetched; InvalidMessage then says why
+	IsValid        *bool  `json:"isValid,omitempty"`
+	InvalidMessage string `json:"invalidMessage,omitempty"`
 }
 
 type TokenSubscriptionUsageResponse struct {
@@ -185,8 +189,10 @@ func GetTokenSubscriptionUsage(c *gin.Context) {
 			Windows:        map[string]SubscriptionUsageWindow{},
 		}
 		usage, err := loadSubscriptionAccountUsage(c.Request.Context(), target.ch)
+		reason := ""
 		if err == nil && !usage.upstreamSucceeded() {
 			err = upstreamStatusMessage(usage.UpstreamStatus)
+			reason = i18n.T(c, i18n.MsgSubscriptionUsageUpstreamStatus, map[string]any{"Status": usage.UpstreamStatus})
 		}
 		if err != nil {
 			entry.Error = err.Error()
@@ -194,6 +200,27 @@ func GetTokenSubscriptionUsage(c *gin.Context) {
 				firstErr = err
 			}
 			response.Subscriptions = append(response.Subscriptions, entry)
+			if reason == "" {
+				reason = i18n.T(c, i18n.MsgSubscriptionUsageUnavailable)
+			}
+			// Keep a row for the subscription so a client that shows only the
+			// items does not silently lose it.
+			invalid := false
+			providerName := "Claude"
+			if entry.Provider == "codex" {
+				providerName = "Codex"
+			}
+			item := TokenSubscriptionUsageItem{
+				PlanName:       i18n.T(c, i18n.MsgSubscriptionUsageSubscription, map[string]any{"Provider": providerName}),
+				Total:          100,
+				Unit:           "%",
+				IsValid:        &invalid,
+				InvalidMessage: reason,
+			}
+			if perProvider[entry.Provider] > 1 {
+				item.PlanName += " #" + strconv.Itoa(entry.SubscriptionId)
+			}
+			response.Items = append(response.Items, item)
 			continue
 		}
 		succeeded++

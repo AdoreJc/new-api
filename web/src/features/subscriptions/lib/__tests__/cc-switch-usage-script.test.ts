@@ -28,8 +28,10 @@ type UsageScript = {
 const labels = {
   failed: 'Failed to fetch usage',
   noSubscription: 'No bound "subscription"',
-  resetsInPrefix: 'Resets in ',
-  resetsInSuffix: '',
+  resetsInPrefix: '',
+  resetsInSuffix: '后重置',
+  hoursMinutes: '__HOURS__小时__MINUTES__分',
+  minutes: '__MINUTES__分',
 }
 
 // CC Switch substitutes the placeholders as plain text and evaluates the
@@ -56,7 +58,7 @@ describe('buildCcSwitchUsageScript', () => {
     })
   })
 
-  test('maps every endpoint item to one CC Switch entry with the time left and server notes', () => {
+  test('maps every endpoint item to one CC Switch entry with the localized time left and server notes', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-11-12T17:00:00Z'))
     const script = loadScript('claude', 'https://relay.example.com')
@@ -84,6 +86,15 @@ describe('buildCcSwitchUsageScript', () => {
             resetsAt: '2026-11-12T17:30:00Z',
             extra: 'sampled from relayed responses',
           },
+          {
+            planName: 'Codex subscription',
+            used: 0,
+            total: 100,
+            remaining: 0,
+            unit: '%',
+            isValid: false,
+            invalidMessage: 'upstream returned status 429',
+          },
         ],
       },
     })
@@ -95,7 +106,7 @@ describe('buildCcSwitchUsageScript', () => {
         total: 100,
         remaining: 77,
         unit: '%',
-        extra: 'Resets in 2h5m',
+        extra: '2小时5分后重置',
       },
       {
         planName: 'Claude 7d Fable',
@@ -103,7 +114,12 @@ describe('buildCcSwitchUsageScript', () => {
         total: 100,
         remaining: 95,
         unit: '%',
-        extra: 'Resets in 30m · sampled from relayed responses',
+        extra: '30分后重置 · sampled from relayed responses',
+      },
+      {
+        planName: 'Codex subscription',
+        isValid: false,
+        invalidMessage: 'upstream returned status 429',
       },
     ])
   })

@@ -380,6 +380,12 @@ func TestSubscriptionSelfResetCreditsClaudeViewRedeemAndAuditLog(t *testing.T) {
 	assert.Equal(t, "reset", envelope.Data["outcome"])
 	assert.Equal(t, int32(1), resets.Load())
 
+	// The redemption dropped the windows cached by the first query.
+	hitsBeforeQuery := hits.Load()
+	require.True(t, getSubscriptionUsage(t, user.Id, sub.Id).Success)
+	require.True(t, getSubscriptionUsage(t, user.Id, sub.Id).Success)
+	assert.Equal(t, hitsBeforeQuery+1, hits.Load(), "one fresh upstream query after the reset, then the cache")
+
 	logs := resetCreditAuditLogs(t)
 	require.Len(t, logs, 1)
 	assert.Equal(t, user.Id, logs[0].UserId)
@@ -710,6 +716,23 @@ func TestTokenSubscriptionUsageScopesToTheCallerAndTheTokenGroup(t *testing.T) {
 	assert.Equal(t, "Subscription not found", envelope.Message)
 	assert.Nil(t, envelope.Data)
 
+	multiKey := newClaudeOAuthTestChannel(t, upstream.URL, service.ClaudeOAuthKey{AccessToken: "token", Scope: "user:profile"})
+	multiKey.ChannelInfo.IsMultiKey = true
+	require.NoError(t, model.DB.Model(multiKey).Update("channel_info", multiKey.ChannelInfo).Error)
+	for _, tc := range []struct {
+		name    string
+		subId   int
+		message string
+	}{
+		{"expired", newSubscriptionUsageSub(t, user.Id, first.Id, -time.Hour).Id, "This subscription is no longer active"},
+		{"multi-key", newSubscriptionUsageSub(t, user.Id, multiKey.Id, time.Hour).Id, "Multi-key channels are not supported"},
+	} {
+		_, envelope = getTokenSubscriptionUsage(t, router, "defaultkey", "?subscription_id="+itoa(tc.subId))
+		assert.False(t, envelope.Success, tc.name)
+		assert.Equal(t, tc.message, envelope.Message, tc.name)
+		assert.Nil(t, envelope.Data, tc.name)
+	}
+
 	_, envelope = getTokenSubscriptionUsage(t, router, "defaultkey", "?provider=codex")
 	assert.True(t, envelope.Success)
 	assert.Equal(t, "no bound subscription", envelope.Message)
@@ -726,28 +749,101 @@ func TestTokenSubscriptionUsageScopesToTheCallerAndTheTokenGroup(t *testing.T) {
 	assert.Equal(t, hitsBefore, hits.Load(), "rejected queries never reach upstream")
 }
 
-func TestTokenSubscriptionUsageReportsUpstreamFailureAndRetriesIt(t *testing.T) {
+func TestTokenSubscriptionUsageKeepsFailedSubscriptionsAsInvalidItems(t *testing.T) {
 	setupSubscriptionUsageDB(t)
-	var hits atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits.Add(1)
+	require.NoError(t, i18n.Init())
+	var failingHits atomic.Int32
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		failingHits.Add(1)
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":{"message":"account details that must not leak"}}`))
 	}))
-	t.Cleanup(upstream.Close)
-	channel := newClaudeOAuthTestChannel(t, upstream.URL, service.ClaudeOAuthKey{AccessToken: "token", Scope: "user:profile"})
-	user := newSubscriptionUsageTokenUser(t, "upstream-down")
-	newSubscriptionUsageSub(t, user.Id, channel.Id, time.Hour)
-	newSubscriptionUsageToken(t, user.Id, "downkey", "", common.TokenStatusEnabled)
+	t.Cleanup(failing.Close)
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"rate_limit":{"primary_window":{"used_percent":12,"limit_window_seconds":18000,"reset_at":1762340400}}}`))
+	}))
+	t.Cleanup(healthy.Close)
+	claude := newClaudeOAuthTestChannel(t, failing.URL, service.ClaudeOAuthKey{AccessToken: "token", Scope: "user:profile"})
+	codex := newCodexSubscriptionTestChannel(t, healthy.URL)
+	partly := newSubscriptionUsageTokenUser(t, "partly-down")
+	newSubscriptionUsageSub(t, partly.Id, claude.Id, time.Hour)
+	newSubscriptionUsageSub(t, partly.Id, codex.Id, time.Hour)
+	newSubscriptionUsageToken(t, partly.Id, "partlykey", "", common.TokenStatusEnabled)
+	down := newSubscriptionUsageTokenUser(t, "upstream-down")
+	newSubscriptionUsageSub(t, down.Id, claude.Id, time.Hour)
+	newSubscriptionUsageToken(t, down.Id, "downkey", "", common.TokenStatusEnabled)
 	router := tokenSubscriptionUsageRouter(t)
 
+	invalidRow := map[string]any{
+		"planName":       "Claude 订阅",
+		"used":           float64(0),
+		"total":          float64(100),
+		"remaining":      float64(0),
+		"unit":           "%",
+		"isValid":        false,
+		"invalidMessage": "上游返回状态 500",
+	}
+	code, envelope := getTokenSubscriptionUsage(t, router, "partlykey", "")
+	require.Equal(t, http.StatusOK, code)
+	require.True(t, envelope.Success, envelope.Message)
+	items := tokenUsageItems(t, envelope)
+	require.Len(t, items, 2)
+	assert.Contains(t, items, invalidRow, "the failed subscription keeps a row")
+	for _, item := range items {
+		if item["planName"] == "Codex 5小时" {
+			assert.Nil(t, item["isValid"], "a fetched window carries no isValid")
+		}
+	}
+	assert.NotContains(t, fmt.Sprint(envelope.Data), "must not leak")
+
 	for range 2 {
-		code, envelope := getTokenSubscriptionUsage(t, router, "downkey", "")
+		code, envelope = getTokenSubscriptionUsage(t, router, "downkey", "")
 		assert.Equal(t, http.StatusOK, code)
 		assert.False(t, envelope.Success)
 		assert.Equal(t, "Upstream returned status 500", envelope.Message)
-		assert.Empty(t, tokenUsageItems(t, envelope))
+		assert.Equal(t, []map[string]any{invalidRow}, tokenUsageItems(t, envelope))
 		assert.NotContains(t, fmt.Sprint(envelope.Data), "must not leak")
 	}
-	assert.Equal(t, int32(2), hits.Load(), "failures are not cached")
+	assert.Equal(t, int32(1), failingHits.Load(), "a failure is served to every subscriber of the channel for the failure TTL")
+}
+
+// Background polling of a channel whose access token upstream rejects must
+// not renew the credential on every query.
+func TestSubscriptionUsageForcesACredentialRefreshAtMostOncePerCooldown(t *testing.T) {
+	setupSubscriptionUsageDB(t)
+	var tokenCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/oauth/token":
+			tokenCalls.Add(1)
+			_, _ = w.Write([]byte(`{"access_token":"at-new","token_type":"Bearer","expires_in":3600,"refresh_token":"rt-new"}`))
+		case "/api/oauth/usage":
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"type":"authentication_error"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+	useClaudeOAuthTokenServer(t, server)
+	key, err := common.Marshal(service.ClaudeOAuthKey{
+		AccessToken: "at-stale", RefreshToken: "rt-1", Scope: "user:profile",
+		ExpiresAt: time.Now().Add(8 * time.Hour).Format(time.RFC3339),
+	})
+	require.NoError(t, err)
+	// An id no other test uses: the cooldown outlives the in-memory database.
+	channel := &model.Channel{Id: 7311, Type: constant.ChannelTypeClaudeOAuth, BaseURL: &server.URL, Key: string(key), Name: "claude-401", Status: common.ChannelStatusEnabled}
+	require.NoError(t, model.DB.Create(channel).Error)
+	sub := newSubscriptionUsageSub(t, 1, channel.Id, time.Hour)
+
+	for range 3 {
+		envelope := getSubscriptionUsage(t, 1, sub.Id)
+		assert.False(t, envelope.Success)
+		assert.Equal(t, http.StatusUnauthorized, envelope.UpstreamStatus)
+		// Skip the failure TTL so the next query reaches upstream again.
+		service.InvalidateSubscriptionUsage(channel.Id)
+	}
+	assert.Equal(t, int32(1), tokenCalls.Load(), "one forced refresh per cooldown and channel")
 }
