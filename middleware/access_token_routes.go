@@ -162,6 +162,27 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/prompt_audit/events/delete-preview":   accessTokenSessionRule,
 	"POST /api/prompt_audit/events/delete-by-filter": accessTokenSessionRule,
 
+	// router/api-router.go: /api/content_moderation (root only). Events hold
+	// excerpts of user input and the allowlist exempts users from blocking,
+	// so those routes are reachable from a browser session only.
+	"GET /api/content_moderation/config":                   accessTokenScopeRule("option:read"),
+	"PUT /api/content_moderation/config":                   accessTokenSessionRule,
+	"POST /api/content_moderation/allowlist":               accessTokenSessionRule,
+	"POST /api/content_moderation/probe":                   accessTokenScopeRule("option:write"),
+	"GET /api/content_moderation/runtime":                  accessTokenScopeRule("option:read"),
+	"GET /api/content_moderation/events":                   accessTokenSessionRule,
+	"GET /api/content_moderation/events/:id":               accessTokenSessionRule,
+	"DELETE /api/content_moderation/events/:id":            accessTokenSessionRule,
+	"POST /api/content_moderation/events/batch-delete":     accessTokenSessionRule,
+	"POST /api/content_moderation/events/delete-preview":   accessTokenSessionRule,
+	"POST /api/content_moderation/events/delete-by-filter": accessTokenSessionRule,
+	"DELETE /api/content_moderation/hashes/:hash":          accessTokenSessionRule,
+	"DELETE /api/content_moderation/hashes":                accessTokenSessionRule,
+	"GET /api/content_moderation/keyword_lists":            accessTokenScopeRule("option:read"),
+	"GET /api/content_moderation/keyword_lists/:name":      accessTokenScopeRule("option:read"),
+	"PUT /api/content_moderation/keyword_lists/:name":      accessTokenSessionRule,
+	"DELETE /api/content_moderation/keyword_lists/:name":   accessTokenSessionRule,
+
 	// router/api-router.go: /api/option
 	"GET /api/option/":                                           accessTokenScopeRule("option:read"),
 	"GET /api/option/request_policy":                             accessTokenScopeRule("option:read"),

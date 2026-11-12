@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/content_moderation_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/prompt_audit_setting"
@@ -80,6 +81,8 @@ func InitOptionMap() {
 	common.OptionMap[common.EmailOAuthScopesOption] = ""
 	common.OptionMap[prompt_audit_setting.OptionKey] = ""
 	common.OptionMap[prompt_audit_setting.TokensOptionKey] = ""
+	common.OptionMap[content_moderation_setting.OptionKey] = ""
+	common.OptionMap[content_moderation_setting.KeysOptionKey] = ""
 	common.OptionMap["SMTPFrom"] = ""
 	common.OptionMap["SMTPPort"] = strconv.Itoa(common.SMTPPort)
 	common.OptionMap["SMTPAccount"] = ""
@@ -260,6 +263,9 @@ func validateOptionValue(key string, value string) error {
 	if prompt_audit_setting.IsOptionKey(key) {
 		return common.NewMessage("This setting is managed by the prompt audit settings page")
 	}
+	if content_moderation_setting.IsOptionKey(key) {
+		return common.NewMessage("This setting is managed by the content moderation settings page")
+	}
 	if key == "ResendKeyConfigured" {
 		return common.NewMessage("Resend key configuration status is read-only")
 	}
@@ -390,6 +396,10 @@ func updateOptionMap(key string, value string) (err error) {
 
 	if prompt_audit_setting.IsOptionKey(key) {
 		prompt_audit_setting.ApplyOption(key, value)
+		return nil
+	}
+	if content_moderation_setting.IsOptionKey(key) {
+		content_moderation_setting.ApplyOption(key, value)
 		return nil
 	}
 

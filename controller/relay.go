@@ -26,6 +26,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/contentmoderation"
 	"github.com/QuantumNous/new-api/service/promptaudit"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
@@ -162,6 +163,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	// or changes the response, and runs once before billing and retries.
 	promptaudit.EnqueueRelay(c, relayInfo)
 
+	if newAPIError = contentmoderation.CheckRelay(c, relayInfo); newAPIError != nil {
+		return
+	}
 	if newAPIError = relay.PrepareRequestBilling(c, relayInfo); newAPIError != nil {
 		return
 	}

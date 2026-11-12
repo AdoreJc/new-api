@@ -53,6 +53,7 @@ import { Route as AuthenticatedTaskPluginsIndexRouteImport } from './routes/_aut
 import { Route as AuthenticatedUsageLogsIndexRouteImport } from './routes/_authenticated/usage-logs/index'
 import { Route as AuthenticatedUsageLogsSectionRouteImport } from './routes/_authenticated/usage-logs/$section'
 import { Route as AuthenticatedUsageLogsAuditRouteImport } from './routes/_authenticated/usage-logs/audit'
+import { Route as AuthenticatedUsageLogsContentModerationRouteImport } from './routes/_authenticated/usage-logs/content-moderation'
 import { Route as AuthenticatedUsageLogsPromptAuditRouteImport } from './routes/_authenticated/usage-logs/prompt-audit'
 import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authenticated/users/index'
 import { Route as AuthenticatedWalletIndexRouteImport } from './routes/_authenticated/wallet/index'
@@ -310,6 +311,12 @@ const AuthenticatedUsageLogsAuditRoute =
     path: '/usage-logs/audit',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedUsageLogsContentModerationRoute =
+  AuthenticatedUsageLogsContentModerationRouteImport.update({
+    id: '/usage-logs/content-moderation',
+    path: '/usage-logs/content-moderation',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedUsageLogsPromptAuditRoute =
   AuthenticatedUsageLogsPromptAuditRouteImport.update({
     id: '/usage-logs/prompt-audit',
@@ -459,6 +466,7 @@ export interface FileRoutesByFullPath {
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
+  '/usage-logs/content-moderation': typeof AuthenticatedUsageLogsContentModerationRoute
   '/usage-logs/prompt-audit': typeof AuthenticatedUsageLogsPromptAuditRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
@@ -522,6 +530,7 @@ export interface FileRoutesByTo {
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
+  '/usage-logs/content-moderation': typeof AuthenticatedUsageLogsContentModerationRoute
   '/usage-logs/prompt-audit': typeof AuthenticatedUsageLogsPromptAuditRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
@@ -589,6 +598,7 @@ export interface FileRoutesById {
   '/_authenticated/models/$section': typeof AuthenticatedModelsSectionRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/_authenticated/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
+  '/_authenticated/usage-logs/content-moderation': typeof AuthenticatedUsageLogsContentModerationRoute
   '/_authenticated/usage-logs/prompt-audit': typeof AuthenticatedUsageLogsPromptAuditRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
@@ -655,6 +665,7 @@ export interface FileRouteTypes {
     | '/models/$section'
     | '/usage-logs/$section'
     | '/usage-logs/audit'
+    | '/usage-logs/content-moderation'
     | '/usage-logs/prompt-audit'
     | '/channels/'
     | '/dashboard/'
@@ -718,6 +729,7 @@ export interface FileRouteTypes {
     | '/models/$section'
     | '/usage-logs/$section'
     | '/usage-logs/audit'
+    | '/usage-logs/content-moderation'
     | '/usage-logs/prompt-audit'
     | '/channels'
     | '/dashboard'
@@ -784,6 +796,7 @@ export interface FileRouteTypes {
     | '/_authenticated/models/$section'
     | '/_authenticated/usage-logs/$section'
     | '/_authenticated/usage-logs/audit'
+    | '/_authenticated/usage-logs/content-moderation'
     | '/_authenticated/usage-logs/prompt-audit'
     | '/_authenticated/channels/'
     | '/_authenticated/dashboard/'
@@ -1148,6 +1161,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedUsageLogsAuditRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/usage-logs/content-moderation': {
+      id: '/_authenticated/usage-logs/content-moderation'
+      path: '/usage-logs/content-moderation'
+      fullPath: '/usage-logs/content-moderation'
+      preLoaderRoute: typeof AuthenticatedUsageLogsContentModerationRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/usage-logs/prompt-audit': {
       id: '/_authenticated/usage-logs/prompt-audit'
       path: '/usage-logs/prompt-audit'
@@ -1389,6 +1409,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedModelsSectionRoute: typeof AuthenticatedModelsSectionRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
   AuthenticatedUsageLogsAuditRoute: typeof AuthenticatedUsageLogsAuditRoute
+  AuthenticatedUsageLogsContentModerationRoute: typeof AuthenticatedUsageLogsContentModerationRoute
   AuthenticatedUsageLogsPromptAuditRoute: typeof AuthenticatedUsageLogsPromptAuditRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
@@ -1416,6 +1437,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedModelsSectionRoute: AuthenticatedModelsSectionRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
   AuthenticatedUsageLogsAuditRoute: AuthenticatedUsageLogsAuditRoute,
+  AuthenticatedUsageLogsContentModerationRoute:
+    AuthenticatedUsageLogsContentModerationRoute,
   AuthenticatedUsageLogsPromptAuditRoute:
     AuthenticatedUsageLogsPromptAuditRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
