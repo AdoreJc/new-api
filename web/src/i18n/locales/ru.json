@@ -7108,6 +7108,7 @@
     "Usage percentage": "Процент использования",
     "Usage prices": "Цены за использование",
     "Usage Windows": "Окна использования",
+    "Usage-limit cooldown until {{time}}": "Пауза из-за лимита использования до {{time}}",
     "Usage-based": "На основе использования",
     "Usage-based billing": "Оплата по объёму",
     "Usage-based billing · price not configured": "Оплата по объёму · цена не настроена",

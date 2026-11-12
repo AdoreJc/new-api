@@ -162,9 +162,7 @@ func OaiResponsesStreamToNonStreamHandler(c *gin.Context, info *relaycommon.Rela
 			}
 			return nil, types.NewOpenAIError(fmt.Errorf("responses stream error: %s", event.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 		case "error":
-			// A bare error event carries only code and message; the code also
-			// serves as the type so usage-limit codes stay recognisable.
-			return nil, types.WithOpenAIError(types.OpenAIError{Message: event.Message, Type: event.Code, Param: event.Param, Code: event.Code}, http.StatusInternalServerError)
+			return nil, ResponsesErrorEventError(&event, raw)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -201,4 +199,38 @@ func rewriteSGLangResponsesCreatedAt(info *relaycommon.RelayInfo, payload []byte
 		return payload
 	}
 	return patched
+}
+
+// ResponsesErrorEventError converts a bare `error` stream event, which the
+// Codex backend sends instead of response.failed (for example when the
+// account's usage limit is reached). The event carries code and message at the
+// top level or inside an "error" object; the code also serves as the type so
+// usage-limit codes stay recognisable, and those codes answer 429.
+func ResponsesErrorEventError(event *dto.ResponsesStreamResponse, raw []byte) *types.NewAPIError {
+	oaiErr := types.OpenAIError{Message: event.Message, Type: event.Code, Param: event.Param, Code: event.Code}
+	if nested := ojson.GetBytes(raw, "error"); nested.IsObject() {
+		code := nested.Get("code").String()
+		if code == "" {
+			code = nested.Get("type").String()
+		}
+		if oaiErr.Type == "" {
+			oaiErr.Type = code
+			oaiErr.Code = code
+		}
+		if oaiErr.Message == "" {
+			oaiErr.Message = nested.Get("message").String()
+		}
+		if oaiErr.Param == "" {
+			oaiErr.Param = nested.Get("param").String()
+		}
+	}
+	if oaiErr.Message == "" {
+		oaiErr.Message = "responses stream error"
+	}
+	status := http.StatusInternalServerError
+	switch oaiErr.Type {
+	case "usage_limit_reached", "rate_limit_exceeded", "rate_limit_error", "insufficient_quota":
+		status = http.StatusTooManyRequests
+	}
+	return types.WithOpenAIError(oaiErr, status)
 }

@@ -7108,6 +7108,7 @@
     "Usage percentage": "Usage percentage",
     "Usage prices": "Usage prices",
     "Usage Windows": "Usage Windows",
+    "Usage-limit cooldown until {{time}}": "Usage-limit cooldown until {{time}}",
     "Usage-based": "Usage-based",
     "Usage-based billing": "Usage-based billing",
     "Usage-based billing · price not configured": "Usage-based billing · price not configured",

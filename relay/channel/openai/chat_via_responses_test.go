@@ -333,3 +333,64 @@ func requireOrderedSubstrings(t *testing.T, s string, parts ...string) {
 		offset += idx + len(part)
 	}
 }
+
+// The Codex backend reports a usage limit as a bare `error` stream event. The
+// chat bridge (streaming and buffered) and the native non-streaming Responses
+// path must fail with a 429 whose type is the code, not answer 200 with an
+// empty reply.
+func TestResponsesBareErrorEventFailsWithItsCode(t *testing.T) {
+	oldMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(oldMode) })
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	tests := []struct {
+		name       string
+		event      string
+		wantType   string
+		wantStatus int
+	}{
+		{
+			name:       "top-level code",
+			event:      `{"type":"error","code":"usage_limit_reached","message":"The usage limit has been reached"}`,
+			wantType:   "usage_limit_reached",
+			wantStatus: http.StatusTooManyRequests,
+		},
+		{
+			name:       "nested error object",
+			event:      `{"type":"error","error":{"type":"usage_limit_reached","message":"The usage limit has been reached","resets_in_seconds":60}}`,
+			wantType:   "usage_limit_reached",
+			wantStatus: http.StatusTooManyRequests,
+		},
+		{
+			name:       "other code",
+			event:      `{"type":"error","code":"server_error","message":"boom"}`,
+			wantType:   "server_error",
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+	handlers := []struct {
+		name     string
+		isStream bool
+		run      func(*gin.Context, *relaycommon.RelayInfo, *http.Response) (*dto.Usage, *types.NewAPIError)
+	}{
+		{name: "chat stream", isStream: true, run: OaiResponsesToChatStreamHandler},
+		{name: "chat buffered", run: OaiResponsesToChatBufferedStreamHandler},
+		{name: "responses non-stream", run: OaiResponsesStreamToNonStreamHandler},
+	}
+	for _, tt := range tests {
+		for _, h := range handlers {
+			t.Run(tt.name+"/"+h.name, func(t *testing.T) {
+				c, recorder, resp, info := newResponsesChatTestContext(t, "data: "+tt.event+"\n\n", h.isStream)
+				usage, apiErr := h.run(c, info, resp)
+				require.NotNil(t, apiErr)
+				assert.Nil(t, usage)
+				assert.Equal(t, tt.wantStatus, apiErr.StatusCode)
+				assert.Equal(t, tt.wantType, apiErr.ToOpenAIError().Type)
+				assert.NotContains(t, recorder.Body.String(), `"choices"`)
+			})
+		}
+	}
+}

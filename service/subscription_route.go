@@ -77,10 +77,11 @@ func RecordSubscriptionLimitHeaders(c *gin.Context, headers http.Header) {
 
 // DetectSubscriptionAccountLimit reports whether a failed attempt on a bound
 // subscription channel was the account's own usage limit: HTTP 429, an
-// Anthropic rate_limit_error, a window whose unified status is "rejected", or
-// a Codex usage_limit_reached / rate_limit_exceeded error. The window and reset
-// time come from the response headers first, then from the channel's passive
-// usage samples.
+// Anthropic rate_limit_error, a window whose unified status is "rejected", a
+// Codex window used to 100%, or a Codex usage_limit_reached /
+// rate_limit_exceeded error. The window and reset time come from the response
+// headers first (anthropic-ratelimit-unified-* or x-codex-*), then from the
+// channel's passive usage samples.
 func DetectSubscriptionAccountLimit(apiErr *types.NewAPIError, headers http.Header, passive map[string]ClaudePassiveUsageWindow, now time.Time) (SubscriptionAccountLimit, bool) {
 	if apiErr == nil {
 		return SubscriptionAccountLimit{}, false
@@ -111,6 +112,13 @@ func DetectSubscriptionAccountLimit(apiErr *types.NewAPIError, headers http.Head
 		resetAt := parseSubscriptionLimitReset(headers.Get(prefix+"reset"), now)
 		if !found || resetAt > limit.ResetAt {
 			limit = SubscriptionAccountLimit{Window: w.header, ResetAt: resetAt}
+			found = true
+		}
+	}
+	if window, resetAt, ok := codexExhaustedWindow(headers, now); ok {
+		limited = true
+		if !found || resetAt > limit.ResetAt {
+			limit = SubscriptionAccountLimit{Window: window, ResetAt: resetAt}
 			found = true
 		}
 	}
@@ -170,6 +178,9 @@ func HandleSubscriptionRouteFailure(c *gin.Context, info *relaycommon.RelayInfo,
 	var passive map[string]ClaudePassiveUsageWindow
 	if channel, err := model.CacheGetChannel(route.ChannelId); err == nil {
 		passive = LoadClaudePassiveUsage(channel)
+		if channel.Type == constant.ChannelTypeCodex {
+			passive = LoadCodexPassiveUsage(channel)
+		}
 	}
 	limit, limited := DetectSubscriptionAccountLimit(apiErr, headers, passive, time.Now())
 	if !limited {

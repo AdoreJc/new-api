@@ -126,6 +126,7 @@ func GetChannel(
 		}
 		abilities = filterAbilitiesByConstraints(abilities, model, filters)
 	}
+	abilities = withoutCoolingCodexAbilities(abilities)
 	if len(abilities) > 0 {
 		priorities := make([]int64, 0)
 		seen := make(map[int64]bool)

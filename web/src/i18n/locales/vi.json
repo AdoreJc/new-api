@@ -7108,6 +7108,7 @@
     "Usage percentage": "Tỷ lệ đã dùng",
     "Usage prices": "Giá sử dụng",
     "Usage Windows": "Cửa sổ mức dùng",
+    "Usage-limit cooldown until {{time}}": "Tạm ngưng do giới hạn sử dụng đến {{time}}",
     "Usage-based": "Dựa trên sử dụng",
     "Usage-based billing": "Tính phí theo mức sử dụng",
     "Usage-based billing · price not configured": "Tính phí theo mức sử dụng · chưa cấu hình giá",

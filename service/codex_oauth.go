@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,9 +24,68 @@ const (
 )
 
 type CodexOAuthTokenResult struct {
-	AccessToken  string
+	AccessToken string
+	// RefreshToken is the rotated refresh token, or the one sent when the
+	// response did not rotate it.
 	RefreshToken string
-	ExpiresAt    time.Time
+	// IDToken is empty when the response carried none.
+	IDToken   string
+	ExpiresAt time.Time
+}
+
+// codexOAuthErrorBodyLimit bounds how much of a token endpoint answer is read.
+const codexOAuthErrorBodyLimit = 64 << 10
+
+// CodexOAuthRefreshError is a non-2xx answer of the token endpoint. Code is
+// the OAuth error code (error, or error.code), e.g. invalid_grant.
+type CodexOAuthRefreshError struct {
+	StatusCode  int
+	Code        string
+	Description string
+}
+
+func (e *CodexOAuthRefreshError) Error() string {
+	msg := fmt.Sprintf("codex oauth refresh failed: status=%d", e.StatusCode)
+	if e.Code != "" {
+		msg += " code=" + e.Code
+	}
+	if e.Description != "" {
+		msg += ": " + e.Description
+	}
+	return msg
+}
+
+// codexPermanentRefreshErrorCodes are OAuth error codes saying the refresh
+// token or the session behind it is gone, so no retry can succeed and the
+// account must be authorized again (the token-related subset of sub2api
+// isNonRetryableRefreshError, 2026-11-05). Client or scope errors such as
+// invalid_client are configuration problems and are not in the list.
+var codexPermanentRefreshErrorCodes = []string{
+	"invalid_grant",
+	"invalid_refresh_token",
+	"refresh_token_reused",
+	"refresh_token_invalidated",
+	"refresh_token_expired",
+	"token_expired",
+	"app_session_terminated",
+}
+
+// CodexPermanentRefreshErrorCode returns the error code when err is a 400 or
+// 401 answer of the token endpoint whose structured error code says the
+// refresh token is no longer valid.
+func CodexPermanentRefreshErrorCode(err error) (string, bool) {
+	var refreshErr *CodexOAuthRefreshError
+	if !errors.As(err, &refreshErr) {
+		return "", false
+	}
+	if refreshErr.StatusCode != http.StatusBadRequest && refreshErr.StatusCode != http.StatusUnauthorized {
+		return "", false
+	}
+	code := strings.ToLower(strings.TrimSpace(refreshErr.Code))
+	if slices.Contains(codexPermanentRefreshErrorCodes, code) {
+		return code, true
+	}
+	return "", false
 }
 
 func RefreshCodexOAuthToken(ctx context.Context, refreshToken string) (*CodexOAuthTokenResult, error) {
@@ -69,28 +130,74 @@ func refreshCodexOAuthToken(
 	}
 	defer resp.Body.Close()
 
+	body, err := io.ReadAll(io.LimitReader(resp.Body, codexOAuthErrorBodyLimit))
+	if err != nil {
+		return nil, err
+	}
+	// The status decides first: an error page that is not JSON must still
+	// report the status, and a JSON error must report its code.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, parseCodexOAuthRefreshError(resp.StatusCode, body)
+	}
+
 	var payload struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
+		IDToken      string `json:"id_token"`
 		ExpiresIn    int    `json:"expires_in"`
 	}
-
-	if err := common.DecodeJson(resp.Body, &payload); err != nil {
+	if err := common.Unmarshal(body, &payload); err != nil {
 		return nil, err
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("codex oauth refresh failed: status=%d", resp.StatusCode)
-	}
-
-	if strings.TrimSpace(payload.AccessToken) == "" || strings.TrimSpace(payload.RefreshToken) == "" || payload.ExpiresIn <= 0 {
+	if strings.TrimSpace(payload.AccessToken) == "" || payload.ExpiresIn <= 0 {
 		return nil, errors.New("codex oauth refresh response missing fields")
+	}
+	// A refresh that does not rotate the refresh token keeps the old one.
+	newRefreshToken := strings.TrimSpace(payload.RefreshToken)
+	if newRefreshToken == "" {
+		newRefreshToken = rt
 	}
 
 	return &CodexOAuthTokenResult{
 		AccessToken:  strings.TrimSpace(payload.AccessToken),
-		RefreshToken: strings.TrimSpace(payload.RefreshToken),
+		RefreshToken: newRefreshToken,
+		IDToken:      strings.TrimSpace(payload.IDToken),
 		ExpiresAt:    time.Now().Add(time.Duration(payload.ExpiresIn) * time.Second),
 	}, nil
+}
+
+// parseCodexOAuthRefreshError reads the OAuth error of a failed refresh:
+// {"error":"invalid_grant","error_description":"..."} or
+// {"error":{"code":"refresh_token_reused","message":"..."}}. Only the code and
+// description are kept, never the raw body.
+func parseCodexOAuthRefreshError(statusCode int, body []byte) *CodexOAuthRefreshError {
+	refreshErr := &CodexOAuthRefreshError{StatusCode: statusCode}
+	var payload struct {
+		Error            any    `json:"error"`
+		ErrorDescription string `json:"error_description"`
+	}
+	if common.Unmarshal(body, &payload) != nil {
+		return refreshErr
+	}
+	refreshErr.Description = payload.ErrorDescription
+	switch value := payload.Error.(type) {
+	case string:
+		refreshErr.Code = value
+	case map[string]any:
+		if code, ok := value["code"].(string); ok {
+			refreshErr.Code = code
+		} else if code, ok := value["type"].(string); ok {
+			refreshErr.Code = code
+		}
+		if message, ok := value["message"].(string); ok && refreshErr.Description == "" {
+			refreshErr.Description = message
+		}
+	}
+	const descriptionLimit = 300
+	if len(refreshErr.Description) > descriptionLimit {
+		refreshErr.Description = refreshErr.Description[:descriptionLimit]
+	}
+	return refreshErr
 }
 
 func getCodexOAuthHTTPClient(proxyURL string) (*http.Client, error) {

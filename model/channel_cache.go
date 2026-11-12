@@ -141,6 +141,7 @@ func GetRandomSatisfiedChannel(
 	if len(channels) == 0 {
 		return nil, nil
 	}
+	channels = withoutCoolingCodexChannelIDs(channels)
 
 	if len(channels) == 1 {
 		if channel, ok := channelsIDM[channels[0]]; ok {

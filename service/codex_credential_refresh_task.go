@@ -117,6 +117,10 @@ func runCodexCredentialAutoRefreshOnce() {
 			if refreshToken == "" {
 				continue
 			}
+			// A refresh token the endpoint rejected for good is not retried.
+			if _, failed := codexRefreshPermanentlyFailed(ch.Id, refreshToken); failed {
+				continue
+			}
 
 			expiredAtRaw := strings.TrimSpace(oauthKey.Expired)
 			expiredAt, err := time.Parse(time.RFC3339, expiredAtRaw)

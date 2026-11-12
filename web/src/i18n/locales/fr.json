@@ -7108,6 +7108,7 @@
     "Usage percentage": "Pourcentage utilisé",
     "Usage prices": "Tarifs d'utilisation",
     "Usage Windows": "Fenêtres d'utilisation",
+    "Usage-limit cooldown until {{time}}": "Pause (limite d'utilisation) jusqu'au {{time}}",
     "Usage-based": "Basé sur l'utilisation",
     "Usage-based billing": "Facturation à l’usage",
     "Usage-based billing · price not configured": "Facturation à l’usage · prix non configuré",

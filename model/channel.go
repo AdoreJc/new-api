@@ -628,6 +628,9 @@ func (channel *Channel) Update() error {
 	if err != nil {
 		return err
 	}
+	if channel.Key != "" {
+		ClearCodexChannelCooldown(channel.Id)
+	}
 	DB.Model(channel).First(channel, "id = ?", channel.Id)
 	err = channel.UpdateAbilities(nil)
 	return err
@@ -765,6 +768,11 @@ func hasEnabledMultiKey(keys []string, statusList map[int]int) bool {
 }
 
 func UpdateChannelStatus(channelId int, usingKey string, status int, reason string) bool {
+	if status == common.ChannelStatusEnabled {
+		// Enabling a channel, manually or after a passing test, also ends a
+		// Codex usage-limit cooldown.
+		ClearCodexChannelCooldown(channelId)
+	}
 	if common.MemoryCacheEnabled {
 		channelStatusLock.Lock()
 		defer channelStatusLock.Unlock()
