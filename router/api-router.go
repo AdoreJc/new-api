@@ -307,13 +307,16 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		usageRoute := apiRouter.Group("/usage")
-		usageRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
+		usageRoute.Use(middleware.CORS())
 		{
 			tokenUsageRoute := usageRoute.Group("/token")
-			tokenUsageRoute.Use(middleware.TokenAuthReadOnly())
+			tokenUsageRoute.Use(middleware.CriticalRateLimit(), middleware.TokenAuthReadOnly())
 			{
 				tokenUsageRoute.GET("/", controller.GetTokenUsage)
 			}
+			// Polled by usage scripts such as CC Switch, so it counts per token
+			// instead of in the per-IP critical bucket shared with login.
+			usageRoute.GET("/subscription", middleware.TokenAuthReadOnly(), middleware.SubscriptionUsageRateLimit(), controller.GetTokenSubscriptionUsage)
 		}
 
 		redemptionRoute := apiRouter.Group("/redemption")

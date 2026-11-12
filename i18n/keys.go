@@ -129,3 +129,19 @@ const (
 	MsgChannelUpstreamUpdateFailedChannels  = "channel.upstream_update_failed_channels"
 	MsgChannelUpstreamUpdateMoreOmitted     = "channel.upstream_update_more_omitted"
 )
+
+// Usage window labels of the API-key subscription usage endpoint, read by
+// clients such as CC Switch without the web console in between
+const (
+	MsgSubscriptionUsageClaudeFiveHour       = "subscription_usage.claude_five_hour"
+	MsgSubscriptionUsageClaudeSevenDay       = "subscription_usage.claude_seven_day"
+	MsgSubscriptionUsageClaudeSevenDaySonnet = "subscription_usage.claude_seven_day_sonnet"
+	MsgSubscriptionUsageClaudeSevenDayFable  = "subscription_usage.claude_seven_day_fable"
+	MsgSubscriptionUsageCodexFiveHour        = "subscription_usage.codex_five_hour"
+	MsgSubscriptionUsageCodexWeekly          = "subscription_usage.codex_weekly"
+	MsgSubscriptionUsageCodexWindow          = "subscription_usage.codex_window"
+	MsgSubscriptionUsagePassiveSample        = "subscription_usage.passive_sample"
+	MsgSubscriptionUsageSubscription         = "subscription_usage.subscription"
+	MsgSubscriptionUsageUpstreamStatus       = "subscription_usage.upstream_status"
+	MsgSubscriptionUsageUnavailable          = "subscription_usage.unavailable"
+)

@@ -17,6 +17,7 @@ import { RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { CopyButton } from '@/components/copy-button'
 import { Dialog } from '@/components/dialog'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
@@ -34,12 +35,21 @@ import { createServerError } from '@/lib/server-error-message'
 
 import { getSelfSubscriptionUsage } from '../../api'
 import {
+  buildCcSwitchUsageScript,
+  CC_SWITCH_HOURS_PLACEHOLDER,
+  CC_SWITCH_MINUTES_PLACEHOLDER,
+} from '../../lib/cc-switch-usage-script'
+import {
+  BOUND_CHANNEL_TYPE_CODEX,
   boundAccountLabelKey,
   isSubscriptionUsageWindow,
   parseSubscriptionUsageWindows,
 } from '../../lib/channel-binding'
 import type { SubscriptionUsageData, UserSubscription } from '../../types'
 import { SubscriptionResetCreditsSection } from './subscription-reset-credits-section'
+
+// Splits the translated "resets in" text around the time the script fills in.
+const TIME_PLACEHOLDER = '__TIME__'
 
 type SubscriptionUsageDialogProps = {
   open: boolean
@@ -120,6 +130,26 @@ export function SubscriptionUsageDialog(props: SubscriptionUsageDialogProps) {
     )
   )
 
+  const channelType =
+    data?.channel_type ?? props.subscription?.bound_channel_type
+  const [resetsInPrefix, resetsInSuffix] = t('Resets in {{time}}', {
+    time: TIME_PLACEHOLDER,
+  }).split(TIME_PLACEHOLDER)
+  const ccSwitchScript = buildCcSwitchUsageScript(
+    channelType === BOUND_CHANNEL_TYPE_CODEX ? 'codex' : 'claude',
+    {
+      failed: t('Failed to fetch usage'),
+      noSubscription: t('No bound subscription'),
+      resetsInPrefix: resetsInPrefix ?? '',
+      resetsInSuffix: resetsInSuffix ?? '',
+      hoursMinutes: t('{{hours}}h {{minutes}}m', {
+        hours: CC_SWITCH_HOURS_PLACEHOLDER,
+        minutes: CC_SWITCH_MINUTES_PLACEHOLDER,
+      }),
+      minutes: t('{{minutes}}m', { minutes: CC_SWITCH_MINUTES_PLACEHOLDER }),
+    }
+  )
+
   let body: React.ReactNode
   if (isLoading && !data) {
     body = (
@@ -198,13 +228,26 @@ export function SubscriptionUsageDialog(props: SubscriptionUsageDialogProps) {
       contentHeight='auto'
       bodyClassName='flex flex-col gap-4'
       footer={
-        <Button
-          type='button'
-          variant='outline'
-          onClick={() => handleOpenChange(false)}
-        >
-          {t('Close')}
-        </Button>
+        <>
+          <CopyButton
+            value={ccSwitchScript}
+            variant='outline'
+            size='default'
+            tooltip={t(
+              'Paste into CC Switch as the custom usage script of a provider that uses an API key of this account'
+            )}
+            aria-label={t('Copy CC Switch usage script')}
+          >
+            {t('Copy CC Switch usage script')}
+          </CopyButton>
+          <Button
+            type='button'
+            variant='outline'
+            onClick={() => handleOpenChange(false)}
+          >
+            {t('Close')}
+          </Button>
+        </>
       }
     >
       <UsageSectionHeading

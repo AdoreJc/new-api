@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -289,4 +290,64 @@ func TestGlobalWebRateLimitCountsFrontendFilesInStaticBucket(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "1", webCount)
 	})
+}
+
+// The subscription usage query is polled by usage scripts, so it counts per
+// token: one token running out neither blocks another token on the same IP
+// nor touches the per-IP critical bucket shared with login.
+func TestSubscriptionUsageRateLimitCountsPerTokenApartFromCriticalBucket(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previousRedisEnabled := common.RedisEnabled
+	usageEnable, usageNum, usageDuration := common.SubscriptionUsageRateLimitEnable, common.SubscriptionUsageRateLimitNum, common.SubscriptionUsageRateLimitDuration
+	criticalEnable, criticalNum := common.CriticalRateLimitEnable, common.CriticalRateLimitNum
+	t.Cleanup(func() {
+		common.RedisEnabled = previousRedisEnabled
+		common.SubscriptionUsageRateLimitEnable, common.SubscriptionUsageRateLimitNum, common.SubscriptionUsageRateLimitDuration = usageEnable, usageNum, usageDuration
+		common.CriticalRateLimitEnable, common.CriticalRateLimitNum = criticalEnable, criticalNum
+	})
+	common.SubscriptionUsageRateLimitEnable, common.SubscriptionUsageRateLimitNum, common.SubscriptionUsageRateLimitDuration = true, 2, 3600
+	common.CriticalRateLimitEnable, common.CriticalRateLimitNum = true, 1
+
+	newRouter := func() *gin.Engine {
+		router := gin.New()
+		router.GET("/login", CriticalRateLimit(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+		router.GET("/subscription/:token", func(c *gin.Context) {
+			tokenID, _ := strconv.Atoi(c.Param("token"))
+			c.Set("token_id", tokenID)
+		}, SubscriptionUsageRateLimit(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+		return router
+	}
+	const ip = "192.0.2.77:1234"
+
+	for _, mode := range []string{"memory", "redis"} {
+		t.Run(mode, func(t *testing.T) {
+			var redisServer *miniredis.Miniredis
+			if mode == "redis" {
+				redisServer, _ = useRateLimitMiniRedis(t)
+			} else {
+				common.RedisEnabled = false
+			}
+			router := newRouter()
+			tokenA, tokenB := "/subscription/101", "/subscription/102"
+			if mode == "redis" {
+				tokenA, tokenB = "/subscription/201", "/subscription/202"
+			}
+
+			assert.Equal(t, http.StatusNoContent, performRateLimitRequest(router, "/login", ip).Code)
+			assert.Equal(t, http.StatusTooManyRequests, performRateLimitRequest(router, "/login", ip).Code, "critical bucket exhausted")
+
+			assert.Equal(t, http.StatusNoContent, performRateLimitRequest(router, tokenA, ip).Code)
+			assert.Equal(t, http.StatusNoContent, performRateLimitRequest(router, tokenA, ip).Code)
+			limited := performRateLimitRequest(router, tokenA, ip)
+			assert.Equal(t, http.StatusTooManyRequests, limited.Code)
+			assert.NotEmpty(t, limited.Header().Get("Retry-After"))
+			assert.Equal(t, http.StatusNoContent, performRateLimitRequest(router, tokenB, ip).Code, "another token keeps its own budget")
+
+			if redisServer != nil {
+				key := redisTokenRateLimitKey("SU", 201)
+				assert.True(t, redisServer.Exists(key))
+				assert.Equal(t, time.Hour, redisServer.TTL(key))
+			}
+		})
+	}
 }

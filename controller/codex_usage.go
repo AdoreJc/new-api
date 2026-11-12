@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -82,8 +83,9 @@ func fetchCodexChannelWhamData(
 		return
 	}
 
-	statusCode, body, fetched := codexChannelWhamFetch(c, ch, fetch, logPrefix, userMessage)
-	if !fetched {
+	statusCode, body, err := codexChannelWhamFetch(c.Request.Context(), ch, fetch, logPrefix, userMessage)
+	if err != nil {
+		common.ApiError(c, err)
 		return
 	}
 
@@ -106,14 +108,13 @@ func fetchCodexChannelWhamData(
 }
 
 // codexChannelWhamFetch runs fetch with the channel's access token and
-// retries once after a token refresh when upstream answers 401/403. On
-// failure the error response has already been written and ok is false.
-func codexChannelWhamFetch(c *gin.Context, ch *model.Channel, fetch codexWhamFetchFunc, logPrefix string, userMessage string) (statusCode int, body []byte, ok bool) {
+// retries once after a token refresh when upstream answers 401/403. A non-nil
+// error is ready for common.ApiError; upstream statuses are not errors.
+func codexChannelWhamFetch(ctx context.Context, ch *model.Channel, fetch codexWhamFetchFunc, logPrefix string, userMessage string) (statusCode int, body []byte, err error) {
 	oauthKey, err := codex.ParseOAuthKey(strings.TrimSpace(ch.Key))
 	if err != nil {
 		common.SysError(common.LogText("failed to parse oauth key: %s", err.Error()))
-		common.ApiErrorT(c, "Failed to parse credentials. Please check the channel configuration")
-		return 0, nil, false
+		return 0, nil, common.NewMessage("Failed to parse credentials. Please check the channel configuration")
 	}
 	if stashed, ok := service.StashedOAuthChannelKey(ch.Id, oauthKey.RefreshToken); ok {
 		if renewed, err := codex.ParseOAuthKey(stashed); err == nil {
@@ -123,48 +124,43 @@ func codexChannelWhamFetch(c *gin.Context, ch *model.Channel, fetch codexWhamFet
 	accessToken := strings.TrimSpace(oauthKey.AccessToken)
 	accountID := strings.TrimSpace(oauthKey.AccountID)
 	if accessToken == "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "codex channel: access_token is required"})
-		return 0, nil, false
+		return 0, nil, errors.New("codex channel: access_token is required")
 	}
 	if accountID == "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "codex channel: account_id is required"})
-		return 0, nil, false
+		return 0, nil, errors.New("codex channel: account_id is required")
 	}
 
 	setting := ch.GetSetting()
 	client, err := service.GetHttpClientWithProxySettings(setting.Proxy, setting)
 	if err != nil {
-		common.ApiError(c, err)
-		return 0, nil, false
+		return 0, nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	statusCode, body, err = fetch(ctx, client, ch.GetBaseURL(), accessToken, accountID)
+	statusCode, body, err = fetch(fetchCtx, client, ch.GetBaseURL(), accessToken, accountID)
 	if err != nil {
 		common.SysError(logPrefix + ": " + err.Error())
-		common.ApiErrorT(c, userMessage)
-		return 0, nil, false
+		return 0, nil, common.NewMessage(userMessage)
 	}
 
 	if (statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden) && strings.TrimSpace(oauthKey.RefreshToken) != "" {
-		refreshCtx, refreshCancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+		refreshCtx, refreshCancel := context.WithTimeout(ctx, 10*time.Second)
 		defer refreshCancel()
 
 		refreshedKey, _, refreshErr := service.RefreshCodexChannelCredential(refreshCtx, ch.Id, service.CodexCredentialRefreshOptions{ResetCaches: true})
 		if refreshErr != nil {
 			common.SysError(common.LogText("%s: token refresh after upstream %d failed: %s", logPrefix, statusCode, refreshErr.Error()))
 		} else {
-			ctx2, cancel2 := context.WithTimeout(c.Request.Context(), 15*time.Second)
-			defer cancel2()
-			statusCode, body, err = fetch(ctx2, client, ch.GetBaseURL(), refreshedKey.AccessToken, accountID)
+			retryCtx, retryCancel := context.WithTimeout(ctx, 15*time.Second)
+			defer retryCancel()
+			statusCode, body, err = fetch(retryCtx, client, ch.GetBaseURL(), refreshedKey.AccessToken, accountID)
 			if err != nil {
 				common.SysError(common.LogText("%s after refresh: %s", logPrefix, err.Error()))
-				common.ApiErrorT(c, userMessage)
-				return 0, nil, false
+				return 0, nil, common.NewMessage(userMessage)
 			}
 		}
 	}
-	return statusCode, body, true
+	return statusCode, body, nil
 }

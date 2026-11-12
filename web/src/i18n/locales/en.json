@@ -7598,6 +7598,12 @@
     "When off, this gateway is hidden from users and new orders are rejected. Callbacks for orders already placed are still processed.": "When off, this gateway is hidden from users and new orders are rejected. Callbacks for orders already placed are still processed.",
     "Enable payment method {{name}}": "Enable payment method {{name}}",
     "This payment channel is disabled": "This payment channel is disabled",
-    "The enabled field of payment method {{type}} must be true or false": "The enabled field of payment method {{type}} must be true or false"
+    "The enabled field of payment method {{type}} must be true or false": "The enabled field of payment method {{type}} must be true or false",
+    "Copy CC Switch usage script": "Copy CC Switch usage script",
+    "Paste into CC Switch as the custom usage script of a provider that uses an API key of this account": "Paste into CC Switch as the custom usage script of a provider that uses an API key of this account",
+    "Resets in {{time}}": "Resets in {{time}}",
+    "No bound subscription": "No bound subscription",
+    "{{hours}}h {{minutes}}m": "{{hours}}h {{minutes}}m",
+    "{{minutes}}m": "{{minutes}}m"
   }
 }

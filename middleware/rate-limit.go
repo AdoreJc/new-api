@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -267,4 +268,54 @@ func SearchRateLimit() func(c *gin.Context) {
 		return defNext
 	}
 	return userRateLimitFactory(common.SearchRateLimitNum, common.SearchRateLimitDuration, "SR")
+}
+
+func redisTokenRateLimitKey(mark string, tokenID int) string {
+	return fmt.Sprintf("%s:token:%s:%d", redisRateLimitNamespace, mark, tokenID)
+}
+
+// tokenInMemoryRateLimiter keeps per-token buckets apart from the per-IP and
+// per-user ones: its idle-key expiry follows the window, which may be longer
+// than RateLimitKeyExpirationDuration.
+var tokenInMemoryRateLimiter common.InMemoryRateLimiter
+
+// tokenRateLimitFactory creates a rate limiter keyed by the API token ID, so
+// clients behind one NAT or one user's several tools each get their own
+// budget. Must be used AFTER a token authentication middleware.
+func tokenRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c *gin.Context) {
+	if common.RedisEnabled {
+		return func(c *gin.Context) {
+			tokenID := c.GetInt("token_id")
+			if tokenID == 0 {
+				c.Status(http.StatusUnauthorized)
+				c.Abort()
+				return
+			}
+			userRedisRateLimiter(c, maxRequestNum, duration, redisTokenRateLimitKey(mark, tokenID))
+		}
+	}
+	tokenInMemoryRateLimiter.Init(max(common.RateLimitKeyExpirationDuration, time.Duration(duration)*time.Second))
+	return func(c *gin.Context) {
+		tokenID := c.GetInt("token_id")
+		if tokenID == 0 {
+			c.Status(http.StatusUnauthorized)
+			c.Abort()
+			return
+		}
+		key := fmt.Sprintf("%s:token:%d", mark, tokenID)
+		if !tokenInMemoryRateLimiter.Request(key, maxRequestNum, duration) {
+			writeRateLimited(c, duration)
+			return
+		}
+	}
+}
+
+// SubscriptionUsageRateLimit limits the API-key subscription usage query per
+// token. Configurable via SUBSCRIPTION_USAGE_RATE_LIMIT_ENABLE /
+// SUBSCRIPTION_USAGE_RATE_LIMIT / SUBSCRIPTION_USAGE_RATE_LIMIT_DURATION.
+func SubscriptionUsageRateLimit() func(c *gin.Context) {
+	if !common.SubscriptionUsageRateLimitEnable || common.SubscriptionUsageRateLimitNum <= 0 || common.SubscriptionUsageRateLimitDuration <= 0 {
+		return defNext
+	}
+	return tokenRateLimitFactory(common.SubscriptionUsageRateLimitNum, common.SubscriptionUsageRateLimitDuration, "SU")
 }

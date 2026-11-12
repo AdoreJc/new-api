@@ -245,6 +245,12 @@ var (
 	SearchRateLimitEnable         = true
 	SearchRateLimitNum            = 10
 	SearchRateLimitDuration int64 = 60
+
+	// Per-token limit of the API-key subscription usage query (keyed by token
+	// ID, separate from the per-IP critical bucket shared with login)
+	SubscriptionUsageRateLimitEnable         = true
+	SubscriptionUsageRateLimitNum            = 60
+	SubscriptionUsageRateLimitDuration int64 = 60 * 60
 )
 
 var RateLimitKeyExpirationDuration = 20 * time.Minute
