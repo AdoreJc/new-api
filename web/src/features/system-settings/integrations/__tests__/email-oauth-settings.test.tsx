@@ -105,13 +105,18 @@ describe('OAuth mailbox settings', () => {
       screen.getByRole('radio', { name: 'Outlook / Microsoft 365' })
     )
     await user.type(
-      screen.getByRole('textbox', { name: 'Client ID' }),
+      screen.getByRole('textbox', { name: 'Application (client) ID' }),
       'client-id'
     )
-    await user.type(screen.getByLabelText('Client secret'), 'client-secret')
-    await user.clear(screen.getByRole('textbox', { name: 'Tenant' }))
     await user.type(
-      screen.getByRole('textbox', { name: 'Tenant' }),
+      screen.getByLabelText('Client secret (Value)'),
+      'client-secret'
+    )
+    await user.clear(
+      screen.getByRole('textbox', { name: 'Directory (tenant) ID' })
+    )
+    await user.type(
+      screen.getByRole('textbox', { name: 'Directory (tenant) ID' }),
       'contoso.onmicrosoft.com'
     )
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
@@ -123,7 +128,7 @@ describe('OAuth mailbox settings', () => {
       { key: 'EmailOAuthClientSecret', value: 'client-secret' },
     ])
     await waitFor(() =>
-      expect(screen.getByLabelText('Client secret')).toHaveValue('')
+      expect(screen.getByLabelText('Client secret (Value)')).toHaveValue('')
     )
   })
 
@@ -144,7 +149,7 @@ describe('OAuth mailbox settings', () => {
     ],
     [
       'Outlook / Microsoft 365',
-      /delegated Microsoft Graph permissions.*A single-tenant app \(the default\) needs its Directory \(tenant\) ID in Tenant below/,
+      /delegated Microsoft Graph permissions.*the secret Value \(not the Secret ID\)/,
       [
         [
           'Get a Client ID and client secret',
@@ -158,9 +163,8 @@ describe('OAuth mailbox settings', () => {
       const user = renderEmail({ EmailProvider: 'oauth' })
       await user.click(screen.getByRole('radio', { name: service }))
       expect(screen.getByText(steps)).toBeVisible()
-      expect(screen.getByLabelText('Client secret')).toHaveAttribute(
-        'placeholder',
-        'Enter new secret to update'
+      expect(screen.getByPlaceholderText('Enter new secret to update')).toBe(
+        screen.getByLabelText(/^Client secret/)
       )
       const links = screen
         .getAllByRole('link')
@@ -173,6 +177,43 @@ describe('OAuth mailbox settings', () => {
       }
     }
   )
+
+  it.each([
+    ['Gmail / Google Workspace', ['Client ID', 'Client secret']],
+    [
+      'Outlook / Microsoft 365',
+      [
+        'Application (client) ID',
+        'Client secret (Value)',
+        'Directory (tenant) ID',
+      ],
+    ],
+  ])(
+    'labels the %s app fields with the console names',
+    async (service, labels) => {
+      const user = renderEmail({ EmailProvider: 'oauth' })
+      await user.click(screen.getByRole('radio', { name: service }))
+      for (const label of labels) {
+        expect(screen.getByLabelText(label)).toBeEnabled()
+      }
+      const hidden = ['Client ID', 'Client secret', 'Directory (tenant) ID']
+      for (const label of hidden.filter((name) => !labels.includes(name))) {
+        expect(screen.queryByLabelText(label)).not.toBeInTheDocument()
+      }
+    }
+  )
+
+  it('explains which tenant values fit each Microsoft app type', async () => {
+    const user = renderEmail({ EmailProvider: 'oauth' })
+    await user.click(
+      screen.getByRole('radio', { name: 'Outlook / Microsoft 365' })
+    )
+    expect(
+      screen.getByText(
+        /Required for single-tenant apps.*organizations or leave it blank \(common\).*consumers for personal Microsoft accounts only/
+      )
+    ).toBeVisible()
+  })
 
   it('requires a Client ID and secret before saving the OAuth method', async () => {
     const request = vi.spyOn(api, 'put')

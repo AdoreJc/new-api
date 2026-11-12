@@ -124,24 +124,24 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
       queryClient.invalidateQueries({ queryKey: ['system-options'] }),
   })
   const busy = props.isSaving || authorize.isPending || revoke.isPending
-  const consoleLinks =
-    oauthProvider === 'microsoft'
-      ? [
-          {
-            label: t('Get a Client ID and client secret'),
-            href: EMAIL_OAUTH_CONSOLE_URLS.microsoftApps,
-          },
-        ]
-      : [
-          {
-            label: t('Get a Client ID and client secret'),
-            href: EMAIL_OAUTH_CONSOLE_URLS.googleCredentials,
-          },
-          {
-            label: t('Enable the Gmail API'),
-            href: EMAIL_OAUTH_CONSOLE_URLS.gmailApi,
-          },
-        ]
+  const microsoft = oauthProvider === 'microsoft'
+  const consoleLinks = microsoft
+    ? [
+        {
+          label: t('Get a Client ID and client secret'),
+          href: EMAIL_OAUTH_CONSOLE_URLS.microsoftApps,
+        },
+      ]
+    : [
+        {
+          label: t('Get a Client ID and client secret'),
+          href: EMAIL_OAUTH_CONSOLE_URLS.googleCredentials,
+        },
+        {
+          label: t('Enable the Gmail API'),
+          href: EMAIL_OAUTH_CONSOLE_URLS.gmailApi,
+        },
+      ]
 
   let authorizeHint = t(
     'Opens the provider sign-in page. Sign in with the mailbox that sends email.'
@@ -203,9 +203,9 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
       <OAuthSetupGuide
         title={t('Setup guide')}
         description={
-          oauthProvider === 'microsoft'
+          microsoft
             ? t(
-                'In Microsoft Entra, register an app, add a Web platform with the redirect URI below, create a client secret under Certificates & secrets, and add the delegated Microsoft Graph permissions Mail.Send, User.Read and offline_access. A single-tenant app (the default) needs its Directory (tenant) ID in Tenant below; use common only for multi-tenant or personal-account apps.'
+                'In Microsoft Entra, register an app, add a Web platform with the redirect URI below, create a client secret under Certificates & secrets, and add the delegated Microsoft Graph permissions Mail.Send, User.Read and offline_access. Copy the IDs below from the app Overview page and the secret Value (not the Secret ID).'
               )
             : t(
                 'In Google Cloud Console, enable the Gmail API, then create an OAuth client ID of type Web application with the redirect URI below. On the OAuth consent screen, choose Internal for Google Workspace; with External, add the sending mailbox as a test user or publish the app, because while in Testing other accounts are denied and refresh tokens expire after 7 days.'
@@ -232,7 +232,11 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
         name='EmailOAuthClientId'
         render={({ field }) => (
           <FormItem>
-            <FormLabel>{t('Client ID')}</FormLabel>
+            {/* Microsoft fields use the Entra portal's own names so they can
+                be matched and copied from the app's Overview page. */}
+            <FormLabel>
+              {microsoft ? t('Application (client) ID') : t('Client ID')}
+            </FormLabel>
             <FormControl>
               <Input
                 {...field}
@@ -249,7 +253,9 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
         name='EmailOAuthClientSecret'
         render={({ field }) => (
           <FormItem>
-            <FormLabel>{t('Client secret')}</FormLabel>
+            <FormLabel>
+              {microsoft ? t('Client secret (Value)') : t('Client secret')}
+            </FormLabel>
             <FormControl>
               <PasswordInput
                 {...field}
@@ -265,13 +271,13 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
           </FormItem>
         )}
       />
-      {oauthProvider === 'microsoft' && (
+      {microsoft && (
         <FormField
           control={form.control}
           name='EmailOAuthTenant'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t('Tenant')}</FormLabel>
+              <FormLabel>{t('Directory (tenant) ID')}</FormLabel>
               <FormControl>
                 <Input
                   {...field}
@@ -282,7 +288,7 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
               </FormControl>
               <FormDescription>
                 {t(
-                  'Directory (tenant) ID or domain. Leave blank to use common.'
+                  'Copy it from the Overview page of the Entra app. Required for single-tenant apps (the default); multi-tenant apps can use organizations or leave it blank (common); use consumers for personal Microsoft accounts only.'
                 )}
               </FormDescription>
               <FormMessage />
