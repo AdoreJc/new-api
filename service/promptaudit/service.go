@@ -277,7 +277,7 @@ func (s *Service) process(ctx context.Context, item *job) {
 		s.metrics.skipped.Add(1)
 		return
 	}
-	prompt, err := extractPromptSnapshot(item.protocol, item.body)
+	prompt, err := extractPromptSnapshot(item.protocol, item.body, snapshot.Config.ScanScope)
 	if err != nil {
 		s.metrics.noText.Add(1)
 		return
@@ -285,7 +285,7 @@ func (s *Service) process(ctx context.Context, item *job) {
 	s.metrics.scanned.Add(1)
 	// A failed scan can still return the findings of chunks scanned before
 	// the failure; those are recorded and marked incomplete.
-	result, err := s.guard.evaluate(ctx, snapshot, prompt.ScanText, s.retryDelays, &s.metrics)
+	result, err := s.guard.evaluate(ctx, snapshot, prompt.Latest, prompt.Rest, s.retryDelays, &s.metrics)
 	if err != nil {
 		s.metrics.failed.Add(1)
 		var guardErr *guardError
@@ -320,6 +320,7 @@ func (s *Service) process(ctx context.Context, item *job) {
 	event.ConfigVersion = snapshot.Config.ConfigVersion
 	event.ChunkTotal, event.ChunksScanned, event.LatencyMs = result.ChunkTotal, result.ChunksScanned, result.LatencyMS
 	event.ScanIncomplete = result.Incomplete
+	event.HitChunks = encodeHits(result.Hits)
 	event.PromptHash, event.RedactedPreview = prompt.Hash, prompt.Preview
 	event.PromptLength, event.MessageCount = prompt.Length, prompt.MessageCount
 	if snapshot.Config.StoreFullPrompt {
@@ -350,6 +351,17 @@ func encodeList(values []string) string {
 		return "[]"
 	}
 	encoded, err := common.Marshal(values)
+	if err != nil {
+		return "[]"
+	}
+	return string(encoded)
+}
+
+func encodeHits(hits []chunkHit) string {
+	if len(hits) == 0 {
+		return "[]"
+	}
+	encoded, err := common.Marshal(hits)
 	if err != nil {
 		return "[]"
 	}
@@ -487,7 +499,7 @@ func Probe(ctx context.Context, endpoint prompt_audit_setting.Endpoint, token st
 	// A throwaway client: probing arbitrary addresses must not grow the cache.
 	client := newHTTPClient(endpoint)
 	defer client.CloseIdleConnections()
-	result, err := scanWith(ctx, client, endpoint, token, "Hello", prompt_audit_setting.ScannerIDs)
+	result, err := scanWith(ctx, client, endpoint, token, "Hello", prompt_audit_setting.ScannerIDs, false)
 	probe := ProbeResult{LatencyMS: time.Since(started).Milliseconds()}
 	if err != nil {
 		probe.Error = err.Error()

@@ -107,6 +107,7 @@ func UpdatePromptAuditConfig(c *gin.Context) {
 		"key": prompt_audit_setting.OptionKey, "enabled": saved.Enabled, "all_groups": saved.AllGroups,
 		"groups": strings.Join(saved.Groups, ","), "endpoints": len(saved.Endpoints),
 		"store_full_prompt": saved.StoreFullPrompt, "retention_days": saved.RetentionDays,
+		"scan_scope": saved.ScanScope, "strict_jailbreak_mapping": saved.StrictJailbreakMapping,
 		"config_version": saved.ConfigVersion, "token_changes": strings.Join(tokenChanges, ","),
 	})
 	common.ApiSuccess(c, buildPromptAuditConfigResponse(saved, tokens))

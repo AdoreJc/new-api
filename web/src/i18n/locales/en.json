@@ -7732,6 +7732,22 @@
     "Chunks skipped (recently safe)": "Chunks skipped (recently safe)",
     "Chunks over the per-request limit": "Chunks over the per-request limit",
     "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms",
-    "Scan incomplete: a later chunk could not be scanned; these are the findings so far": "Scan incomplete: a later chunk could not be scanned; these are the findings so far"
+    "Scan incomplete: a later chunk could not be scanned; these are the findings so far": "Scan incomplete: a later chunk could not be scanned; these are the findings so far",
+    "Scan scope": "Scan scope",
+    "Latest user message": "Latest user message",
+    "All user messages": "All user messages",
+    "Entire conversation": "Entire conversation",
+    "Only the newest user input. Agent system prompts, tool output and earlier turns are not scanned.": "Only the newest user input. Agent system prompts, tool output and earlier turns are not scanned.",
+    "Every user message in the conversation, without system, developer, assistant or tool text.": "Every user message in the conversation, without system, developer, assistant or tool text.",
+    "Every client text, including system prompts, assistant replies and tool output. Agent prompts are often flagged as jailbreaks.": "Every client text, including system prompts, assistant replies and tool output. Agent prompts are often flagged as jailbreaks.",
+    "Stored prompts always cover the whole request.": "Stored prompts always cover the whole request.",
+    "Treat controversial jailbreak results as critical": "Treat controversial jailbreak results as critical",
+    "Off by default: a controversial jailbreak verdict is recorded as flagged, because coding agent prompts often get it. Unsafe results are not affected.": "Off by default: a controversial jailbreak verdict is recorded as flagged, because coding agent prompts often get it. Unsafe results are not affected.",
+    "Triggered by": "Triggered by",
+    "Chunk {{index}} ({{roles}}): {{decision}}": "Chunk {{index}} ({{roles}}): {{decision}}",
+    "Developer": "Developer",
+    "Assistant": "Assistant",
+    "Tool": "Tool",
+    "Agent context": "Agent context"
   }
 }

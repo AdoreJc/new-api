@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/prompt_audit_setting"
 )
 
 // Protocols select the request body layout used for text extraction.
@@ -27,9 +28,11 @@ const (
 const (
 	previewMaxRunes    = 96
 	fullPromptMaxRunes = 65536
-	// prioritySeparator splits the latest user input from the rest of the
-	// transcript so the first Guard chunk always starts with the newest turn.
-	prioritySeparator = "\x00NEWAPI_PROMPT_AUDIT_PRIORITY_END\x00"
+	segmentSeparator   = "\n\n"
+	// roleAgentContext marks user-role text that is wholly a wrapper coding
+	// agents inject (Claude Code reminders, Codex environment and AGENTS.md
+	// instructions). It is scanned only with the "all" scope.
+	roleAgentContext = "agent_context"
 )
 
 var (
@@ -40,8 +43,11 @@ var (
 	canaryPattern    = regexp.MustCompile(`(?i)([A-Z]+_CANARY_)[A-Za-z0-9_-]+`)
 	emailPattern     = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
 	phonePattern     = regexp.MustCompile(`(?:\+?\d[\d\s().-]{8,}\d)`)
+	hostPortPattern  = regexp.MustCompile(`(?i)\b(?:\d{1,3}(?:\.\d{1,3}){3}|localhost)(?::\d{1,5})?\b`)
 	clientTextRoles  = []string{"user", "system", "developer", "assistant", "tool"}
 	contentTextTypes = []string{"", "text", "input_text", "output_text"}
+	// agentContextTags wrap context that coding agents add to user messages.
+	agentContextTags = []string{"system-reminder", "environment_context", "user_instructions"}
 )
 
 type promptSegment struct {
@@ -51,9 +57,49 @@ type promptSegment struct {
 
 func (s promptSegment) isUser() bool { return s.role == "" || s.role == "user" }
 
+func (s promptSegment) displayRole() string {
+	if s.role == "" {
+		return "user"
+	}
+	return s.role
+}
+
+// roleSpan is the rune range of one segment inside a scanPart.
+type roleSpan struct {
+	start, end int
+	role       string
+}
+
+// scanPart is text sent to the Guard together with the role of each piece,
+// so a finding can name the roles of the chunk that triggered it.
+type scanPart struct {
+	text  string
+	spans []roleSpan
+}
+
+func joinSegments(segments []promptSegment) scanPart {
+	var builder strings.Builder
+	spans := make([]roleSpan, 0, len(segments))
+	offset := 0
+	for index, segment := range segments {
+		if index > 0 {
+			builder.WriteString(segmentSeparator)
+			offset += utf8.RuneCountInString(segmentSeparator)
+		}
+		builder.WriteString(segment.text)
+		length := utf8.RuneCountInString(segment.text)
+		spans = append(spans, roleSpan{start: offset, end: offset + length, role: segment.displayRole()})
+		offset += length
+	}
+	return scanPart{text: builder.String(), spans: spans}
+}
+
 // promptSnapshot is the extracted, client-controlled text of one request.
+// Latest and Rest are what the scan scope sends to the Guard; FullPrompt,
+// Preview and Hash always cover every extracted text.
 type promptSnapshot struct {
-	ScanText     string
+	Latest       scanPart
+	Rest         scanPart
 	FullPrompt   string
 	Preview      string
 	Hash         string
@@ -62,32 +108,56 @@ type promptSnapshot struct {
 }
 
 // extractPromptSnapshot reads every client-controlled text of the request
-// (system, developer, user, assistant, tool) and puts the latest user input
-// first. Images, audio and files are ignored.
-func extractPromptSnapshot(protocol string, body []byte) (*promptSnapshot, error) {
+// (system, developer, user, assistant, tool) with the latest user turn first.
+// The scope narrows what is scanned: latest_user keeps only the latest user
+// turn, user keeps every user text, all keeps everything. Images, audio and
+// files are ignored.
+func extractPromptSnapshot(protocol string, body []byte, scope string) (*promptSnapshot, error) {
 	var document any
 	if err := common.Unmarshal(body, &document); err != nil {
 		return nil, errInvalidJSON
 	}
 	root, _ := document.(map[string]any)
-	segments := latestUserFirst(protocolSegments(protocol, root))
-	if len(segments) == 0 {
+	latest, rest := splitLatestUserTurn(protocolSegments(protocol, root))
+	if len(latest) == 0 {
 		return nil, errNoPromptText
 	}
-	fullText := strings.Join(segments, "\n\n")
-	scanText := fullText
-	if len(segments) > 1 {
-		scanText = segments[0] + prioritySeparator + strings.Join(segments[1:], "\n\n")
+	ordered := append(slices.Clone(latest), rest...)
+	texts := make([]string, 0, len(ordered))
+	for _, segment := range ordered {
+		texts = append(texts, segment.text)
 	}
+	fullText := strings.Join(texts, segmentSeparator)
 	digest := sha256.Sum256([]byte(fullText))
-	return &promptSnapshot{
-		ScanText:     scanText,
+	snapshot := &promptSnapshot{
 		FullPrompt:   buildFullPrompt(fullText),
 		Preview:      buildPromptPreview(fullText),
 		Hash:         hex.EncodeToString(digest[:]),
 		Length:       utf8.RuneCountInString(fullText),
-		MessageCount: len(segments),
-	}, nil
+		MessageCount: len(ordered),
+	}
+	switch scope {
+	case prompt_audit_setting.ScanScopeAll:
+		snapshot.Latest, snapshot.Rest = joinSegments(latest), joinSegments(rest)
+	case prompt_audit_setting.ScanScopeUser:
+		snapshot.Latest, snapshot.Rest = joinSegments(userOnly(latest)), joinSegments(userOnly(rest))
+	default:
+		snapshot.Latest = joinSegments(userOnly(latest))
+	}
+	if snapshot.Latest.text == "" && snapshot.Rest.text == "" {
+		return nil, errNoPromptText
+	}
+	return snapshot, nil
+}
+
+func userOnly(segments []promptSegment) []promptSegment {
+	result := make([]promptSegment, 0, len(segments))
+	for _, segment := range segments {
+		if segment.isUser() {
+			result = append(result, segment)
+		}
+	}
+	return result
 }
 
 func protocolSegments(protocol string, root map[string]any) []promptSegment {
@@ -166,12 +236,17 @@ func responsesInputSegments(value any) []promptSegment {
 }
 
 // responsesItemSegments reads a message-like Responses input item. Items with
-// a non-client role (for example tool call outputs typed by the server) are
-// skipped; items without a role are treated as user input.
+// a non-client role are skipped. Items without a role are user input when
+// they are messages or bare text; other typed items (tool calls and their
+// outputs, reasoning) are agent traffic and count as tool text.
 func responsesItemSegments(item map[string]any) []promptSegment {
 	role := strings.ToLower(stringValue(item["role"]))
 	if role != "" && !slices.Contains(clientTextRoles, role) {
 		return nil
+	}
+	itemType := strings.ToLower(stringValue(item["type"]))
+	if role == "" && itemType != "message" && !slices.Contains(contentTextTypes, itemType) {
+		role = "tool"
 	}
 	if content, exists := item["content"]; exists {
 		return roleSegments(contentTexts(content), role)
@@ -310,34 +385,78 @@ func looksLikeMediaPayload(value string) bool {
 	})
 }
 
-// latestUserFirst drops empty texts and moves the most recent user text to the
-// front, keeping the rest in request order.
-func latestUserFirst(segments []promptSegment) []string {
+// splitLatestUserTurn drops empty texts, marks agent wrappers inside user
+// messages, and separates the latest user turn (the last user text and the
+// user texts right before it, stepping over agent wrappers) from the rest,
+// which keeps request order. Without any user text the last text leads.
+func splitLatestUserTurn(segments []promptSegment) (latest []promptSegment, rest []promptSegment) {
 	normalized := make([]promptSegment, 0, len(segments))
 	for _, segment := range segments {
 		segment.text = strings.TrimSpace(segment.text)
-		if segment.text != "" {
-			normalized = append(normalized, segment)
+		if segment.text == "" {
+			continue
 		}
+		if segment.isUser() && isAgentContext(segment.text) {
+			segment.role = roleAgentContext
+		}
+		normalized = append(normalized, segment)
 	}
 	if len(normalized) == 0 {
-		return nil
+		return nil, nil
 	}
-	priority := len(normalized) - 1
+	inLatest := make([]bool, len(normalized))
+	found := false
 	for index := len(normalized) - 1; index >= 0; index-- {
 		if normalized[index].isUser() {
-			priority = index
+			inLatest[index], found = true, true
+			continue
+		}
+		if found && normalized[index].role != roleAgentContext {
 			break
 		}
 	}
-	result := make([]string, 0, len(normalized))
-	result = append(result, normalized[priority].text)
+	if !found {
+		inLatest[len(normalized)-1] = true
+	}
 	for index, segment := range normalized {
-		if index != priority {
-			result = append(result, segment.text)
+		if inLatest[index] {
+			latest = append(latest, segment)
+		} else {
+			rest = append(rest, segment)
 		}
 	}
-	return result
+	return latest, rest
+}
+
+// isAgentContext reports whether a user text is only agent wrappers: one or
+// more blocks of a known tag, or Codex AGENTS.md instructions. Each block ends
+// at its first closing tag, so user text between two blocks is not hidden.
+func isAgentContext(text string) bool {
+	if header, body, ok := strings.Cut(text, "\n"); ok && strings.HasPrefix(header, "# AGENTS.md instructions for ") &&
+		onlyWrappedIn(body, "INSTRUCTIONS") {
+		return true
+	}
+	return slices.ContainsFunc(agentContextTags, func(tag string) bool { return onlyWrappedIn(text, tag) })
+}
+
+func onlyWrappedIn(text, tag string) bool {
+	openTag, closeTag := "<"+tag+">", "</"+tag+">"
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	for text != "" {
+		body, ok := strings.CutPrefix(text, openTag)
+		if !ok {
+			return false
+		}
+		_, after, found := strings.Cut(body, closeTag)
+		if !found {
+			return false
+		}
+		text = strings.TrimSpace(after)
+	}
+	return true
 }
 
 func roleSegments(texts []string, role string) []promptSegment {
@@ -361,8 +480,23 @@ func redactPreview(value string, maxRunes int) string {
 	})
 	value = canaryPattern.ReplaceAllString(value, "${1}***")
 	value = emailPattern.ReplaceAllString(value, "***@***")
-	value = phonePattern.ReplaceAllString(value, "***PHONE***")
+	value = maskPhoneNumbers(value)
 	return trimRunes(value, maxRunes)
+}
+
+// maskPhoneNumbers masks phone-like digit runs but leaves IPv4 addresses,
+// their ports and localhost ports alone, so proxy addresses are not mistaken
+// for phone numbers.
+func maskPhoneNumbers(value string) string {
+	var builder strings.Builder
+	previous := 0
+	for _, span := range hostPortPattern.FindAllStringIndex(value, -1) {
+		builder.WriteString(phonePattern.ReplaceAllString(value[previous:span[0]], "***PHONE***"))
+		builder.WriteString(value[span[0]:span[1]])
+		previous = span[1]
+	}
+	builder.WriteString(phonePattern.ReplaceAllString(value[previous:], "***PHONE***"))
+	return builder.String()
 }
 
 // buildPromptPreview keeps at most a quarter (and no more than 24 runes) of the

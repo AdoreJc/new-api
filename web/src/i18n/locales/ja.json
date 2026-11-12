@@ -7732,6 +7732,22 @@
     "Chunks skipped (recently safe)": "スキップしたチャンク（最近安全と判定）",
     "Chunks over the per-request limit": "1 リクエストの上限を超えたチャンク",
     "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "{{chunks}} 分割中 {{scanned}} 件をスキャン、{{ms}} ミリ秒",
-    "Scan incomplete: a later chunk could not be scanned; these are the findings so far": "スキャン未完了：後続のチャンクをスキャンできませんでした。以下はそれまでの結果です"
+    "Scan incomplete: a later chunk could not be scanned; these are the findings so far": "スキャン未完了：後続のチャンクをスキャンできませんでした。以下はそれまでの結果です",
+    "Scan scope": "スキャン範囲",
+    "Latest user message": "最新のユーザーメッセージ",
+    "All user messages": "すべてのユーザーメッセージ",
+    "Entire conversation": "会話全体",
+    "Only the newest user input. Agent system prompts, tool output and earlier turns are not scanned.": "最新のユーザー入力のみ。エージェントのシステムプロンプト、ツール出力、以前のターンはスキャンしません。",
+    "Every user message in the conversation, without system, developer, assistant or tool text.": "会話内のすべてのユーザーメッセージ。system、developer、assistant、ツールのテキストは含みません。",
+    "Every client text, including system prompts, assistant replies and tool output. Agent prompts are often flagged as jailbreaks.": "システムプロンプト、アシスタントの応答、ツール出力を含むクライアントのすべてのテキスト。エージェントのプロンプトはジェイルブレイクと判定されがちです。",
+    "Stored prompts always cover the whole request.": "保存されるプロンプトは常にリクエスト全体です。",
+    "Treat controversial jailbreak results as critical": "議論の余地があるジェイルブレイク判定を重大として扱う",
+    "Off by default: a controversial jailbreak verdict is recorded as flagged, because coding agent prompts often get it. Unsafe results are not affected.": "既定はオフ：議論の余地があるジェイルブレイク判定はフラグ付きとして記録します。コーディングエージェントのプロンプトはこの判定を受けやすいためです。安全でない判定には影響しません。",
+    "Triggered by": "トリガー元",
+    "Chunk {{index}} ({{roles}}): {{decision}}": "チャンク {{index}}（{{roles}}）：{{decision}}",
+    "Developer": "開発者",
+    "Assistant": "アシスタント",
+    "Tool": "ツール",
+    "Agent context": "エージェントコンテキスト"
   }
 }

@@ -7732,6 +7732,22 @@
     "Chunks skipped (recently safe)": "略過的區塊（近期已判定安全）",
     "Chunks over the per-request limit": "超出單請求上限的區塊",
     "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "共 {{chunks}} 段，掃描 {{scanned}} 段，耗時 {{ms}} 毫秒",
-    "Scan incomplete: a later chunk could not be scanned; these are the findings so far": "掃描未完成：後續部分掃描失敗，以下為已得到的結果"
+    "Scan incomplete: a later chunk could not be scanned; these are the findings so far": "掃描未完成：後續部分掃描失敗，以下為已得到的結果",
+    "Scan scope": "掃描範圍",
+    "Latest user message": "最新一則使用者訊息",
+    "All user messages": "全部使用者訊息",
+    "Entire conversation": "整段對話",
+    "Only the newest user input. Agent system prompts, tool output and earlier turns are not scanned.": "只掃描最新的使用者輸入，不掃描 agent 系統提示詞、工具輸出和更早的輪次。",
+    "Every user message in the conversation, without system, developer, assistant or tool text.": "掃描對話中的每則使用者訊息，不含 system、developer、assistant 和工具文字。",
+    "Every client text, including system prompts, assistant replies and tool output. Agent prompts are often flagged as jailbreaks.": "掃描用戶端送來的全部文字，包括系統提示詞、助理回覆和工具輸出。agent 提示詞常被誤判為越獄。",
+    "Stored prompts always cover the whole request.": "儲存的提示詞始終是完整請求。",
+    "Treat controversial jailbreak results as critical": "有爭議的越獄結果記為嚴重",
+    "Off by default: a controversial jailbreak verdict is recorded as flagged, because coding agent prompts often get it. Unsafe results are not affected.": "預設關閉：有爭議的越獄結果記為已標記，因為程式設計 agent 的提示詞經常得到這個結果。不影響不安全的結果。",
+    "Triggered by": "觸發位置",
+    "Chunk {{index}} ({{roles}}): {{decision}}": "第 {{index}} 塊（{{roles}}）：{{decision}}",
+    "Developer": "開發者",
+    "Assistant": "助理",
+    "Tool": "工具",
+    "Agent context": "Agent 上下文"
   }
 }

@@ -7732,6 +7732,22 @@
     "Chunks skipped (recently safe)": "Segments ignorés (récemment jugés sûrs)",
     "Chunks over the per-request limit": "Segments au-delà de la limite par requête",
     "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "{{scanned}} segments analysés sur {{chunks}} en {{ms}} ms",
-    "Scan incomplete: a later chunk could not be scanned; these are the findings so far": "Analyse incomplète : un segment suivant n'a pas pu être analysé ; voici les constats obtenus"
+    "Scan incomplete: a later chunk could not be scanned; these are the findings so far": "Analyse incomplète : un segment suivant n'a pas pu être analysé ; voici les constats obtenus",
+    "Scan scope": "Portée de l'analyse",
+    "Latest user message": "Dernier message utilisateur",
+    "All user messages": "Tous les messages utilisateur",
+    "Entire conversation": "Conversation entière",
+    "Only the newest user input. Agent system prompts, tool output and earlier turns are not scanned.": "Seule la dernière saisie de l'utilisateur. Les prompts système des agents, les sorties d'outils et les tours précédents ne sont pas analysés.",
+    "Every user message in the conversation, without system, developer, assistant or tool text.": "Chaque message utilisateur de la conversation, sans le texte system, developer, assistant ni outil.",
+    "Every client text, including system prompts, assistant replies and tool output. Agent prompts are often flagged as jailbreaks.": "Tout le texte du client, y compris les prompts système, les réponses de l'assistant et les sorties d'outils. Les prompts d'agents sont souvent signalés comme jailbreak.",
+    "Stored prompts always cover the whole request.": "Les prompts enregistrés couvrent toujours la requête entière.",
+    "Treat controversial jailbreak results as critical": "Traiter les résultats jailbreak controversés comme critiques",
+    "Off by default: a controversial jailbreak verdict is recorded as flagged, because coding agent prompts often get it. Unsafe results are not affected.": "Désactivé par défaut : un verdict jailbreak controversé est enregistré comme signalé, car les prompts des agents de code l'obtiennent souvent. Les résultats dangereux ne sont pas concernés.",
+    "Triggered by": "Déclenché par",
+    "Chunk {{index}} ({{roles}}): {{decision}}": "Bloc {{index}} ({{roles}}) : {{decision}}",
+    "Developer": "Développeur",
+    "Assistant": "Assistant",
+    "Tool": "Outil",
+    "Agent context": "Contexte d'agent"
   }
 }

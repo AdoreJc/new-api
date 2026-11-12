@@ -43,6 +43,8 @@ export type PromptAuditConfig = {
   worker_count: number
   queue_capacity: number
   max_chunks_per_request: number
+  scan_scope: string
+  strict_jailbreak_mapping: boolean
   endpoints: PromptAuditEndpoint[]
   config_version: number
   updated_at: number
