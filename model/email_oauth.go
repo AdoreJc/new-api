@@ -3,6 +3,7 @@ package model
 import (
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/QuantumNous/new-api/common"
 
@@ -15,6 +16,18 @@ const AuthFlowPurposeEmailOAuth = "email_oauth"
 func init() {
 	common.EmailOAuthRefreshTokenStore = ReplaceEmailOAuthRefreshToken
 }
+
+// emailOAuthWriteMutex makes each authorization write (database and option
+// map together) atomic with respect to the others, so a rotation and a
+// re-authorization cannot interleave and leave the map with one grant's
+// token and another grant's mailbox. Lock order: the common token state,
+// then this mutex, then OptionMapRWMutex. Never take it while holding
+// OptionMapRWMutex, and reset the token cache only after releasing it.
+var emailOAuthWriteMutex sync.Mutex
+
+// emailOAuthAfterDatabaseWrite runs between a write and its option map
+// update; tests use it to interleave writes.
+var emailOAuthAfterDatabaseWrite func()
 
 var emailDeliveryOptionKeys = []string{
 	"EmailProvider", "ResendApiKey", "ResendFrom",
@@ -64,6 +77,18 @@ func validateEmailDeliveryOption(key, value string) error {
 // SaveEmailOAuthAuthorization writes the refresh token and mailbox together,
 // replacing any previous authorization.
 func SaveEmailOAuthAuthorization(refreshToken, email string) error {
+	if err := storeEmailOAuthAuthorization(refreshToken, email); err != nil {
+		return err
+	}
+	common.ResetEmailOAuthTokenCache()
+	return nil
+}
+
+// storeEmailOAuthAuthorization is the serialized part of an authorization
+// write; the token cache reset stays outside the lock.
+func storeEmailOAuthAuthorization(refreshToken, email string) error {
+	emailOAuthWriteMutex.Lock()
+	defer emailOAuthWriteMutex.Unlock()
 	values := map[string]string{common.EmailOAuthRefreshTokenOption: refreshToken, common.EmailOAuthEmailOption: email}
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		for key, value := range values {
@@ -77,12 +102,14 @@ func SaveEmailOAuthAuthorization(refreshToken, email string) error {
 	if err != nil {
 		return err
 	}
+	if emailOAuthAfterDatabaseWrite != nil {
+		emailOAuthAfterDatabaseWrite()
+	}
 	for key, value := range values {
 		if err := updateOptionMap(key, value); err != nil {
 			return err
 		}
 	}
-	common.ResetEmailOAuthTokenCache()
 	return nil
 }
 
@@ -105,12 +132,17 @@ func ReplaceEmailOAuthRefreshToken(previous, next string) error {
 	if previous == "" || next == "" {
 		return common.ErrEmailOAuthAuthorizationChanged
 	}
+	emailOAuthWriteMutex.Lock()
+	defer emailOAuthWriteMutex.Unlock()
 	result := DB.Model(&Option{}).Where(&Option{Key: common.EmailOAuthRefreshTokenOption, Value: previous}).Update("value", next)
 	if result.Error != nil {
 		return result.Error
 	}
 	if result.RowsAffected != 1 {
 		return common.ErrEmailOAuthAuthorizationChanged
+	}
+	if emailOAuthAfterDatabaseWrite != nil {
+		emailOAuthAfterDatabaseWrite()
 	}
 	return updateOptionMap(common.EmailOAuthRefreshTokenOption, next)
 }

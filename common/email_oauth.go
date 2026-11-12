@@ -571,7 +571,13 @@ func buildEmailOAuthMIME(sender, senderAddress string, to []string, subject, con
 	}
 	var builder strings.Builder
 	builder.WriteString("From: " + sender + "\r\n")
-	builder.WriteString("To: " + strings.Join(to, ", ") + "\r\n")
+	// Re-quote each address: a parsed quoted local-part such as "a,b"@x is
+	// returned unquoted, and Gmail parses this header to find recipients.
+	recipients := make([]string, len(to))
+	for i, address := range to {
+		recipients[i] = (&mail.Address{Address: address}).String()
+	}
+	builder.WriteString("To: " + strings.Join(recipients, ", ") + "\r\n")
 	builder.WriteString("Subject: =?UTF-8?B?" + base64.StdEncoding.EncodeToString([]byte(subject)) + "?=\r\n")
 	builder.WriteString("Date: " + time.Now().Format(time.RFC1123Z) + "\r\n")
 	builder.WriteString(fmt.Sprintf("Message-ID: <%d.%s@%s>\r\n", time.Now().UnixNano(), GetRandomString(12), domain))

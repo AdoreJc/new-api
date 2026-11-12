@@ -456,7 +456,7 @@ func TestOAuthEmailDeliveryRequestFormats(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, subject, decodedSubject)
 			assert.Equal(t, `"New API" <sender@gmail.example>`, message.Header.Get("From"))
-			assert.Equal(t, "one@example.com, two@example.com", message.Header.Get("To"))
+			assert.Equal(t, "<one@example.com>, <two@example.com>", message.Header.Get("To"))
 			assert.Equal(t, "text/html; charset=UTF-8", message.Header.Get("Content-Type"))
 			assert.Equal(t, "base64", message.Header.Get("Content-Transfer-Encoding"))
 			encoded, err := io.ReadAll(message.Body)
@@ -466,6 +466,41 @@ func TestOAuthEmailDeliveryRequestFormats(t *testing.T) {
 			assert.Equal(t, content, string(html))
 		})
 	}
+}
+
+func TestOAuthEmailGmailRecipientsMatchValidatedAddresses(t *testing.T) {
+	options := oauthEmailOptions(common.EmailOAuthProviderGoogle)
+	configureEmailDelivery(t, options)
+	useEmailOptionsDatabase(t, options)
+	provider := newFakeMailProvider(t)
+
+	// The quoted local-part contains a comma; unquoted in the header it would
+	// read as two recipients.
+	require.NoError(t, common.SendEmail("verification", `"first,second"@example.com; two@example.com`, "123456"))
+
+	_, sends := provider.counts()
+	require.Equal(t, 1, sends)
+	var body struct {
+		Raw string `json:"raw"`
+	}
+	require.NoError(t, common.Unmarshal(provider.sends[0].body, &body))
+	raw, err := base64.RawURLEncoding.DecodeString(body.Raw)
+	require.NoError(t, err)
+	message, err := mail.ReadMessage(bytes.NewReader(raw))
+	require.NoError(t, err)
+	recipients, err := message.Header.AddressList("To")
+	require.NoError(t, err)
+	delivered := make([]string, len(recipients))
+	for i, recipient := range recipients {
+		delivered[i] = recipient.Address
+	}
+	validated := make([]string, 0, 2)
+	for _, address := range []string{`"first,second"@example.com`, "two@example.com"} {
+		parsed, err := mail.ParseAddress(address)
+		require.NoError(t, err)
+		validated = append(validated, parsed.Address)
+	}
+	assert.Equal(t, validated, delivered)
 }
 
 func TestOAuthEmailRotatedRefreshTokenIsSavedBeforeReuse(t *testing.T) {
