@@ -41,9 +41,9 @@ For commercial licensing, please contact support@quantumnous.com
  * - `formatBillingCurrencyFromUSD()`: Use for billing/pricing displays (never shows tokens)
  * - `formatLocalCurrencyAmount()`: Use for payment amounts already in local currency
  *   (symbol follows the admin quota display type: USD → $, CNY → ¥, CUSTOM → custom symbol)
- * - `formatPaymentCurrencyAmount()`: Use for the amount a payment gateway actually charges
- *   (Epay). Always CNY/¥, independent of the quota display type, because the gateway decides
- *   the settlement currency and Epay settles in RMB (amount × "price per USD", in yuan)
+ * - `formatPaymentCurrencyAmount()`: Use for the amount the site actually charges for a purchase
+ *   (USD amount × "price per USD"). Always USD/$, independent of the quota display type, because
+ *   the site settles every payment in US dollars
  * - `formatQuotaWithCurrency()`: Use for raw quota values (converts to USD first)
  *
  * ## Example Scenario
@@ -69,7 +69,7 @@ For commercial licensing, please contact support@quantumnous.com
  * | User balance display | USD (from DB) | `formatCurrencyFromUSD()` | Needs conversion to display currency |
  * | Recharge option button | USD | `formatCurrencyFromUSD()` | Needs conversion to local currency |
  * | Payment confirmation | Already local currency | `formatLocalCurrencyAmount()` | Already converted via priceRatio |
- * | Epay amount charged (e.g. subscription online payment) | CNY from price per USD | `formatPaymentCurrencyAmount()` | Gateway currency is RMB, not the display type |
+ * | Amount charged (e.g. subscription online payment) | USD from price per USD | `formatPaymentCurrencyAmount()` | The site settles in USD, not the display type |
  * | Billing history Amount | USD (from DB) | `formatCurrencyFromUSD()` | Historical USD needs conversion |
  * | Billing history Payment | Local currency | `formatNumber()` | Just show number, no symbol |
  * | Model pricing | USD | `formatBillingCurrencyFromUSD()` | Never show as tokens |
@@ -643,42 +643,42 @@ export function formatLocalCurrencyAmount(
 
 const PAYMENT_GATEWAY_DISPLAY_META: DisplayMeta = {
   kind: 'currency',
-  symbol: '¥',
-  currencyCode: 'CNY',
+  symbol: '$',
+  currencyCode: 'USD',
   exchangeRate: 1,
 }
 
 /**
- * Format the amount a payment gateway (Epay) actually charges, in RMB.
+ * Format the amount the site actually charges for a purchase, in US dollars.
  *
- * Epay amounts are computed on the backend as USD amount × `Price` (the admin
- * "price per USD" setting, in yuan), so they are always CNY. Unlike
- * formatLocalCurrencyAmount(), the symbol does NOT follow the quota display
- * type: with quotaDisplayType 'USD' an Epay charge of 203.93 must render as
- * "¥203.93", not "$203.93".
+ * Online payment amounts are computed on the backend as USD amount × `Price`
+ * (the admin "price per USD" setting). The site settles every payment in US
+ * dollars, so the result is always USD. Unlike formatLocalCurrencyAmount(),
+ * the symbol does NOT follow the quota display type: with quotaDisplayType
+ * 'CNY' a charge of 27.94 must render as "$27.94", not "¥27.94".
  *
  * Defaults to at most two fraction digits (also for values below 1) and never
  * abbreviates. Number grouping and symbol placement follow `options.locale`
- * (Intl CNY formatting), the currency itself is fixed.
+ * (Intl USD formatting with the narrow "$" symbol), the currency itself is
+ * fixed.
  *
- * @param amount - Amount already converted to RMB by the gateway pricing
+ * @param amount - Amount already converted with the "price per USD" setting
  * @param options - Optional formatting configuration
- * @returns Formatted CNY string, or '-' for null/undefined/NaN
+ * @returns Formatted USD string, or '-' for null/undefined/NaN
  *
  * @example
  * // With any quotaDisplayType (USD, CNY, CUSTOM, TOKENS)
- * formatPaymentCurrencyAmount(203.93) → "¥203.93"
+ * formatPaymentCurrencyAmount(27.94) → "$27.94"
  *
  * @remarks
  * Use this function for:
- * - Epay online payment amounts (subscription purchase, Epay pay button)
+ * - Online payment amounts (subscription purchase, pay button)
  * - Model marketplace recharge prices (USD price × `Price`), via
  *   formatModelPriceFromUSD in features/pricing
  *
  * DO NOT use for:
  * - Credit/top-up amounts shown in the display currency → use formatLocalCurrencyAmount()
  *   or formatCurrencyFromUSD()
- * - Gateways that settle in another currency (Stripe, Creem, ...)
  */
 export function formatPaymentCurrencyAmount(
   amount: number | null | undefined,

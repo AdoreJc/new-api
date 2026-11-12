@@ -47,7 +47,7 @@ import { getTaskPricingDisplayTiers } from './task-matrix-display'
 export type DynamicPriceOptions = {
   tokenUnit: TokenUnit
   showCurrencySymbol?: boolean
-  /** Show recharge prices: USD × priceRate in RMB (¥), see formatModelPriceFromUSD. */
+  /** Show recharge prices: USD × priceRate in US dollars ($), see formatModelPriceFromUSD. */
   showRechargePrice?: boolean
   priceRate?: number
   /** Not used for recharge prices; kept so callers can pass pricing data as-is. */

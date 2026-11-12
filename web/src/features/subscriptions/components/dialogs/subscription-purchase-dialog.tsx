@@ -106,7 +106,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
   const priceAmount = Number(plan.price_amount || 0)
   const price = priceAmount.toFixed(2)
   // Mirrors the backend conversion for Epay orders: plan USD price × price per USD.
-  // The result is RMB charged by Epay, so it is always shown as ¥ regardless of
+  // The site settles in USD, so the result is always shown as $ regardless of
   // the quota display type.
   const priceRatio =
     props.priceRatio && props.priceRatio > 0 ? props.priceRatio : 1
