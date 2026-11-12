@@ -86,9 +86,11 @@ func SendEmail(subject string, receiver string, content string) error {
 	switch provider {
 	case "resend":
 		return sendResendEmail(resendKey, resendFrom, subject, receiver, content)
+	case "oauth":
+		return sendOAuthEmail(subject, receiver, content)
 	case "", "smtp": // Preserve existing installations without a selector.
 	default:
-		return NewMessage("Email sending method must be SMTP or Resend")
+		return NewMessage("Email sending method must be SMTP, Resend, or OAuth")
 	}
 	if SMTPFrom == "" { // for compatibility
 		SMTPFrom = SMTPAccount

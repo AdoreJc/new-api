@@ -1,0 +1,116 @@
+package model
+
+import (
+	"slices"
+	"strings"
+
+	"github.com/QuantumNous/new-api/common"
+
+	"gorm.io/gorm"
+)
+
+// AuthFlowPurposeEmailOAuth is the one-time state of a sender mailbox authorization.
+const AuthFlowPurposeEmailOAuth = "email_oauth"
+
+func init() {
+	common.EmailOAuthRefreshTokenStore = ReplaceEmailOAuthRefreshToken
+}
+
+var emailDeliveryOptionKeys = []string{
+	"EmailProvider", "ResendApiKey", "ResendFrom",
+	common.EmailOAuthProviderOption, common.EmailOAuthClientIdOption,
+	common.EmailOAuthClientSecretOption, common.EmailOAuthTenantOption,
+}
+
+// emailOAuthAppKeys identify the OAuth client a stored refresh token belongs to.
+var emailOAuthAppKeys = []string{common.EmailOAuthProviderOption, common.EmailOAuthClientIdOption, common.EmailOAuthTenantOption}
+
+// validateEmailDeliveryOption keeps the active sending method able to send.
+// Inactive drafts are checked when their method is selected.
+func validateEmailDeliveryOption(key, value string) error {
+	switch key {
+	case common.EmailOAuthRefreshTokenOption, common.EmailOAuthEmailOption, common.EmailOAuthSecretConfiguredOption:
+		return common.NewMessage("This setting is managed by the mailbox authorization flow")
+	}
+	if !slices.Contains(emailDeliveryOptionKeys, key) {
+		return nil
+	}
+	if key == "EmailProvider" && value != "smtp" && value != "resend" && value != "oauth" {
+		return common.NewMessage("Email sending method must be SMTP, Resend, or OAuth")
+	}
+	if key == common.EmailOAuthProviderOption && value != common.EmailOAuthProviderGoogle && value != common.EmailOAuthProviderMicrosoft {
+		return common.ErrEmailOAuthAppInvalid
+	}
+	common.OptionMapRWMutex.RLock()
+	settings := make(map[string]string, len(emailDeliveryOptionKeys)+2)
+	for _, name := range slices.Concat(emailDeliveryOptionKeys, []string{common.EmailOAuthRefreshTokenOption, common.EmailOAuthEmailOption}) {
+		settings[name] = common.OptionMap[name]
+	}
+	common.OptionMapRWMutex.RUnlock()
+	if slices.Contains(emailOAuthAppKeys, key) && settings[common.EmailOAuthRefreshTokenOption] != "" &&
+		strings.TrimSpace(settings[key]) != strings.TrimSpace(value) {
+		return common.NewMessage("Remove the mailbox authorization before changing the OAuth app")
+	}
+	settings[key] = value
+	switch settings["EmailProvider"] {
+	case "resend":
+		return common.ValidateResendConfiguration(settings["ResendApiKey"], settings["ResendFrom"])
+	case "oauth":
+		return common.ValidateEmailOAuthActivation(settings)
+	}
+	return nil
+}
+
+// SaveEmailOAuthAuthorization writes the refresh token and mailbox together,
+// replacing any previous authorization.
+func SaveEmailOAuthAuthorization(refreshToken, email string) error {
+	values := map[string]string{common.EmailOAuthRefreshTokenOption: refreshToken, common.EmailOAuthEmailOption: email}
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		for key, value := range values {
+			// Assign with a map so an empty value is written too.
+			if err := tx.Where(Option{Key: key}).Assign(map[string]any{"value": value}).FirstOrCreate(&Option{}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for key, value := range values {
+		if err := updateOptionMap(key, value); err != nil {
+			return err
+		}
+	}
+	common.ResetEmailOAuthTokenCache()
+	return nil
+}
+
+// ClearEmailOAuthAuthorization removes the mailbox authorization. It is
+// refused while OAuth is the sending method, because email would stop.
+func ClearEmailOAuthAuthorization() error {
+	common.OptionMapRWMutex.RLock()
+	provider := common.OptionMap["EmailProvider"]
+	common.OptionMapRWMutex.RUnlock()
+	if provider == "oauth" {
+		return common.NewMessage("Select another email sending method before removing the mailbox authorization")
+	}
+	return SaveEmailOAuthAuthorization("", "")
+}
+
+// ReplaceEmailOAuthRefreshToken saves a rotated refresh token only while the
+// stored token is still the one that was refreshed, so a rotation from an
+// old grant cannot overwrite a newer authorization.
+func ReplaceEmailOAuthRefreshToken(previous, next string) error {
+	if previous == "" || next == "" {
+		return common.ErrEmailOAuthAuthorizationChanged
+	}
+	result := DB.Model(&Option{}).Where(&Option{Key: common.EmailOAuthRefreshTokenOption, Value: previous}).Update("value", next)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return common.ErrEmailOAuthAuthorizationChanged
+	}
+	return updateOptionMap(common.EmailOAuthRefreshTokenOption, next)
+}

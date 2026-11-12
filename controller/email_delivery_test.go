@@ -1,13 +1,22 @@
 package controller
 
 import (
+	"bytes"
+	"encoding/base64"
 	"errors"
 	"io"
+	"mime"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/mail"
+	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -153,7 +162,7 @@ func TestEmailOptionsNeverReturnResendCredentials(t *testing.T) {
 }
 
 func TestEmailProviderOptionRejectsInvalidValues(t *testing.T) {
-	for _, provider := range []string{"", "both", "SMTP", "smtp,resend"} {
+	for _, provider := range []string{"", "both", "SMTP", "OAuth", "smtp,resend"} {
 		t.Run(provider, func(t *testing.T) {
 			configureEmailDelivery(t, map[string]string{"EmailProvider": "smtp"})
 			body, err := common.Marshal(OptionUpdateRequest{Key: "EmailProvider", Value: provider})
@@ -163,7 +172,7 @@ func TestEmailProviderOptionRejectsInvalidValues(t *testing.T) {
 			context.Request = httptest.NewRequest(http.MethodPut, "/api/option/", strings.NewReader(string(body)))
 			UpdateOption(context)
 			assert.Contains(t, response.Body.String(), `"success":false`)
-			assert.Contains(t, response.Body.String(), `"message_key":"Email sending method must be SMTP or Resend"`)
+			assert.Contains(t, response.Body.String(), `"message_key":"Email sending method must be SMTP, Resend, or OAuth"`)
 			assert.Equal(t, "smtp", common.OptionMap["EmailProvider"])
 		})
 	}
@@ -248,4 +257,349 @@ func TestEmailKeyStatusIsDerivedAndReadOnly(t *testing.T) {
 	UpdateOption(context)
 	assert.Contains(t, response.Body.String(), `"success":false`)
 	assert.Contains(t, response.Body.String(), "read-only")
+}
+
+// fakeMailProvider serves the Google and Microsoft OAuth, profile and send
+// endpoints the OAuth sending method calls.
+type fakeMailProvider struct {
+	mu         sync.Mutex
+	tokenForms []url.Values
+	tenants    []string
+	sends      []fakeMailSend
+	issue      func(form url.Values) (int, string)
+	sendStatus int
+	url        string
+}
+
+type fakeMailSend struct {
+	path, authorization string
+	body                []byte
+}
+
+func newFakeMailProvider(t *testing.T) *fakeMailProvider {
+	t.Helper()
+	provider := &fakeMailProvider{sendStatus: http.StatusAccepted}
+	provider.issue = func(url.Values) (int, string) {
+		return http.StatusOK, `{"access_token":"access-1","expires_in":3600}`
+	}
+	token := func(w http.ResponseWriter, r *http.Request) {
+		assert.NoError(t, r.ParseForm())
+		provider.mu.Lock()
+		provider.tokenForms = append(provider.tokenForms, r.PostForm)
+		if tenant := r.PathValue("tenant"); tenant != "" {
+			provider.tenants = append(provider.tenants, tenant)
+		}
+		issue := provider.issue
+		provider.mu.Unlock()
+		status, body := issue(r.PostForm)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body)
+	}
+	send := func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		provider.mu.Lock()
+		provider.sends = append(provider.sends, fakeMailSend{path: r.URL.Path, authorization: r.Header.Get("Authorization"), body: body})
+		status := provider.sendStatus
+		provider.mu.Unlock()
+		w.WriteHeader(status)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /google/token", token)
+	mux.HandleFunc("POST /ms/{tenant}/oauth2/v2.0/token", token)
+	mux.HandleFunc("GET /google/userinfo", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Bearer access-1", r.Header.Get("Authorization"))
+		_, _ = io.WriteString(w, `{"email":"sender@gmail.example","email_verified":true}`)
+	})
+	mux.HandleFunc("GET /graph/me", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Bearer access-1", r.Header.Get("Authorization"))
+		_, _ = io.WriteString(w, `{"mail":"sender@contoso.example","userPrincipalName":"upn@contoso.example"}`)
+	})
+	mux.HandleFunc("POST /gmail/send", send)
+	mux.HandleFunc("POST /graph/me/sendMail", send)
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	provider.url = server.URL
+	t.Cleanup(common.SetEmailOAuthEndpointsForTest(common.EmailOAuthEndpoints{
+		GoogleAuthorizeURL: server.URL + "/google/authorize",
+		GoogleTokenURL:     server.URL + "/google/token",
+		GoogleUserInfoURL:  server.URL + "/google/userinfo",
+		GmailSendURL:       server.URL + "/gmail/send",
+		MicrosoftLoginBase: server.URL + "/ms",
+		MicrosoftGraphBase: server.URL + "/graph",
+	}))
+	return provider
+}
+
+func (provider *fakeMailProvider) counts() (tokens int, sends int) {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	return len(provider.tokenForms), len(provider.sends)
+}
+
+// useEmailOptionsDatabase stores options in a file-backed SQLite database and
+// writes the given rows, so refresh token rotation has a row to update.
+func useEmailOptionsDatabase(t *testing.T, rows map[string]string) {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(t.TempDir()+"/options.db?_pragma=busy_timeout(30000)"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Option{}))
+	for key, value := range rows {
+		require.NoError(t, db.Create(&model.Option{Key: key, Value: value}).Error)
+	}
+	previousDB, previousRedis := model.DB, common.RedisEnabled
+	model.DB, common.RedisEnabled = db, false
+	t.Cleanup(func() {
+		model.DB, common.RedisEnabled = previousDB, previousRedis
+		if connection, err := db.DB(); err == nil {
+			_ = connection.Close()
+		}
+	})
+}
+
+func oauthEmailOptions(provider string) map[string]string {
+	options := map[string]string{
+		"EmailProvider":                     "oauth",
+		common.EmailOAuthProviderOption:     provider,
+		common.EmailOAuthClientIdOption:     "client-id",
+		common.EmailOAuthClientSecretOption: "client-secret",
+		common.EmailOAuthTenantOption:       "contoso.example",
+		common.EmailOAuthRefreshTokenOption: "refresh-1",
+		common.EmailOAuthEmailOption:        "sender@gmail.example",
+	}
+	if provider == common.EmailOAuthProviderMicrosoft {
+		options[common.EmailOAuthEmailOption] = "sender@contoso.example"
+	}
+	return options
+}
+
+func storedOption(t *testing.T, key string) string {
+	t.Helper()
+	var option model.Option
+	require.NoError(t, model.DB.Where(&model.Option{Key: key}).First(&option).Error)
+	return option.Value
+}
+
+func TestOAuthEmailDeliveryRequestFormats(t *testing.T) {
+	const subject, content = "验证码 ✓", "<p>你好，验证码 123456</p>"
+	for _, providerName := range []string{common.EmailOAuthProviderGoogle, common.EmailOAuthProviderMicrosoft} {
+		t.Run(providerName, func(t *testing.T) {
+			options := oauthEmailOptions(providerName)
+			configureEmailDelivery(t, options)
+			useEmailOptionsDatabase(t, options)
+			previousName := common.SystemName
+			common.SystemName = "New API"
+			t.Cleanup(func() { common.SystemName = previousName })
+			provider := newFakeMailProvider(t)
+
+			require.NoError(t, common.SendEmail(subject, "one@example.com; two@example.com", content))
+			require.NoError(t, common.SendEmail(subject, "one@example.com", content))
+
+			tokens, sends := provider.counts()
+			assert.Equal(t, 1, tokens, "the access token is cached between messages")
+			require.Equal(t, 2, sends)
+			form := provider.tokenForms[0]
+			assert.Equal(t, "refresh_token", form.Get("grant_type"))
+			assert.Equal(t, "refresh-1", form.Get("refresh_token"))
+			assert.Equal(t, "client-id", form.Get("client_id"))
+			assert.Equal(t, "client-secret", form.Get("client_secret"))
+			first := provider.sends[0]
+			assert.Equal(t, "Bearer access-1", first.authorization)
+			if providerName == common.EmailOAuthProviderMicrosoft {
+				assert.Equal(t, []string{"contoso.example"}, provider.tenants)
+				assert.Contains(t, form.Get("scope"), "https://graph.microsoft.com/Mail.Send")
+				assert.Contains(t, form.Get("scope"), "offline_access")
+				assert.Equal(t, "/graph/me/sendMail", first.path)
+				var body struct {
+					Message struct {
+						Subject string `json:"subject"`
+						Body    struct {
+							ContentType string `json:"contentType"`
+							Content     string `json:"content"`
+						} `json:"body"`
+						From struct {
+							EmailAddress struct {
+								Name    string `json:"name"`
+								Address string `json:"address"`
+							} `json:"emailAddress"`
+						} `json:"from"`
+						ToRecipients []struct {
+							EmailAddress struct {
+								Address string `json:"address"`
+							} `json:"emailAddress"`
+						} `json:"toRecipients"`
+					} `json:"message"`
+					SaveToSentItems bool `json:"saveToSentItems"`
+				}
+				require.NoError(t, common.Unmarshal(first.body, &body))
+				assert.Equal(t, subject, body.Message.Subject)
+				assert.Equal(t, "HTML", body.Message.Body.ContentType)
+				assert.Equal(t, content, body.Message.Body.Content)
+				assert.Equal(t, "New API", body.Message.From.EmailAddress.Name)
+				assert.Equal(t, "sender@contoso.example", body.Message.From.EmailAddress.Address)
+				require.Len(t, body.Message.ToRecipients, 2)
+				assert.Equal(t, "one@example.com", body.Message.ToRecipients[0].EmailAddress.Address)
+				assert.Equal(t, "two@example.com", body.Message.ToRecipients[1].EmailAddress.Address)
+				return
+			}
+			assert.Equal(t, "/gmail/send", first.path)
+			var body struct {
+				Raw string `json:"raw"`
+			}
+			require.NoError(t, common.Unmarshal(first.body, &body))
+			raw, err := base64.RawURLEncoding.DecodeString(body.Raw)
+			require.NoError(t, err)
+			message, err := mail.ReadMessage(bytes.NewReader(raw))
+			require.NoError(t, err)
+			decodedSubject, err := new(mime.WordDecoder).DecodeHeader(message.Header.Get("Subject"))
+			require.NoError(t, err)
+			assert.Equal(t, subject, decodedSubject)
+			assert.Equal(t, `"New API" <sender@gmail.example>`, message.Header.Get("From"))
+			assert.Equal(t, "one@example.com, two@example.com", message.Header.Get("To"))
+			assert.Equal(t, "text/html; charset=UTF-8", message.Header.Get("Content-Type"))
+			assert.Equal(t, "base64", message.Header.Get("Content-Transfer-Encoding"))
+			encoded, err := io.ReadAll(message.Body)
+			require.NoError(t, err)
+			html, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(string(encoded), "\r\n", ""))
+			require.NoError(t, err)
+			assert.Equal(t, content, string(html))
+		})
+	}
+}
+
+func TestOAuthEmailRotatedRefreshTokenIsSavedBeforeReuse(t *testing.T) {
+	options := oauthEmailOptions(common.EmailOAuthProviderMicrosoft)
+	configureEmailDelivery(t, options)
+	useEmailOptionsDatabase(t, options)
+	provider := newFakeMailProvider(t)
+	// Microsoft rotates the refresh token on every refresh; expires_in 0
+	// forces a refresh for every message.
+	provider.issue = func(form url.Values) (int, string) {
+		next := map[string]string{"refresh-1": "refresh-2", "refresh-2": "refresh-3"}[form.Get("refresh_token")]
+		if next == "" {
+			return http.StatusBadRequest, `{"error":"invalid_grant"}`
+		}
+		return http.StatusOK, `{"access_token":"access-1","expires_in":0,"refresh_token":"` + next + `"}`
+	}
+	previousStore, previousDelays := common.EmailOAuthRefreshTokenStore, common.EmailOAuthRotationRetryDelays
+	common.EmailOAuthRotationRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
+	t.Cleanup(func() {
+		common.EmailOAuthRefreshTokenStore, common.EmailOAuthRotationRetryDelays = previousStore, previousDelays
+	})
+
+	// A transient write failure is retried.
+	failures := 2
+	common.EmailOAuthRefreshTokenStore = func(previous, next string) error {
+		if failures > 0 {
+			failures--
+			return errors.New("database is locked")
+		}
+		return previousStore(previous, next)
+	}
+	require.NoError(t, common.SendEmail("first", "one@example.com", "<p>1</p>"))
+	assert.Equal(t, "refresh-2", storedOption(t, common.EmailOAuthRefreshTokenOption))
+	assert.Equal(t, "refresh-2", common.OptionMap[common.EmailOAuthRefreshTokenOption])
+
+	// When every retry fails, the rotated token is kept in memory; the next
+	// message uses it, not the invalidated one, and saves it.
+	common.EmailOAuthRefreshTokenStore = func(string, string) error { return errors.New("database is locked") }
+	require.NoError(t, common.SendEmail("second", "one@example.com", "<p>2</p>"))
+	assert.Equal(t, "refresh-2", storedOption(t, common.EmailOAuthRefreshTokenOption))
+	common.EmailOAuthRefreshTokenStore = previousStore
+	provider.issue = func(form url.Values) (int, string) {
+		if form.Get("refresh_token") != "refresh-3" {
+			return http.StatusBadRequest, `{"error":"invalid_grant"}`
+		}
+		return http.StatusOK, `{"access_token":"access-1","expires_in":3600,"refresh_token":"refresh-4"}`
+	}
+	require.NoError(t, common.SendEmail("third", "one@example.com", "<p>3</p>"))
+	assert.Equal(t, "refresh-4", storedOption(t, common.EmailOAuthRefreshTokenOption))
+	assert.Equal(t, "refresh-4", common.OptionMap[common.EmailOAuthRefreshTokenOption])
+	_, sends := provider.counts()
+	assert.Equal(t, 3, sends)
+}
+
+func TestOAuthEmailRotationDoesNotOverwriteNewerAuthorization(t *testing.T) {
+	options := oauthEmailOptions(common.EmailOAuthProviderMicrosoft)
+	configureEmailDelivery(t, options)
+	useEmailOptionsDatabase(t, options)
+	require.NoError(t, model.SaveEmailOAuthAuthorization("refresh-new-grant", "sender@contoso.example"))
+	assert.ErrorIs(t, model.ReplaceEmailOAuthRefreshToken("refresh-1", "refresh-2"), common.ErrEmailOAuthAuthorizationChanged)
+	assert.Equal(t, "refresh-new-grant", storedOption(t, common.EmailOAuthRefreshTokenOption))
+	assert.Equal(t, "refresh-new-grant", common.OptionMap[common.EmailOAuthRefreshTokenOption])
+}
+
+func TestOAuthEmailInvalidGrantAsksForReauthorization(t *testing.T) {
+	for _, providerName := range []string{common.EmailOAuthProviderGoogle, common.EmailOAuthProviderMicrosoft} {
+		t.Run(providerName, func(t *testing.T) {
+			options := oauthEmailOptions(providerName)
+			configureEmailDelivery(t, options)
+			useEmailOptionsDatabase(t, options)
+			provider := newFakeMailProvider(t)
+			provider.issue = func(url.Values) (int, string) {
+				return http.StatusBadRequest, `{"error":"invalid_grant","error_description":"refresh-1 was revoked"}`
+			}
+			err := common.SendEmail("verification", "one@example.com", "123456")
+			require.EqualError(t, err, "The sender mailbox authorization has expired or was revoked. Re-authorize it in the email settings")
+			_, sends := provider.counts()
+			assert.Zero(t, sends)
+		})
+	}
+}
+
+func TestOAuthEmailFailuresDoNotFallBackToOtherMethods(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	var smtpConnections atomic.Int32
+	go func() {
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			smtpConnections.Add(1)
+			_ = connection.Close()
+		}
+	}()
+	smtpPort := listener.Addr().(*net.TCPAddr).Port
+
+	tests := []struct {
+		name, refreshToken, expected string
+		tokenStatus, sendStatus      int
+	}{
+		{"not authorized", "", "The sender mailbox is not authorized", http.StatusOK, http.StatusAccepted},
+		{"token endpoint unavailable", "refresh-1", "OAuth email request failed", http.StatusServiceUnavailable, http.StatusAccepted},
+		{"send rejected", "refresh-1", "OAuth email delivery failed (HTTP 500)", http.StatusOK, http.StatusInternalServerError},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			options := oauthEmailOptions(common.EmailOAuthProviderGoogle)
+			options[common.EmailOAuthRefreshTokenOption] = test.refreshToken
+			options["ResendApiKey"], options["ResendFrom"] = "test-key", "sender@example.com"
+			configureEmailDelivery(t, options)
+			useEmailOptionsDatabase(t, options)
+			previousPort := common.SMTPPort
+			common.SMTPServer, common.SMTPPort, common.SMTPAccount, common.SMTPFrom = "127.0.0.1", smtpPort, "smtp@example.com", "smtp@example.com"
+			t.Cleanup(func() { common.SMTPPort = previousPort })
+			provider := newFakeMailProvider(t)
+			provider.sendStatus = test.sendStatus
+			provider.issue = func(url.Values) (int, string) {
+				return test.tokenStatus, `{"access_token":"access-1","expires_in":3600}`
+			}
+			defaultTransport := http.DefaultTransport
+			http.DefaultTransport = emailHTTPTransport(func(request *http.Request) (*http.Response, error) {
+				if request.URL.Host == "api.resend.com" {
+					t.Error("OAuth failures must not fall back to Resend")
+				}
+				return defaultTransport.RoundTrip(request)
+			})
+
+			err := common.SendEmail("verification", "one@example.com", "123456")
+			require.EqualError(t, err, test.expected)
+			assert.NotContains(t, err.Error(), "123456")
+			assert.Zero(t, smtpConnections.Load(), "OAuth failures must not fall back to SMTP")
+		})
+	}
 }

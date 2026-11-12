@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { PasswordInput } from '@/components/password-input'
 import {
@@ -48,8 +49,13 @@ import {
 } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import {
+  readEmailOAuthCallback,
+  useEmailOAuthCallback,
+} from '../hooks/use-email-oauth-callback'
 import { useResetForm } from '../hooks/use-reset-form'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { EmailOAuthSettings } from './email-oauth-settings'
 import {
   createEmailSchema,
   parseResendSender,
@@ -77,15 +83,22 @@ export function EmailSettingsSection({
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
   const emailSchema = createEmailSchema(t)
+  // Returning from the provider keeps the OAuth method selected for saving.
+  const [oauthCallback] = useState(() =>
+    readEmailOAuthCallback(window.location.search)
+  )
+  useEmailOAuthCallback(oauthCallback)
   const initialValues = useMemo(
     () => ({
       ...defaultValues,
+      EmailProvider: oauthCallback ? 'oauth' : defaultValues.EmailProvider,
+      EmailOAuthClientSecret: '',
       ...parseResendSender(defaultValues.ResendFrom),
       QuotaRemindThreshold: String(
         quotaUnitsToDollars(Number(defaultValues.QuotaRemindThreshold) || 0)
       ),
     }),
-    [defaultValues]
+    [defaultValues, oauthCallback]
   )
 
   const form = useForm<EmailFormValues>({
@@ -149,6 +162,31 @@ export function EmailSettingsSection({
       }
       const key = values.ResendApiKey.trim()
       if (key) updates.push({ key: 'ResendApiKey', value: key })
+    } else if (values.EmailProvider === 'oauth') {
+      // Changing the app is refused by the server while a mailbox is
+      // authorized; those fields are read-only then.
+      const app = [
+        [
+          'EmailOAuthProvider',
+          values.EmailOAuthProvider,
+          defaultValues.EmailOAuthProvider,
+        ],
+        [
+          'EmailOAuthClientId',
+          values.EmailOAuthClientId.trim(),
+          defaultValues.EmailOAuthClientId.trim(),
+        ],
+        [
+          'EmailOAuthTenant',
+          values.EmailOAuthTenant.trim(),
+          defaultValues.EmailOAuthTenant.trim(),
+        ],
+      ] as const
+      for (const [key, value, saved] of app) {
+        if (value !== saved) updates.push({ key, value })
+      }
+      const secret = values.EmailOAuthClientSecret.trim()
+      if (secret) updates.push({ key: 'EmailOAuthClientSecret', value: secret })
     } else {
       if (sanitized.SMTPServer !== initial.SMTPServer) {
         updates.push({ key: 'SMTPServer', value: sanitized.SMTPServer })
@@ -216,7 +254,13 @@ export function EmailSettingsSection({
 
     // Save credentials first. A failed configuration write must not activate
     // the new provider; only the final selector write changes delivery.
-    if (values.EmailProvider !== defaultValues.EmailProvider) {
+    // OAuth can only be selected once a mailbox is authorized.
+    const awaitingAuthorization =
+      values.EmailProvider === 'oauth' && !defaultValues.EmailOAuthEmail
+    if (
+      values.EmailProvider !== defaultValues.EmailProvider &&
+      !awaitingAuthorization
+    ) {
       updates.push({ key: 'EmailProvider', value: values.EmailProvider })
     }
 
@@ -226,8 +270,22 @@ export function EmailSettingsSection({
         if (update.key === 'ResendApiKey') {
           form.setValue('ResendKeyConfigured', true)
         }
+        if (update.key === 'EmailOAuthClientSecret') {
+          form.setValue('EmailOAuthSecretConfigured', true)
+        }
       }
       form.setValue('ResendApiKey', '')
+      form.setValue('EmailOAuthClientSecret', '')
+      if (
+        awaitingAuthorization &&
+        values.EmailProvider !== defaultValues.EmailProvider
+      ) {
+        toast.info(
+          t(
+            'Authorize the sender mailbox, then save again to send email with OAuth'
+          )
+        )
+      }
     } catch (error) {
       handleServerError(error)
     }
@@ -252,7 +310,7 @@ export function EmailSettingsSection({
                     value={field.value}
                     onValueChange={field.onChange}
                     disabled={isSaving}
-                    className='grid-cols-1 gap-3 sm:grid-cols-2'
+                    className='grid-cols-1 gap-3 sm:grid-cols-3'
                   >
                     <Label
                       className='flex cursor-pointer items-center gap-3 rounded-lg border p-4'
@@ -271,6 +329,13 @@ export function EmailSettingsSection({
                       />
                       Resend API
                     </Label>
+                    <Label
+                      className='flex cursor-pointer items-center gap-3 rounded-lg border p-4'
+                      htmlFor='email-provider-oauth'
+                    >
+                      <RadioGroupItem value='oauth' id='email-provider-oauth' />
+                      {t('OAuth mailbox')}
+                    </Label>
                   </RadioGroup>
                 </FormControl>
                 <FormDescription>
@@ -282,7 +347,20 @@ export function EmailSettingsSection({
               </FormItem>
             )}
           />
-          {provider === 'resend' ? (
+          {provider === 'oauth' && (
+            <EmailOAuthSettings
+              isSaving={isSaving}
+              saved={{
+                EmailOAuthProvider: defaultValues.EmailOAuthProvider,
+                EmailOAuthClientId: defaultValues.EmailOAuthClientId,
+                EmailOAuthTenant: defaultValues.EmailOAuthTenant,
+                EmailOAuthSecretConfigured:
+                  defaultValues.EmailOAuthSecretConfigured,
+                EmailOAuthEmail: defaultValues.EmailOAuthEmail,
+              }}
+            />
+          )}
+          {provider === 'resend' && (
             <>
               <FormField
                 control={form.control}
@@ -351,7 +429,8 @@ export function EmailSettingsSection({
                 )}
               />
             </>
-          ) : (
+          )}
+          {provider === 'smtp' && (
             <>
               <FormField
                 control={form.control}
