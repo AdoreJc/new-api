@@ -34,7 +34,11 @@ const (
 	MaxInputLimit        = 100000
 	MaxEndpoints         = 8
 	MaxGroups            = 200
-	DefaultGuardModel    = "sileader/qwen3guard:0.6b"
+	// DefaultMaxChunks bounds Guard calls per request: the latest user turn
+	// first, then earlier text from newest to oldest.
+	DefaultMaxChunks  = 8
+	MaxMaxChunks      = 100
+	DefaultGuardModel = "sileader/qwen3guard:0.6b"
 )
 
 // ScannerIDs are the Qwen3Guard risk categories in display order.
@@ -65,17 +69,20 @@ type Config struct {
 	Mode    string `json:"mode"`
 	// AllGroups audits every group; otherwise Groups lists exact group names
 	// or prefixes ending in "*" (for example "claude-ch*").
-	AllGroups       bool       `json:"all_groups"`
-	Groups          []string   `json:"groups"`
-	Scanners        []string   `json:"scanners"`
-	StoreFullPrompt bool       `json:"store_full_prompt"`
-	RetentionDays   int        `json:"retention_days"`
-	WorkerCount     int        `json:"worker_count"`
-	QueueCapacity   int        `json:"queue_capacity"`
-	Endpoints       []Endpoint `json:"endpoints"`
-	ConfigVersion   int64      `json:"config_version"`
-	UpdatedAt       int64      `json:"updated_at"`
-	UpdatedBy       int        `json:"updated_by"`
+	AllGroups       bool     `json:"all_groups"`
+	Groups          []string `json:"groups"`
+	Scanners        []string `json:"scanners"`
+	StoreFullPrompt bool     `json:"store_full_prompt"`
+	RetentionDays   int      `json:"retention_days"`
+	WorkerCount     int      `json:"worker_count"`
+	QueueCapacity   int      `json:"queue_capacity"`
+	// MaxChunksPerRequest limits how many chunks of one request are sent to
+	// the Guard; chunks recently judged safe do not count.
+	MaxChunksPerRequest int        `json:"max_chunks_per_request"`
+	Endpoints           []Endpoint `json:"endpoints"`
+	ConfigVersion       int64      `json:"config_version"`
+	UpdatedAt           int64      `json:"updated_at"`
+	UpdatedBy           int        `json:"updated_by"`
 }
 
 // Snapshot is the immutable runtime view: configuration plus Guard tokens.
@@ -92,15 +99,16 @@ func init() {
 
 func DefaultConfig() Config {
 	return Config{
-		Mode:            ModeAsync,
-		AllGroups:       true,
-		Groups:          []string{},
-		Scanners:        slices.Clone(ScannerIDs),
-		StoreFullPrompt: true,
-		RetentionDays:   DefaultRetentionDays,
-		WorkerCount:     DefaultWorkerCount,
-		QueueCapacity:   DefaultQueueCapacity,
-		Endpoints:       []Endpoint{},
+		Mode:                ModeAsync,
+		AllGroups:           true,
+		Groups:              []string{},
+		Scanners:            slices.Clone(ScannerIDs),
+		StoreFullPrompt:     true,
+		RetentionDays:       DefaultRetentionDays,
+		WorkerCount:         DefaultWorkerCount,
+		QueueCapacity:       DefaultQueueCapacity,
+		MaxChunksPerRequest: DefaultMaxChunks,
+		Endpoints:           []Endpoint{},
 	}
 }
 
@@ -210,7 +218,11 @@ func (c *Config) Normalize() error {
 		}
 	}
 	c.Scanners = scanners
-	if c.WorkerCount < 1 || c.WorkerCount > MaxWorkerCount ||
+	if c.MaxChunksPerRequest == 0 {
+		c.MaxChunksPerRequest = DefaultMaxChunks
+	}
+	if c.MaxChunksPerRequest < 1 || c.MaxChunksPerRequest > MaxMaxChunks ||
+		c.WorkerCount < 1 || c.WorkerCount > MaxWorkerCount ||
 		c.QueueCapacity < 1 || c.QueueCapacity > MaxQueueCapacity ||
 		c.RetentionDays < 1 || c.RetentionDays > MaxRetentionDays {
 		return ErrInvalidLimits

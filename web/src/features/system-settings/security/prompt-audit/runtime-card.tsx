@@ -42,6 +42,8 @@ const RUNTIME_FIELDS: Array<{ key: keyof PromptAuditRuntime; label: string }> =
     { key: 'failovers', label: 'Failovers' },
     { key: 'recorded', label: 'Events recorded' },
     { key: 'record_failed', label: 'Events not recorded' },
+    { key: 'chunks_cached', label: 'Chunks skipped (recently safe)' },
+    { key: 'chunks_over_budget', label: 'Chunks over the per-request limit' },
     { key: 'latency_avg_ms', label: 'Average scan time (ms)' },
     { key: 'latency_max_ms', label: 'Longest scan time (ms)' },
   ]

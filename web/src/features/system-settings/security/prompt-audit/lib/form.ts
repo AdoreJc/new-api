@@ -66,6 +66,7 @@ export const promptAuditFormSchema = z
     retention_days: z.coerce.number().int().min(1).max(365),
     worker_count: z.coerce.number().int().min(1).max(8),
     queue_capacity: z.coerce.number().int().min(1).max(10000),
+    max_chunks_per_request: z.coerce.number().int().min(1).max(100),
     endpoints: z.array(endpointSchema).max(8),
   })
   .superRefine((values, context) => {
@@ -133,6 +134,7 @@ export function toPromptAuditFormValues(
     retention_days: config.retention_days,
     worker_count: config.worker_count,
     queue_capacity: config.queue_capacity,
+    max_chunks_per_request: config.max_chunks_per_request || 8,
     endpoints: (config.endpoints ?? []).map((endpoint) => ({
       ...endpoint,
       has_token: response.has_token?.[endpoint.id] ?? false,
@@ -171,6 +173,7 @@ export function toPromptAuditConfigRequest(
       retention_days: values.retention_days,
       worker_count: values.worker_count,
       queue_capacity: values.queue_capacity,
+      max_chunks_per_request: values.max_chunks_per_request,
       endpoints: values.endpoints.map((endpoint) => ({
         id: endpoint.id,
         name: endpoint.name.trim(),

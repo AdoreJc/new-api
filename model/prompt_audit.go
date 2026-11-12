@@ -3,6 +3,7 @@ package model
 import (
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/prompt_audit_setting"
@@ -37,12 +38,34 @@ type PromptAuditEvent struct {
 	ScannerVersion    string `json:"scanner_version" gorm:"type:varchar(255)"`
 	ConfigVersion     int64  `json:"config_version"`
 	ChunkTotal        int    `json:"chunk_total"`
+	ChunksScanned     int    `json:"chunks_scanned"`
 	LatencyMs         int    `json:"latency_ms"`
 	PromptHash        string `json:"prompt_hash" gorm:"type:varchar(64);index"`
 	RedactedPreview   string `json:"redacted_preview" gorm:"type:varchar(512)"`
 	PromptLength      int    `json:"prompt_length"`
 	MessageCount      int    `json:"message_count"`
-	FullPrompt        string `json:"full_prompt,omitempty" gorm:"type:text"`
+	// FullPrompt is longtext on MySQL: a 64K-character prompt can exceed the
+	// 65535-byte TEXT limit there.
+	FullPrompt LongText `json:"full_prompt,omitempty"`
+}
+
+// fitColumns shortens variable-length columns to their declared size so an
+// unusual path, model or user name never fails the insert. MySQL and
+// PostgreSQL count varchar length in characters.
+func (e *PromptAuditEvent) fitColumns() {
+	for _, field := range []struct {
+		value *string
+		limit int
+	}{
+		{&e.RequestId, 64}, {&e.Username, 64}, {&e.TokenName, 255}, {&e.UsingGroup, 64},
+		{&e.RelayFormat, 32}, {&e.Endpoint, 128}, {&e.ModelName, 255}, {&e.Mode, 16},
+		{&e.Decision, 16}, {&e.RiskLevel, 16}, {&e.Action, 16}, {&e.Safety, 16},
+		{&e.GuardEndpointId, 64}, {&e.ScannerVersion, 255}, {&e.PromptHash, 64}, {&e.RedactedPreview, 512},
+	} {
+		if utf8.RuneCountInString(*field.value) > field.limit {
+			*field.value = string([]rune(*field.value)[:field.limit])
+		}
+	}
 }
 
 // PromptAuditEventFilter narrows event listing and filtered deletion.
@@ -102,11 +125,30 @@ func (f PromptAuditEventFilter) apply(tx *gorm.DB) *gorm.DB {
 	return tx
 }
 
-func CreatePromptAuditEvents(events []*PromptAuditEvent) error {
+// CreatePromptAuditEvents stores a batch in one insert. If the batch fails,
+// each event is retried on its own so one bad row cannot lose the others. It
+// returns how many events were stored and the last error.
+func CreatePromptAuditEvents(events []*PromptAuditEvent) (int, error) {
 	if len(events) == 0 {
-		return nil
+		return 0, nil
 	}
-	return DB.Create(&events).Error
+	for _, event := range events {
+		event.fitColumns()
+	}
+	if err := DB.Create(&events).Error; err == nil {
+		return len(events), nil
+	}
+	stored := 0
+	var lastErr error
+	for _, event := range events {
+		event.Id = 0
+		if err := DB.Create(event).Error; err != nil {
+			lastErr = err
+			continue
+		}
+		stored++
+	}
+	return stored, lastErr
 }
 
 // ListPromptAuditEvents returns one page of events without the full prompt.
@@ -220,6 +262,10 @@ func SavePromptAuditConfig(config prompt_audit_setting.Config, tokens map[string
 	}
 	promptAuditConfigMutex.Lock()
 	defer promptAuditConfigMutex.Unlock()
+	// Create the row first so the locking read below always has a row to lock;
+	// a concurrent first save on another node then waits instead of passing
+	// the version check too. A duplicate-key error means another node won.
+	_ = DB.Where(Option{Key: prompt_audit_setting.OptionKey}).Attrs(Option{Value: ""}).FirstOrCreate(&Option{}).Error
 	var configJSON, tokensJSON []byte
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var stored Option

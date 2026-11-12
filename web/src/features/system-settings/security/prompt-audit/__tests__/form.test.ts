@@ -37,6 +37,7 @@ const response: PromptAuditConfigResponse = {
     retention_days: 30,
     worker_count: 2,
     queue_capacity: 1024,
+    max_chunks_per_request: 8,
     endpoints: [
       {
         id: 'kept',

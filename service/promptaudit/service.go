@@ -57,10 +57,15 @@ type Metrics struct {
 	recordFailed   atomic.Int64
 	latencyTotalMS atomic.Int64
 	latencyMaxMS   atomic.Int64
+	// chunksCached counts chunks skipped because they were recently found safe;
+	// chunksOverBudget counts chunks left unscanned by the per-request limit.
+	chunksCached     atomic.Int64
+	chunksOverBudget atomic.Int64
 }
 
 type job struct {
 	protocol   string
+	size       int64
 	body       []byte
 	event      model.PromptAuditEvent
 	enqueuedAt time.Time
@@ -78,6 +83,10 @@ type Service struct {
 	metrics     Metrics
 	startOnce   sync.Once
 	lastCleanup atomic.Int64
+	// lastFailureLog and suppressedFailures throttle scan failure logging so an
+	// unreachable Guard does not flood the log.
+	lastFailureLog     atomic.Int64
+	suppressedFailures atomic.Int64
 	// retryDelays are the waits before each retry of a retryable Guard failure.
 	retryDelays []time.Duration
 	now         func() time.Time
@@ -121,7 +130,17 @@ func (s *Service) enqueueRelay(c *gin.Context, info *relaycommon.RelayInfo) {
 		return
 	}
 	protocol, audited := relayProtocol(info.RelayFormat, info.RequestURLPath)
-	if !audited || !snapshot.Config.IncludesGroup(info.UsingGroup) {
+	group := info.UsingGroup
+	inScope := snapshot.Config.IncludesGroup(group)
+	// An "auto" token routes to a concrete group chosen by the distributor;
+	// scope rules and the event use that group, and "auto" still matches.
+	if group == "auto" {
+		if selected := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); selected != "" {
+			group = selected
+			inScope = inScope || snapshot.Config.IncludesGroup(selected)
+		}
+	}
+	if !audited || !inScope {
 		s.metrics.skipped.Add(1)
 		return
 	}
@@ -135,26 +154,38 @@ func (s *Service) enqueueRelay(c *gin.Context, info *relaycommon.RelayInfo) {
 		s.metrics.tooLarge.Add(1)
 		return
 	}
-	if s.depth.Load() >= int64(snapshot.Config.QueueCapacity) || s.queuedBytes.Load()+size > maxQueuedBytes {
+	// Reserve capacity first and roll back, so concurrent requests cannot
+	// overshoot the item or byte limits.
+	if s.depth.Add(1) > int64(snapshot.Config.QueueCapacity) || s.queuedBytes.Add(size) > maxQueuedBytes {
+		s.depth.Add(-1)
+		s.queuedBytes.Add(-size)
 		s.metrics.dropped.Add(1)
 		return
 	}
 	raw, err := storage.Bytes()
 	if err != nil {
+		s.depth.Add(-1)
+		s.queuedBytes.Add(-size)
 		s.metrics.skipped.Add(1)
 		return
+	}
+	// Disk-backed storage already returns a fresh copy; memory storage returns
+	// the buffer the relay itself reads, which must not be shared.
+	if !storage.IsDisk() {
+		raw = bytes.Clone(raw)
 	}
 	endpoint, _, _ := strings.Cut(info.RequestURLPath, "?")
 	item := &job{
 		protocol: protocol,
-		body:     bytes.Clone(raw),
+		size:     size,
+		body:     raw,
 		event: model.PromptAuditEvent{
 			RequestId:   c.GetString(common.RequestIdKey),
 			UserId:      info.UserId,
 			Username:    common.GetContextKeyString(c, constant.ContextKeyUserName),
 			TokenId:     info.TokenId,
 			TokenName:   c.GetString("token_name"),
-			UsingGroup:  info.UsingGroup,
+			UsingGroup:  group,
 			ChannelId:   common.GetContextKeyInt(c, constant.ContextKeyChannelId),
 			RelayFormat: string(info.RelayFormat),
 			Endpoint:    endpoint,
@@ -163,8 +194,6 @@ func (s *Service) enqueueRelay(c *gin.Context, info *relaycommon.RelayInfo) {
 		},
 		enqueuedAt: s.now(),
 	}
-	s.depth.Add(1)
-	s.queuedBytes.Add(int64(len(item.body)))
 	select {
 	case s.queue <- item:
 		s.metrics.enqueued.Add(1)
@@ -176,7 +205,7 @@ func (s *Service) enqueueRelay(c *gin.Context, info *relaycommon.RelayInfo) {
 
 func (s *Service) release(item *job) {
 	s.depth.Add(-1)
-	s.queuedBytes.Add(-int64(len(item.body)))
+	s.queuedBytes.Add(-item.size)
 }
 
 // relayProtocol maps a relay format to the extraction protocol. Formats that
@@ -249,27 +278,14 @@ func (s *Service) process(ctx context.Context, item *job) {
 		return
 	}
 	s.metrics.scanned.Add(1)
-	var result *guardResult
-	for attempt := 0; ; attempt++ {
-		result, err = s.guard.evaluate(ctx, snapshot, prompt.ScanText, &s.metrics)
-		var guardErr *guardError
-		if err == nil || attempt >= len(s.retryDelays) || !errors.As(err, &guardErr) || !guardErr.Retryable {
-			break
-		}
-		s.metrics.retries.Add(1)
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(s.retryDelays[attempt]):
-		}
-	}
+	result, err := s.guard.evaluate(ctx, snapshot, prompt.ScanText, s.retryDelays, &s.metrics)
 	if err != nil {
 		s.metrics.failed.Add(1)
 		var guardErr *guardError
 		if errors.As(err, &guardErr) && guardErr.Timeout {
 			s.metrics.timeouts.Add(1)
 		}
-		common.SysError(common.LogText("prompt audit scan failed for request %s: %s", item.event.RequestId, err.Error()))
+		s.logScanFailure(item.event.RequestId, err)
 		return
 	}
 	s.metrics.latencyTotalMS.Add(int64(result.LatencyMS))
@@ -293,17 +309,30 @@ func (s *Service) process(ctx context.Context, item *job) {
 	event.UnknownCategories = encodeList(result.UnknownCategories)
 	event.GuardEndpointId, event.ScannerVersion = result.GuardEndpointID, result.ScannerVersion
 	event.ConfigVersion = snapshot.Config.ConfigVersion
-	event.ChunkTotal, event.LatencyMs = result.ChunkTotal, result.LatencyMS
+	event.ChunkTotal, event.ChunksScanned, event.LatencyMs = result.ChunkTotal, result.ChunksScanned, result.LatencyMS
 	event.PromptHash, event.RedactedPreview = prompt.Hash, prompt.Preview
 	event.PromptLength, event.MessageCount = prompt.Length, prompt.MessageCount
 	if snapshot.Config.StoreFullPrompt {
-		event.FullPrompt = prompt.FullPrompt
+		event.FullPrompt = model.LongText(prompt.FullPrompt)
 	}
 	select {
 	case s.writes <- &event:
 	default:
 		s.metrics.recordFailed.Add(1)
 	}
+}
+
+// logScanFailure logs at most one scan failure per minute and reports how
+// many were suppressed in between.
+func (s *Service) logScanFailure(requestID string, err error) {
+	now := s.now().Unix()
+	last := s.lastFailureLog.Load()
+	if now-last < 60 || !s.lastFailureLog.CompareAndSwap(last, now) {
+		s.suppressedFailures.Add(1)
+		return
+	}
+	common.SysError(common.LogText("prompt audit scan failed for request %s: %s (%d similar failures not logged)",
+		requestID, err.Error(), s.suppressedFailures.Swap(0)))
 }
 
 func encodeList(values []string) string {
@@ -327,11 +356,11 @@ func (s *Service) writer(ctx context.Context) {
 		if len(batch) == 0 {
 			return
 		}
-		if err := model.CreatePromptAuditEvents(batch); err != nil {
-			s.metrics.recordFailed.Add(int64(len(batch)))
-			common.SysError(common.LogText("failed to record prompt audit events: %s", err.Error()))
-		} else {
-			s.metrics.recorded.Add(int64(len(batch)))
+		stored, err := model.CreatePromptAuditEvents(batch)
+		s.metrics.recorded.Add(int64(stored))
+		if err != nil {
+			s.metrics.recordFailed.Add(int64(len(batch) - stored))
+			common.SysError(common.LogText("failed to record %d prompt audit events: %s", len(batch)-stored, err.Error()))
 		}
 		batch = batch[:0]
 	}
@@ -404,6 +433,8 @@ type RuntimeStatus struct {
 	Retries          int64  `json:"retries"`
 	Recorded         int64  `json:"recorded"`
 	RecordFailed     int64  `json:"record_failed"`
+	ChunksCached     int64  `json:"chunks_cached"`
+	ChunksOverBudget int64  `json:"chunks_over_budget"`
 	LatencyAvgMS     int64  `json:"latency_avg_ms"`
 	LatencyMaxMS     int64  `json:"latency_max_ms"`
 }
@@ -423,6 +454,7 @@ func (s *Service) runtime() RuntimeStatus {
 		Passed: m.passed.Load(), Flagged: m.flagged.Load(), Critical: m.critical.Load(),
 		Failed: m.failed.Load(), Timeouts: m.timeouts.Load(), Failovers: m.failovers.Load(),
 		Retries: m.retries.Load(), Recorded: m.recorded.Load(), RecordFailed: m.recordFailed.Load(),
+		ChunksCached: m.chunksCached.Load(), ChunksOverBudget: m.chunksOverBudget.Load(),
 		LatencyMaxMS: m.latencyMaxMS.Load(),
 	}
 	if completed := status.Passed + status.Flagged + status.Critical; completed > 0 {
@@ -442,7 +474,10 @@ type ProbeResult struct {
 // Probe sends a harmless test prompt to one endpoint with the given token.
 func Probe(ctx context.Context, endpoint prompt_audit_setting.Endpoint, token string) ProbeResult {
 	started := time.Now()
-	result, err := defaultService.guard.scan(ctx, endpoint, token, "Hello", prompt_audit_setting.ScannerIDs)
+	// A throwaway client: probing arbitrary addresses must not grow the cache.
+	client := newHTTPClient(endpoint)
+	defer client.CloseIdleConnections()
+	result, err := scanWith(ctx, client, endpoint, token, "Hello", prompt_audit_setting.ScannerIDs)
 	probe := ProbeResult{LatencyMS: time.Since(started).Milliseconds()}
 	if err != nil {
 		probe.Error = err.Error()

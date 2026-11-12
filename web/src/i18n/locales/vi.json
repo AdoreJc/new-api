@@ -7726,7 +7726,10 @@
     "Violent": "Bạo lực",
     "not selected": "chưa chọn",
     "{{chars}} characters in {{count}} messages": "{{chars}} ký tự trong {{count}} tin nhắn",
-    "{{chunks}} chunks in {{ms}} ms": "{{chunks}} đoạn trong {{ms}} ms",
-    "Save prompt audit settings": "Lưu cài đặt kiểm duyệt prompt"
+    "Save prompt audit settings": "Lưu cài đặt kiểm duyệt prompt",
+    "Guard calls per request": "Số lần gọi Guard mỗi yêu cầu",
+    "Chunks skipped (recently safe)": "Đoạn bỏ qua (gần đây đã xác định an toàn)",
+    "Chunks over the per-request limit": "Đoạn vượt giới hạn mỗi yêu cầu",
+    "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "Đã quét {{scanned}}/{{chunks}} đoạn trong {{ms}} ms"
   }
 }

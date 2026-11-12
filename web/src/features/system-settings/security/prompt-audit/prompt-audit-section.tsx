@@ -92,6 +92,12 @@ const NUMBER_FIELDS = [
   { name: 'retention_days', label: 'Retention (days)', min: 1, max: 365 },
   { name: 'worker_count', label: 'Concurrent scans', min: 1, max: 8 },
   { name: 'queue_capacity', label: 'Queue capacity', min: 1, max: 10000 },
+  {
+    name: 'max_chunks_per_request',
+    label: 'Guard calls per request',
+    min: 1,
+    max: 100,
+  },
 ] as const
 
 export function PromptAuditSection() {

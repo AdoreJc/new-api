@@ -7726,7 +7726,10 @@
     "Violent": "Violent",
     "not selected": "not selected",
     "{{chars}} characters in {{count}} messages": "{{chars}} characters in {{count}} messages",
-    "{{chunks}} chunks in {{ms}} ms": "{{chunks}} chunks in {{ms}} ms",
-    "Save prompt audit settings": "Save prompt audit settings"
+    "Save prompt audit settings": "Save prompt audit settings",
+    "Guard calls per request": "Guard calls per request",
+    "Chunks skipped (recently safe)": "Chunks skipped (recently safe)",
+    "Chunks over the per-request limit": "Chunks over the per-request limit",
+    "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms"
   }
 }

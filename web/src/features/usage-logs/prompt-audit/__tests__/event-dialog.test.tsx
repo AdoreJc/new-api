@@ -52,6 +52,7 @@ const event: PromptAuditEvent = {
   scanner_version: 'guard',
   config_version: 2,
   chunk_total: 1,
+  chunks_scanned: 1,
   latency_ms: 80,
   prompt_hash: 'f'.repeat(64),
   redacted_preview: 'ignore all***…',

@@ -45,6 +45,7 @@ it('shows the saved switch values once the settings load', async () => {
               retention_days: 30,
               worker_count: 2,
               queue_capacity: 100,
+              max_chunks_per_request: 8,
               endpoints: [],
               config_version: 3,
               updated_at: 0,

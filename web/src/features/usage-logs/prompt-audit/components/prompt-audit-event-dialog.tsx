@@ -104,7 +104,8 @@ export function PromptAuditEventDialog(props: { event: PromptAuditEvent }) {
         />
         <DetailRow
           label={t('Scan')}
-          value={t('{{chunks}} chunks in {{ms}} ms', {
+          value={t('{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms', {
+            scanned: event.chunks_scanned,
             chunks: event.chunk_total,
             ms: event.latency_ms,
           })}

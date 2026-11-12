@@ -7726,7 +7726,10 @@
     "Violent": "Насилие",
     "not selected": "не выбрана",
     "{{chars}} characters in {{count}} messages": "{{chars}} символов в {{count}} сообщениях",
-    "{{chunks}} chunks in {{ms}} ms": "{{chunks}} фрагментов за {{ms}} мс",
-    "Save prompt audit settings": "Сохранить настройки проверки промптов"
+    "Save prompt audit settings": "Сохранить настройки проверки промптов",
+    "Guard calls per request": "Вызовов Guard на запрос",
+    "Chunks skipped (recently safe)": "Пропущено фрагментов (недавно признаны безопасными)",
+    "Chunks over the per-request limit": "Фрагментов сверх лимита на запрос",
+    "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "Проверено {{scanned}} из {{chunks}} фрагментов за {{ms}} мс"
   }
 }

@@ -7726,7 +7726,10 @@
     "Violent": "暴力",
     "not selected": "未选中",
     "{{chars}} characters in {{count}} messages": "{{count}} 段消息，共 {{chars}} 个字符",
-    "{{chunks}} chunks in {{ms}} ms": "{{chunks}} 段，耗时 {{ms}} 毫秒",
-    "Save prompt audit settings": "保存提示词审计设置"
+    "Save prompt audit settings": "保存提示词审计设置",
+    "Guard calls per request": "每个请求的 Guard 调用上限",
+    "Chunks skipped (recently safe)": "跳过的块（近期已判定安全）",
+    "Chunks over the per-request limit": "超出单请求上限的块",
+    "{{scanned}} of {{chunks}} chunks scanned in {{ms}} ms": "共 {{chunks}} 段，扫描 {{scanned}} 段，耗时 {{ms}} 毫秒"
   }
 }

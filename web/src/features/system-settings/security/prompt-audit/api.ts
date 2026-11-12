@@ -42,6 +42,7 @@ export type PromptAuditConfig = {
   retention_days: number
   worker_count: number
   queue_capacity: number
+  max_chunks_per_request: number
   endpoints: PromptAuditEndpoint[]
   config_version: number
   updated_at: number
@@ -88,6 +89,8 @@ export type PromptAuditRuntime = {
   retries: number
   recorded: number
   record_failed: number
+  chunks_cached: number
+  chunks_over_budget: number
   latency_avg_ms: number
   latency_max_ms: number
 }
