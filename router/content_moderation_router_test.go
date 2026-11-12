@@ -3,6 +3,7 @@ package router
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,7 +14,9 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service/contentmoderation"
+	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/content_moderation_setting"
+	"github.com/QuantumNous/new-api/setting/perf_metrics_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
@@ -134,6 +137,13 @@ func TestContentModerationCoversEveryRelayPostRoute(t *testing.T) {
 func TestContentModerationBlockHappensBeforeBilling(t *testing.T) {
 	setupRelayRouterTestDB(t)
 	require.NoError(t, i18n.Init())
+	// Performance metrics record a successful relay from a background
+	// goroutine that would outlive this test; they are not under test here.
+	previousPerfMetrics := strconv.FormatBool(perf_metrics_setting.GetSetting().Enabled)
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{"perf_metrics_setting.enabled": "false"}))
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{"perf_metrics_setting.enabled": previousPerfMetrics}))
+	})
 	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Log{}, &model.UserSubscription{}, &model.ContentModerationEvent{}, &model.ContentModerationFlaggedHash{}))
 
 	var upstreamCalls atomic.Int64
