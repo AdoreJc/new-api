@@ -249,6 +249,16 @@ describe('email delivery settings', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
+  it('keeps the SMTP port and encryption fields aligned to the top of their row', () => {
+    renderEmail()
+    // Port has a longer description than encryption; without top alignment
+    // its label and input are pushed below the encryption options.
+    const port = screen
+      .getByRole('spinbutton', { name: 'Port' })
+      .closest('[data-slot=form-item]')
+    expect(port?.parentElement).toHaveClass('items-start')
+  })
+
   it('supports changing the provider with the keyboard', async () => {
     const user = renderEmail()
     await user.click(screen.getByRole('radio', { name: 'SMTP' }))
