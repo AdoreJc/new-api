@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,6 +85,10 @@ func TestScanPromptAuditEventsReadsKeysetBatchesWithinLimits(t *testing.T) {
 			{CreatedAt: 5, Decision: "flag", Username: "e5", ModelName: "m-SECRET"},
 		}
 		withPromptAuditEventDB(t, dialect, events)
+		var scanSQL []string
+		require.NoError(t, DB.Callback().Query().After("gorm:query").Register("test:capture_scan_sql", func(tx *gorm.DB) {
+			scanSQL = append(scanSQL, tx.Statement.SQL.String())
+		}))
 		filter := PromptAuditEventFilter{Keyword: "secret", KeywordMode: PromptAuditKeywordModeRegex, KeywordFields: "model_name", Decision: "flag"}
 		limits := PromptAuditScanLimits{MaxRows: 100, Deadline: time.Now().Add(time.Minute)}
 
@@ -92,6 +97,10 @@ func TestScanPromptAuditEventsReadsKeysetBatchesWithinLimits(t *testing.T) {
 		assert.Equal(t, []string{"e5", "c3", "a1"}, promptAuditUsernames(page.Items), "matches across 2-row batches, newest first")
 		assert.False(t, page.Truncated)
 		assert.Equal(t, 4, page.Scanned, "only rows passing the SQL filter are read")
+		require.NotEmpty(t, scanSQL)
+		// MySQL keeps running a query after its context ends, so only there
+		// the server is told the deadline; the hint runs on the real server.
+		assert.Equal(t, dialect == "mysql", strings.Contains(scanSQL[0], "MAX_EXECUTION_TIME("), scanSQL[0])
 
 		var seen []string
 		cursor := int64(0)

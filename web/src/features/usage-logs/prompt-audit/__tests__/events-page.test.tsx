@@ -186,6 +186,48 @@ it('a regex the browser cannot parse is still searched so the server decides', a
   )
 })
 
+it('retrying a scan that keeps timing out before any row requests it again', async () => {
+  const timedOut = {
+    items: [],
+    truncated: true,
+    next_cursor: 0,
+    scanned: 0,
+    stop_reason: 'time_budget',
+  }
+  const get = vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: timedOut },
+  })
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <PromptAuditEvents />
+    </QueryClientProvider>
+  )
+  await userEvent.click(screen.getByRole('switch', { name: 'Regex' }))
+  await userEvent.type(
+    screen.getByRole('textbox', { name: 'Search user, key, model or preview' }),
+    'secret'
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Search' }))
+  const scanRequests = () =>
+    get.mock.calls.filter(
+      (call) =>
+        (call[1] as { params?: { keyword?: string } } | undefined)?.params
+          ?.keyword === 'secret'
+    ).length
+  await vi.waitFor(() => expect(scanRequests()).toBe(1))
+
+  for (const expected of [2, 3]) {
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Continue search' })
+    )
+    await vi.waitFor(() => expect(scanRequests()).toBe(expected))
+  }
+})
+
 it('select all on the page selects every row for batch deletion', async () => {
   renderPage([auditEvent(9, 'alice'), auditEvent(8, 'bob')])
   await screen.findByText('alice')

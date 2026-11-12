@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -14,7 +16,9 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/prompt_audit_setting"
 
+	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // PromptAuditEvent is one flagged prompt audit result. Passing results are
@@ -307,6 +311,22 @@ func ListPromptAuditEvents(filter PromptAuditEventFilter, offset, limit int) ([]
 	return events, total, err
 }
 
+// promptAuditMySQLMaxExecutionTime adds a MAX_EXECUTION_TIME optimizer hint
+// (milliseconds, MySQL 5.7.8+) to a SELECT, as gorm.io/hints does.
+type promptAuditMySQLMaxExecutionTime int64
+
+func (h promptAuditMySQLMaxExecutionTime) ModifyStatement(stmt *gorm.Statement) {
+	selectClause := stmt.Clauses["SELECT"]
+	selectClause.AfterNameExpression = clause.Expr{SQL: fmt.Sprintf("/*+ MAX_EXECUTION_TIME(%d) */", int64(h))}
+	stmt.Clauses["SELECT"] = selectClause
+}
+
+func (promptAuditMySQLMaxExecutionTime) Build(clause.Builder) {}
+
+// promptAuditMySQLQueryTimeout is ER_QUERY_TIMEOUT, returned when
+// MAX_EXECUTION_TIME stops a query.
+const promptAuditMySQLQueryTimeout = 3024
+
 // Rows read per scan batch; tests lower them to exercise several batches.
 var (
 	promptAuditScanBatchRows           = 1000
@@ -406,9 +426,17 @@ scan:
 		// Each batch read ends at the deadline; a read cut off by it ends the
 		// page like a spent budget, so the search continues from cursor.
 		batchCtx, cancel := context.WithDeadline(ctx, limits.Deadline)
+		query = query.WithContext(batchCtx)
+		if DB.Dialector.Name() == string(common.DatabaseTypeMySQL) {
+			// The MySQL driver does not stop a running query when the context
+			// ends, so the server is told to stop at the deadline itself.
+			query = query.Clauses(promptAuditMySQLMaxExecutionTime(max(time.Until(limits.Deadline).Milliseconds(), 1)))
+		}
 		var rows []*PromptAuditEvent
-		err := query.WithContext(batchCtx).Order("id desc").Limit(size).Find(&rows).Error
-		timedOut := batchCtx.Err() != nil && ctx.Err() == nil
+		err := query.Order("id desc").Limit(size).Find(&rows).Error
+		var mysqlErr *mysql.MySQLError
+		timedOut := (batchCtx.Err() != nil && ctx.Err() == nil) ||
+			(errors.As(err, &mysqlErr) && mysqlErr.Number == promptAuditMySQLQueryTimeout)
 		cancel()
 		if err != nil && timedOut {
 			page.Truncated, page.NextCursor, page.StopReason = true, cursor, PromptAuditScanStopTimeBudget

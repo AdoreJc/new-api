@@ -274,6 +274,12 @@ export function PromptAuditEvents() {
                   loading={query.isFetching}
                   onContinue={(next) => {
                     table.resetRowSelection()
+                    // A scan that timed out before reading a row returns the
+                    // cursor it started from; the query key would not change.
+                    if (next === cursor) {
+                      void query.refetch()
+                      return
+                    }
                     setCursor(next)
                   }}
                   onRestart={() => {
