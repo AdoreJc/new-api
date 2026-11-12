@@ -261,16 +261,15 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 			s.metrics.skipped.Add(1)
 			return nil
 		}
-		prompts := MultipartPrompts(contentType, reader)
+		prompts, tooLarge := MultipartPrompts(contentType, reader)
 		_ = reader.Close()
-		semantic := collector{}
-		for _, prompt := range prompts {
-			semantic.addText(prompt)
+		if tooLarge {
+			// Like a JSON body over maxBodyBytes: counted and not checked.
+			s.metrics.tooLarge.Add(1)
+			return nil
 		}
-		input.Text, keywordText = joinParts(semantic.parts), joinParts(prompts)
-		if runes := []rune(input.Text); len(runes) > maxInputRunes {
-			input.Text = string(runes[:maxInputRunes])
-		}
+		keywordText = joinParts(prompts)
+		input.Text = prefixRunes(keywordText, maxInputRunes)
 	} else {
 		if storage.Size() > maxBodyBytes {
 			s.metrics.tooLarge.Add(1)
@@ -323,21 +322,26 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 	}
 	blocking := decision.Action == ActionBlock
 
-	// Keyword stage, matched against the reminder-preserving text:
-	// keyword_only decides here without an engine call; keyword_and_api sends
-	// only inputs with a keyword on to the engine, whatever the sample rate.
+	// Keyword stage, matched against the reminder-preserving text. In
+	// keyword_only and keyword_and_api a hit is decided here without an
+	// engine call (blocked in block mode, recorded otherwise); keyword_only
+	// stops for every other input, keyword_and_api sends it on as api_only
+	// would. keyword_gated_api sends only hits on, whatever the sample rate.
 	// A keyword hit never enters the hash blocklist, so editing a list takes
 	// effect for inputs it matched before.
-	keywordHit := false
+	keywordGated := false
 	if useKeywords {
 		list, hit := s.matchKeyword(keywordText, config.KeywordLists)
-		if !hit {
+		if hit {
+			s.metrics.keywordHits.Add(1)
+			item.event.KeywordList = list
+		}
+		gated := config.KeywordMode == content_moderation_setting.KeywordModeKeywordGated
+		if !hit && (gated || config.KeywordMode == content_moderation_setting.KeywordModeKeywordOnly) {
 			return nil
 		}
-		s.metrics.keywordHits.Add(1)
-		keywordHit = true
-		item.event.KeywordList = list
-		if config.KeywordMode == content_moderation_setting.KeywordModeKeywordOnly {
+		keywordGated = gated
+		if hit && !gated {
 			s.metrics.flagged.Add(1)
 			event := item.event
 			event.CreatedAt = s.now().Unix()
@@ -373,7 +377,7 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 		}
 		return nil
 	}
-	if !keywordHit && !sampled(item.hash, decision.SampleRate) {
+	if !keywordGated && !sampled(item.hash, decision.SampleRate) {
 		s.metrics.sampledOut.Add(1)
 		return nil
 	}

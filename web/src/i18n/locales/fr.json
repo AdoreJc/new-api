@@ -7907,7 +7907,6 @@
     "Keyword lists": "Listes de mots-clés",
     "Keyword mode": "Mode des mots-clés",
     "Keywords": "Mots-clés",
-    "Keywords first, then the API reviews each match": "Mots-clés d'abord, puis l'API vérifie chaque correspondance",
     "Keywords only (no API call)": "Mots-clés uniquement (aucun appel API)",
     "List name": "Nom de la liste",
     "Lists in use": "Listes utilisées",
@@ -7919,7 +7918,6 @@
     "Remembered input": "Entrée mémorisée",
     "Saved keyword list {{name}} with {{count}} keywords": "Liste de mots-clés {{name}} enregistrée avec {{count}} mots-clés",
     "Select at least one keyword list for the keyword mode": "Sélectionnez au moins une liste de mots-clés pour ce mode",
-    "With keywords only, a match is flagged (and blocked in block mode). With keywords then the API, only inputs that match are sent to the API, which decides.": "Avec les mots-clés seuls, une correspondance est signalée (et bloquée en mode blocage). Avec mots-clés puis API, seules les entrées correspondantes sont envoyées à l'API, qui décide.",
     "{{count}} keywords": "{{count}} mots-clés",
     "Content moderation keyword mode is invalid": "Le mode des mots-clés de la modération du contenu est invalide",
     "Keyword list names may use letters, digits, dot, dash and underscore, up to 64 characters": "Les noms de liste peuvent contenir lettres, chiffres, point, tiret et trait de soulignement, 64 caractères au plus",
@@ -7929,6 +7927,9 @@
     "Saved content moderation keyword list {{name}} ({{count}} keywords)": "Liste de mots-clés de modération {{name}} enregistrée ({{count}} mots-clés)",
     "Deleted content moderation keyword list {{name}}": "Liste de mots-clés de modération {{name}} supprimée",
     "Flagged events lost before counting": "Signalements perdus avant comptage",
-    "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.": "En mode blocage, une API qui ne répond pas peut ajouter jusqu'à {{ms}} ms à chaque requête vérifiée : (nouvelles tentatives + 1) × délai, plus de courtes attentes entre les tentatives. La requête est ensuite autorisée."
+    "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.": "En mode blocage, une API qui ne répond pas peut ajouter jusqu'à {{ms}} ms à chaque requête vérifiée : (nouvelles tentatives + 1) × délai, plus de courtes attentes entre les tentatives. La requête est ensuite autorisée.",
+    "Keywords flag at once; other inputs go to the API": "Les mots-clés signalent aussitôt ; les autres entrées vont à l'API",
+    "Only inputs that match a list are reviewed by the API": "Seules les entrées correspondant à une liste sont vérifiées par l'API",
+    "Keywords only: a match is flagged (blocked in block mode, recorded in observe mode) and nothing else is checked. Keywords then the API: a match is flagged the same way without an API call, and every other input goes to the API as usual. Gated: only inputs that match a list are reviewed by the API, which decides; all other inputs are not checked.": "Mots-clés seuls : une correspondance est signalée (bloquée en mode blocage, enregistrée en mode observation) et rien d'autre n'est vérifié. Mots-clés puis API : une correspondance est signalée de même sans appel API, et toutes les autres entrées vont à l'API comme d'habitude. Filtré : seules les entrées correspondant à une liste sont vérifiées par l'API, qui décide ; les autres ne sont pas vérifiées."
   }
 }

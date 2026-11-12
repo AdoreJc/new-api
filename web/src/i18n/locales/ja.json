@@ -7907,7 +7907,6 @@
     "Keyword lists": "キーワードリスト",
     "Keyword mode": "キーワードモード",
     "Keywords": "キーワード",
-    "Keywords first, then the API reviews each match": "まずキーワード照合し、一致したものを API が再確認",
     "Keywords only (no API call)": "キーワードのみ（API を呼ばない）",
     "List name": "リスト名",
     "Lists in use": "使用するリスト",
@@ -7919,7 +7918,6 @@
     "Remembered input": "記憶済みの入力",
     "Saved keyword list {{name}} with {{count}} keywords": "キーワードリスト {{name}} を保存しました（{{count}} 件）",
     "Select at least one keyword list for the keyword mode": "キーワードモードではリストを 1 つ以上選択してください",
-    "With keywords only, a match is flagged (and blocked in block mode). With keywords then the API, only inputs that match are sent to the API, which decides.": "キーワードのみ：一致した入力を検出として扱います（ブロックモードではブロック）。キーワードの後に API：一致した入力のみ API に送り、API が判定します。",
     "{{count}} keywords": "{{count}} 件のキーワード",
     "Content moderation keyword mode is invalid": "コンテンツモデレーションのキーワードモードが無効です",
     "Keyword list names may use letters, digits, dot, dash and underscore, up to 64 characters": "リスト名には英字、数字、ドット、ハイフン、アンダースコアを 64 文字まで使用できます",
@@ -7929,6 +7927,9 @@
     "Saved content moderation keyword list {{name}} ({{count}} keywords)": "コンテンツモデレーションのキーワードリスト {{name}} を保存しました（{{count}} 件）",
     "Deleted content moderation keyword list {{name}}": "コンテンツモデレーションのキーワードリスト {{name}} を削除しました",
     "Flagged events lost before counting": "カウント前に失われた検出イベント",
-    "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.": "ブロックモードでは、API が応答しない場合、チェック対象の各リクエストに最大 {{ms}} ms 追加されます：(再試行回数 + 1) × タイムアウト＋再試行間の短い待機。その後リクエストは許可されます。"
+    "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.": "ブロックモードでは、API が応答しない場合、チェック対象の各リクエストに最大 {{ms}} ms 追加されます：(再試行回数 + 1) × タイムアウト＋再試行間の短い待機。その後リクエストは許可されます。",
+    "Keywords flag at once; other inputs go to the API": "キーワード一致は即時判定、その他は API へ",
+    "Only inputs that match a list are reviewed by the API": "リストに一致した入力だけを API が確認",
+    "Keywords only: a match is flagged (blocked in block mode, recorded in observe mode) and nothing else is checked. Keywords then the API: a match is flagged the same way without an API call, and every other input goes to the API as usual. Gated: only inputs that match a list are reviewed by the API, which decides; all other inputs are not checked.": "キーワードのみ：一致した入力を検出として扱い（ブロックモードではブロック、監視モードでは記録のみ）、それ以外はチェックしません。キーワード＋API：一致は同様に API を呼ばずに判定し、その他の入力は通常どおり API に送ります。ゲート：リストに一致した入力だけをモデルが確認して判定し、その他はチェックしません。"
   }
 }

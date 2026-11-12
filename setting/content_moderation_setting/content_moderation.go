@@ -30,6 +30,7 @@ const (
 	KeywordModeAPIOnly       = "api_only"
 	KeywordModeKeywordOnly   = "keyword_only"
 	KeywordModeKeywordAndAPI = "keyword_and_api"
+	KeywordModeKeywordGated  = "keyword_gated_api"
 
 	// DefaultKeywordList names the built-in list: the global sensitive words
 	// (SensitiveWords option), read in place and never copied.
@@ -150,10 +151,14 @@ type Config struct {
 	AutoDisableEnabled   bool `json:"auto_disable_enabled"`
 	DisableThreshold     int  `json:"disable_threshold"`
 	ViolationWindowHours int  `json:"violation_window_hours"`
-	// KeywordMode: api_only sends inputs to the engine only; keyword_only
-	// flags inputs that contain a keyword of KeywordLists without any engine
-	// call; keyword_and_api sends only inputs that contain a keyword to the
-	// engine, which makes the decision.
+	// KeywordMode, for the keywords of KeywordLists:
+	//   - api_only: no keyword check; inputs go to the engine.
+	//   - keyword_only: an input with a keyword is flagged without an engine
+	//     call; other inputs are not checked.
+	//   - keyword_and_api: an input with a keyword is flagged without an
+	//     engine call; other inputs go to the engine as in api_only.
+	//   - keyword_gated_api: only inputs with a keyword go to the engine,
+	//     which decides; other inputs are not checked.
 	KeywordMode  string   `json:"keyword_mode"`
 	KeywordLists []string `json:"keyword_lists"`
 	// AllowlistUserIDs are only recorded: never blocked, mailed or disabled.
@@ -408,7 +413,7 @@ func (c *Config) Normalize() error {
 	if c.KeywordMode == "" {
 		c.KeywordMode = KeywordModeAPIOnly
 	}
-	if c.KeywordMode != KeywordModeAPIOnly && c.KeywordMode != KeywordModeKeywordOnly && c.KeywordMode != KeywordModeKeywordAndAPI {
+	if !slices.Contains([]string{KeywordModeAPIOnly, KeywordModeKeywordOnly, KeywordModeKeywordAndAPI, KeywordModeKeywordGated}, c.KeywordMode) {
 		return ErrInvalidKeywordMode
 	}
 	lists := make([]string, 0, len(c.KeywordLists))

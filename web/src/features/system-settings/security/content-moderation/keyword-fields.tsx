@@ -69,7 +69,11 @@ const KEYWORD_MODES = [
   { value: 'keyword_only', label: 'Keywords only (no API call)' },
   {
     value: 'keyword_and_api',
-    label: 'Keywords first, then the API reviews each match',
+    label: 'Keywords flag at once; other inputs go to the API',
+  },
+  {
+    value: 'keyword_gated_api',
+    label: 'Only inputs that match a list are reviewed by the API',
   },
 ] as const
 
@@ -168,7 +172,7 @@ export function ContentModerationKeywordFields(props: {
             </Select>
             <FormDescription>
               {t(
-                'With keywords only, a match is flagged (and blocked in block mode). With keywords then the API, only inputs that match are sent to the API, which decides.'
+                'Keywords only: a match is flagged (blocked in block mode, recorded in observe mode) and nothing else is checked. Keywords then the API: a match is flagged the same way without an API call, and every other input goes to the API as usual. Gated: only inputs that match a list are reviewed by the API, which decides; all other inputs are not checked.'
               )}
             </FormDescription>
           </FormItem>

@@ -93,6 +93,15 @@ describe('content moderation settings form', () => {
     ['a threshold above 1', { thresholds: { hate: 1.5 } }],
     ['more than 3 days for other records', { non_hit_retention_days: 4 }],
     [
+      'the gated keyword mode without any API key',
+      {
+        mode: 'pre_block',
+        stored_keys: [],
+        keyword_mode: 'keyword_gated_api',
+        keyword_lists: ['default'],
+      },
+    ],
+    [
       'a keyword mode without any list',
       { keyword_mode: 'keyword_and_api', keyword_lists: [] },
     ],

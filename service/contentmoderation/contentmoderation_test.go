@@ -704,11 +704,67 @@ func TestKeywordModes(t *testing.T) {
 		assert.NotContains(t, strings.ToLower(string(encoded)), "buynow")
 	})
 
-	t.Run("keyword_and_api sends only keyword hits to the engine, which decides", func(t *testing.T) {
-		config := moderationConfig(content_moderation_setting.ModePreBlock, server.URL)
+	t.Run("keyword_and_api blocks hits without the engine and sends the rest as api_only", func(t *testing.T) {
+		harm := newModerationServer(t, okStatus, scoreBy("harm"))
+		config := moderationConfig(content_moderation_setting.ModePreBlock, harm.URL)
 		config.KeywordMode, config.KeywordLists = content_moderation_setting.KeywordModeKeywordAndAPI, []string{"spam"}
-		config.SampleRate = 0
+		config.HashBlocklistEnabled = true
 		useConfig(t, config, []string{"k1"})
+		require.NoError(t, model.DB.Where("1 = 1").Delete(&model.ContentModerationFlaggedHash{}).Error)
+		s := newService()
+		require.NoError(t, s.reloadKeywords(false))
+
+		c, _ := relayContext(chatBody("buynow please"))
+		require.NotNil(t, s.checkRelay(c, chatInfo(8)), "a keyword hit is blocked")
+		assert.Zero(t, harm.calls.Load(), "without an engine call")
+		c, _ = relayContext(chatBody("plain question"))
+		assert.Nil(t, s.checkRelay(c, chatInfo(8)))
+		assert.Equal(t, int64(1), harm.calls.Load(), "other inputs go to the engine")
+		c, _ = relayContext(chatBody("harm here"))
+		require.NotNil(t, s.checkRelay(c, chatInfo(8)), "the engine still decides the rest")
+		assert.Equal(t, int64(2), harm.calls.Load())
+		drainRecords(s)
+		c, _ = relayContext(chatBody("harm here"))
+		require.NotNil(t, s.checkRelay(c, chatInfo(8)))
+		assert.Equal(t, int64(2), harm.calls.Load(), "the hash blocklist is checked before the engine")
+		drainRecords(s)
+
+		hashes, err := model.ListContentModerationFlaggedHashes()
+		require.NoError(t, err)
+		assert.Len(t, hashes, 1, "only the engine hit is remembered, not the keyword hit")
+
+		sampledOut := config
+		sampledOut.SampleRate = 0
+		useConfig(t, sampledOut, []string{"k1"})
+		c, _ = relayContext(chatBody("another plain question"))
+		assert.Nil(t, s.checkRelay(c, chatInfo(8)))
+		assert.Equal(t, int64(2), harm.calls.Load(), "inputs without a keyword follow the sample rate")
+	})
+
+	t.Run("observe mode records keyword hits without blocking", func(t *testing.T) {
+		config := moderationConfig(content_moderation_setting.ModeObserve, server.URL)
+		config.KeywordMode, config.KeywordLists = content_moderation_setting.KeywordModeKeywordAndAPI, []string{"spam"}
+		useConfig(t, config, []string{"k1"})
+		require.NoError(t, model.DB.Where("1 = 1").Delete(&model.ContentModerationEvent{}).Error)
+		s := newService()
+		require.NoError(t, s.reloadKeywords(false))
+		c, _ := relayContext(chatBody("buynow please"))
+		assert.Nil(t, s.checkRelay(c, chatInfo(8)))
+		drainRecords(s)
+		events, _, err := model.ListContentModerationEvents(model.ContentModerationEventFilter{}, 0, 10)
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		assert.Equal(t, model.ContentModerationActionAllow, events[0].Action)
+		assert.Equal(t, "spam", events[0].KeywordList)
+	})
+
+	t.Run("keyword_gated_api sends only keyword hits to the engine, which decides", func(t *testing.T) {
+		config := moderationConfig(content_moderation_setting.ModePreBlock, server.URL)
+		config.KeywordMode, config.KeywordLists = content_moderation_setting.KeywordModeKeywordGated, []string{"spam"}
+		config.SampleRate, config.HashBlocklistEnabled = 0, true
+		useConfig(t, config, []string{"k1"})
+		require.NoError(t, model.DB.Where("1 = 1").Delete(&model.ContentModerationEvent{}).Error)
+		require.NoError(t, model.DB.Where("1 = 1").Delete(&model.ContentModerationFlaggedHash{}).Error)
 		s := newService()
 		require.NoError(t, s.reloadKeywords(false))
 		server.calls.Store(0)
@@ -723,6 +779,9 @@ func TestKeywordModes(t *testing.T) {
 		assert.Nil(t, s.checkRelay(c, chatInfo(8)))
 		assert.Equal(t, int64(2), server.calls.Load(), "inputs without a keyword skip the engine")
 		drainRecords(s)
+		c, _ = relayContext(chatBody("attack now"))
+		require.NotNil(t, s.checkRelay(c, chatInfo(8)))
+		assert.Equal(t, int64(2), server.calls.Load(), "a hit already flagged is answered from the hash blocklist")
 		events, _, err := model.ListContentModerationEvents(model.ContentModerationEventFilter{Action: model.ContentModerationActionBlock}, 0, 10)
 		require.NoError(t, err)
 		require.Len(t, events, 1)
@@ -843,13 +902,18 @@ func TestKeywordsSeeTextNextToReminders(t *testing.T) {
 		"separate": {"<system-reminder>context</system-reminder>", word},
 		"inside":   {"<system-reminder>" + word + "</system-reminder>"},
 	}
-	modes := []string{content_moderation_setting.KeywordModeKeywordOnly, content_moderation_setting.KeywordModeAPIOnly, content_moderation_setting.KeywordModeKeywordAndAPI}
+	modes := []string{content_moderation_setting.KeywordModeKeywordOnly, content_moderation_setting.KeywordModeAPIOnly,
+		content_moderation_setting.KeywordModeKeywordAndAPI, content_moderation_setting.KeywordModeKeywordGated}
 	for _, protocol := range []string{ProtocolClaude, ProtocolChat, ProtocolResponses, ProtocolGemini, ProtocolImages} {
 		for name, texts := range cases {
 			body := reminderBody(t, protocol, texts)
-			wantSemantic := ""
-			if name == "plain" || (name == "separate" && protocol != ProtocolImages) {
-				wantSemantic = word
+			// Reminder blocks are removed and the text around them kept; an
+			// image prompt is the user's own text and is not filtered.
+			wantSemantic := word
+			if protocol == ProtocolImages {
+				wantSemantic = joinParts(texts)
+			} else if name == "inside" {
+				wantSemantic = ""
 			}
 			require.Equal(t, wantSemantic, ExtractInput(protocol, body).Text, protocol+"/"+name)
 			require.Contains(t, ExtractKeywordText(protocol, body), word, protocol+"/"+name)
@@ -873,16 +937,23 @@ func TestKeywordsSeeTextNextToReminders(t *testing.T) {
 					c, _ := relayContext(string(body))
 					apiErr := s.checkRelay(c, reminderInfo(protocol))
 					drainRecords(s)
+					// Hits are decided without the engine in keyword_only and
+					// keyword_and_api; api_only and keyword_gated_api send the
+					// reminder-free text when there is any.
 					wantCalls := int64(0)
-					if wantSemantic != "" && mode != content_moderation_setting.KeywordModeKeywordOnly {
+					if wantSemantic != "" && (mode == content_moderation_setting.KeywordModeAPIOnly || mode == content_moderation_setting.KeywordModeKeywordGated) {
 						wantCalls = 1
 					}
 					assert.Equal(t, wantCalls, server.calls.Load())
 					if wantCalls == 1 {
-						assert.Contains(t, server.inputs[0], `"input":"`+wantSemantic+`"`, "the engine gets the reminder-free text")
+						var payload struct {
+							Input string `json:"input"`
+						}
+						require.NoError(t, common.UnmarshalJsonStr(server.inputs[0], &payload))
+						assert.Equal(t, wantSemantic, payload.Input, "the engine gets the reminder-free text")
 					}
 					switch mode {
-					case content_moderation_setting.KeywordModeKeywordOnly:
+					case content_moderation_setting.KeywordModeKeywordOnly, content_moderation_setting.KeywordModeKeywordAndAPI:
 						require.NotNil(t, apiErr)
 						events, _, err := model.ListContentModerationEvents(model.ContentModerationEventFilter{}, 0, 10)
 						require.NoError(t, err)
@@ -944,9 +1015,11 @@ func TestMultipartImageEditPrompt(t *testing.T) {
 	info.RequestURLPath = "/v1/images/edits"
 
 	body, contentType := form(16, "a calm lake", "an attack scene")
-	assert.Equal(t, []string{"a calm lake", "an attack scene"}, MultipartPrompts(contentType, bytes.NewReader(body.Bytes())),
-		"every prompt field the upstream receives is read")
-	assert.Empty(t, MultipartPrompts("application/json", bytes.NewReader(body.Bytes())))
+	prompts, tooLarge := MultipartPrompts(contentType, bytes.NewReader(body.Bytes()))
+	assert.Equal(t, []string{"a calm lake", "an attack scene"}, prompts, "every prompt field the upstream receives is read")
+	assert.False(t, tooLarge)
+	prompts, _ = MultipartPrompts("application/json", bytes.NewReader(body.Bytes()))
+	assert.Empty(t, prompts)
 	c, _ := relayContext(body.String())
 	c.Request.Header.Set("Content-Type", contentType)
 	require.NotNil(t, s.checkRelay(c, info), "a flagged second prompt field is blocked")
@@ -964,6 +1037,18 @@ func TestMultipartImageEditPrompt(t *testing.T) {
 	c.Request.Header.Set("Content-Type", contentType)
 	require.NotNil(t, s.checkRelay(c, info), "a large image does not hide the prompt")
 	assert.Zero(t, s.metrics.tooLarge.Load())
+
+	// Prompt text over the limit is handled like an oversized JSON body.
+	half := strings.Repeat("x", maxPromptFieldBytes/2)
+	body, contentType = form(16, half, half, "an attack scene")
+	_, tooLarge = MultipartPrompts(contentType, bytes.NewReader(body.Bytes()))
+	assert.True(t, tooLarge)
+	calls := server.calls.Load()
+	c, _ = relayContext(body.String())
+	c.Request.Header.Set("Content-Type", contentType)
+	assert.Nil(t, s.checkRelay(c, info))
+	assert.Equal(t, int64(1), s.metrics.tooLarge.Load(), "an oversized prompt is counted as too large")
+	assert.Equal(t, calls, server.calls.Load())
 }
 
 func TestEngineNeverFollowsRedirects(t *testing.T) {
@@ -1038,15 +1123,15 @@ func TestKeywordSearchTreatsWildcardsLiterally(t *testing.T) {
 
 func TestKeywordExcerptSkipsLeadingReminders(t *testing.T) {
 	longReminder := "<system-reminder>" + strings.Repeat("context ", 200) + "</system-reminder>"
-	tests := []struct{ name, semantic, keywordText, want string }{
-		{"user words win", "buy now", longReminder + " buy now", "buy now"},
-		{"reminder before the keyword is dropped", "", longReminder + " cheap pills", "cheap pills"},
-		{"keyword inside the reminder keeps it", "", "<system-reminder>cheap pills</system-reminder>", "<system-reminder>cheap pills</system-reminder>"},
-	}
-	for _, test := range tests {
-		assert.Equal(t, test.want, keywordExcerptSource(test.semantic, test.keywordText), test.name)
-	}
+	body := []byte(chatBody(longReminder + " cheap pills"))
+	excerpt := Excerpt(keywordExcerptSource(ExtractInput(ProtocolChat, body).Text, ExtractKeywordText(ProtocolChat, body)))
+	assert.Equal(t, "cheap pills", excerpt, "a leading reminder does not crowd out the user's words")
+
+	inside := "<system-reminder>cheap pills</system-reminder>"
+	assert.Equal(t, inside, keywordExcerptSource("", inside), "a keyword inside a reminder keeps the reminder text")
+
 	assert.Len(t, []rune(Excerpt(strings.Repeat("token ", 100000))), maxExcerptRunes, "a large input is cut before redaction")
+	assert.Equal(t, "日本", prefixRunes("日本語", 2), "the window is cut at a rune boundary")
 }
 
 func TestHashBlocklistLoadsOnlyWhenUsable(t *testing.T) {

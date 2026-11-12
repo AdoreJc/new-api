@@ -7907,7 +7907,6 @@
     "Keyword lists": "關鍵字詞表",
     "Keyword mode": "關鍵字模式",
     "Keywords": "關鍵字",
-    "Keywords first, then the API reviews each match": "先比對關鍵字，命中後由 API 複核",
     "Keywords only (no API call)": "僅關鍵字（不呼叫 API）",
     "List name": "詞表名稱",
     "Lists in use": "啟用的詞表",
@@ -7919,7 +7918,6 @@
     "Remembered input": "已記住的輸入",
     "Saved keyword list {{name}} with {{count}} keywords": "已儲存關鍵字詞表 {{name}}，共 {{count}} 個關鍵字",
     "Select at least one keyword list for the keyword mode": "關鍵字模式下請至少選擇一個詞表",
-    "With keywords only, a match is flagged (and blocked in block mode). With keywords then the API, only inputs that match are sent to the API, which decides.": "僅關鍵字：命中即判定違規（攔截模式下直接攔截）。先關鍵字後 API：只有命中關鍵字的輸入才傳給 API，由 API 判定。",
     "{{count}} keywords": "{{count}} 個關鍵字",
     "Content moderation keyword mode is invalid": "內容審核關鍵字模式無效",
     "Keyword list names may use letters, digits, dot, dash and underscore, up to 64 characters": "詞表名稱只能使用字母、數字、點、連字號與底線，最多 64 個字元",
@@ -7929,6 +7927,9 @@
     "Saved content moderation keyword list {{name}} ({{count}} keywords)": "儲存了內容審核關鍵字詞表 {{name}}（{{count}} 個關鍵字）",
     "Deleted content moderation keyword list {{name}}": "刪除了內容審核關鍵字詞表 {{name}}",
     "Flagged events lost before counting": "計數前遺失的命中事件",
-    "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.": "攔截模式下，審核 API 無回應時，每個受審請求最多增加 {{ms}} 毫秒：(重試次數 + 1) × 逾時，再加重試之間的短暫等待。之後請求會被放行。"
+    "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.": "攔截模式下，審核 API 無回應時，每個受審請求最多增加 {{ms}} 毫秒：(重試次數 + 1) × 逾時，再加重試之間的短暫等待。之後請求會被放行。",
+    "Keywords flag at once; other inputs go to the API": "關鍵字命中直接判定，其餘輸入送 API",
+    "Only inputs that match a list are reviewed by the API": "只有命中詞表的輸入由 API 複核",
+    "Keywords only: a match is flagged (blocked in block mode, recorded in observe mode) and nothing else is checked. Keywords then the API: a match is flagged the same way without an API call, and every other input goes to the API as usual. Gated: only inputs that match a list are reviewed by the API, which decides; all other inputs are not checked.": "僅關鍵字：命中即判定違規（攔截模式下攔截，觀察模式下只記錄），其餘輸入不審。關鍵字 + API：命中同樣直接判定、不呼叫 API，其餘輸入照常送 API。門控：只有命中詞表的輸入會被模型複核並由模型判定，其餘不審。"
   }
 }

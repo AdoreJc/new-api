@@ -7907,7 +7907,6 @@
     "Keyword lists": "Danh sách từ khóa",
     "Keyword mode": "Chế độ từ khóa",
     "Keywords": "Từ khóa",
-    "Keywords first, then the API reviews each match": "Từ khóa trước, sau đó API xét lại từng kết quả khớp",
     "Keywords only (no API call)": "Chỉ từ khóa (không gọi API)",
     "List name": "Tên danh sách",
     "Lists in use": "Danh sách đang dùng",
@@ -7919,7 +7918,6 @@
     "Remembered input": "Đầu vào đã ghi nhớ",
     "Saved keyword list {{name}} with {{count}} keywords": "Đã lưu danh sách từ khóa {{name}} với {{count}} từ khóa",
     "Select at least one keyword list for the keyword mode": "Hãy chọn ít nhất một danh sách từ khóa cho chế độ từ khóa",
-    "With keywords only, a match is flagged (and blocked in block mode). With keywords then the API, only inputs that match are sent to the API, which decides.": "Chỉ từ khóa: đầu vào khớp bị gắn cờ (và bị chặn ở chế độ chặn). Từ khóa rồi API: chỉ đầu vào khớp mới được gửi tới API để quyết định.",
     "{{count}} keywords": "{{count}} từ khóa",
     "Content moderation keyword mode is invalid": "Chế độ từ khóa kiểm duyệt nội dung không hợp lệ",
     "Keyword list names may use letters, digits, dot, dash and underscore, up to 64 characters": "Tên danh sách chỉ dùng chữ, số, dấu chấm, gạch ngang và gạch dưới, tối đa 64 ký tự",
@@ -7929,6 +7927,9 @@
     "Saved content moderation keyword list {{name}} ({{count}} keywords)": "Đã lưu danh sách từ khóa kiểm duyệt {{name}} ({{count}} từ khóa)",
     "Deleted content moderation keyword list {{name}}": "Đã xóa danh sách từ khóa kiểm duyệt {{name}}",
     "Flagged events lost before counting": "Sự kiện bị gắn cờ mất trước khi đếm",
-    "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.": "Ở chế độ chặn, API không phản hồi có thể làm mỗi yêu cầu được kiểm tra chậm thêm tối đa {{ms}} ms: (số lần thử lại + 1) × thời gian chờ, cộng các khoảng chờ ngắn giữa các lần thử. Sau đó yêu cầu được cho qua."
+    "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.": "Ở chế độ chặn, API không phản hồi có thể làm mỗi yêu cầu được kiểm tra chậm thêm tối đa {{ms}} ms: (số lần thử lại + 1) × thời gian chờ, cộng các khoảng chờ ngắn giữa các lần thử. Sau đó yêu cầu được cho qua.",
+    "Keywords flag at once; other inputs go to the API": "Từ khóa gắn cờ ngay; đầu vào khác gửi tới API",
+    "Only inputs that match a list are reviewed by the API": "Chỉ đầu vào khớp danh sách mới được API xét duyệt",
+    "Keywords only: a match is flagged (blocked in block mode, recorded in observe mode) and nothing else is checked. Keywords then the API: a match is flagged the same way without an API call, and every other input goes to the API as usual. Gated: only inputs that match a list are reviewed by the API, which decides; all other inputs are not checked.": "Chỉ từ khóa: đầu vào khớp bị gắn cờ (bị chặn ở chế độ chặn, được ghi lại ở chế độ quan sát) và không kiểm tra gì khác. Từ khóa rồi API: đầu vào khớp cũng bị gắn cờ mà không gọi API, mọi đầu vào khác gửi tới API như bình thường. Có điều kiện: chỉ đầu vào khớp danh sách mới được API xét duyệt và quyết định; các đầu vào khác không được kiểm tra."
   }
 }

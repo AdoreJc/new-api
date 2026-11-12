@@ -76,9 +76,7 @@ type collector struct {
 func ExtractInput(protocol string, body []byte) Input {
 	c := collectLatestUserMessage(protocol, body, false)
 	text := joinParts(c.parts)
-	if runes := []rune(text); len(runes) > maxInputRunes {
-		text = string(runes[:maxInputRunes])
-	}
+	text = prefixRunes(text, maxInputRunes)
 	images := make([]string, 0, maxImages)
 	for _, image := range c.images {
 		if len(images) == maxImages {
@@ -111,28 +109,30 @@ func isMultipartForm(contentType string) bool {
 // MultipartPrompts streams a multipart/form-data body and returns the value
 // of every non-file "prompt" field, in order; the upstream receives all of
 // them. File parts are skipped as they are read, so the body size does not
-// matter; prompt text is read up to maxPromptFieldBytes in total.
-func MultipartPrompts(contentType string, body io.Reader) []string {
+// matter. Prompt text over maxPromptFieldBytes in total is not read; tooLarge
+// reports it, and the caller treats the request like an oversized JSON body.
+func MultipartPrompts(contentType string, body io.Reader) (prompts []string, tooLarge bool) {
 	_, params, err := mime.ParseMediaType(contentType)
 	if err != nil || params["boundary"] == "" {
-		return nil
+		return nil, false
 	}
 	reader := multipart.NewReader(body, params["boundary"])
-	var prompts []string
 	remaining := int64(maxPromptFieldBytes)
-	for remaining > 0 {
+	for {
 		part, err := reader.NextPart()
 		if err != nil {
-			break
+			return prompts, false
 		}
 		if part.FormName() != "prompt" || part.FileName() != "" {
 			continue
 		}
-		value, _ := io.ReadAll(io.LimitReader(part, remaining))
+		value, _ := io.ReadAll(io.LimitReader(part, remaining+1))
+		if int64(len(value)) > remaining {
+			return prompts, true
+		}
 		remaining -= int64(len(value))
 		prompts = append(prompts, string(value))
 	}
-	return prompts
 }
 
 func collectLatestUserMessage(protocol string, body []byte, keepReminders bool) collector {
@@ -150,6 +150,9 @@ func collectLatestUserMessage(protocol string, body []byte, keepReminders bool) 
 	case ProtocolGemini:
 		c.lastGeminiContent(gjson.GetBytes(body, "contents"))
 	case ProtocolImages:
+		// An image prompt is the user's own text; it has no reminder blocks
+		// to remove.
+		c.keepReminders = true
 		c.addText(gjson.GetBytes(body, "prompt").String())
 	case ProtocolCompletions:
 		prompt := gjson.GetBytes(body, "prompt")
@@ -167,7 +170,13 @@ func collectLatestUserMessage(protocol string, body []byte, keepReminders bool) 
 
 func (c *collector) addText(text string) {
 	text = strings.TrimSpace(text)
-	if text == "" || (!c.keepReminders && strings.Contains(text, "<system-reminder>")) {
+	if !c.keepReminders && strings.Contains(text, reminderOpen) {
+		// Only the reminder blocks are removed; the user's text around them
+		// stays. A tag without its pair is removed on its own.
+		text = reminderBlock.ReplaceAllString(text, " ")
+		text = strings.TrimSpace(strings.NewReplacer(reminderOpen, " ", reminderClose, " ").Replace(text))
+	}
+	if text == "" {
 		return
 	}
 	c.parts = append(c.parts, text)
@@ -326,20 +335,34 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\b[A-Za-z0-9+/_-]{48,}={0,2}`),
 }
 
+const (
+	reminderOpen  = "<system-reminder>"
+	reminderClose = "</system-reminder>"
+)
+
 var reminderBlock = regexp.MustCompile(`(?s)<system-reminder>.*?</system-reminder>`)
 
 // keywordExcerptSource picks the text an event excerpt is taken from for a
-// keyword hit: the user's own words when there are any, else the keyword
-// text with complete reminder blocks removed, else the keyword text itself
-// (the keyword was inside a reminder).
+// keyword hit: the user's own words (reminder blocks already removed) when
+// there are any, else the keyword text, whose keyword was inside a reminder.
 func keywordExcerptSource(semantic, keywordText string) string {
 	if semantic != "" {
 		return semantic
 	}
-	if stripped := joinParts([]string{reminderBlock.ReplaceAllString(keywordText, " ")}); stripped != "" {
-		return stripped
-	}
 	return keywordText
+}
+
+// prefixRunes returns at most n leading runes of s, finding the byte
+// boundary without converting the whole string.
+func prefixRunes(s string, n int) string {
+	count := 0
+	for index := range s {
+		if count == n {
+			return s[:index]
+		}
+		count++
+	}
+	return s
 }
 
 // Excerpt returns the first characters of the input with URLs, credentials,
@@ -350,14 +373,9 @@ func keywordExcerptSource(semantic, keywordText string) string {
 // the window's edge could reach the excerpt only if redaction shortened the
 // window by most of its length.
 func Excerpt(text string) string {
-	if runes := []rune(text); len(runes) > excerptWindowRunes {
-		text = string(runes[:excerptWindowRunes])
-	}
+	text = prefixRunes(text, excerptWindowRunes)
 	for _, pattern := range secretPatterns {
 		text = pattern.ReplaceAllString(text, "[redacted]")
 	}
-	if runes := []rune(text); len(runes) > maxExcerptRunes {
-		return string(runes[:maxExcerptRunes])
-	}
-	return text
+	return prefixRunes(text, maxExcerptRunes)
 }

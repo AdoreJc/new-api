@@ -53,7 +53,11 @@ export type ContentModerationConfig = {
   auto_disable_enabled: boolean
   disable_threshold: number
   violation_window_hours: number
-  keyword_mode: 'api_only' | 'keyword_only' | 'keyword_and_api'
+  keyword_mode:
+    | 'api_only'
+    | 'keyword_only'
+    | 'keyword_and_api'
+    | 'keyword_gated_api'
   keyword_lists: string[]
   allowlist_user_ids: number[]
   config_version: number

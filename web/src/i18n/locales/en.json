@@ -7907,7 +7907,6 @@
     "Keyword lists": "Keyword lists",
     "Keyword mode": "Keyword mode",
     "Keywords": "Keywords",
-    "Keywords first, then the API reviews each match": "Keywords first, then the API reviews each match",
     "Keywords only (no API call)": "Keywords only (no API call)",
     "List name": "List name",
     "Lists in use": "Lists in use",
@@ -7919,7 +7918,6 @@
     "Remembered input": "Remembered input",
     "Saved keyword list {{name}} with {{count}} keywords": "Saved keyword list {{name}} with {{count}} keywords",
     "Select at least one keyword list for the keyword mode": "Select at least one keyword list for the keyword mode",
-    "With keywords only, a match is flagged (and blocked in block mode). With keywords then the API, only inputs that match are sent to the API, which decides.": "With keywords only, a match is flagged (and blocked in block mode). With keywords then the API, only inputs that match are sent to the API, which decides.",
     "{{count}} keywords": "{{count}} keywords",
     "Content moderation keyword mode is invalid": "Content moderation keyword mode is invalid",
     "Keyword list names may use letters, digits, dot, dash and underscore, up to 64 characters": "Keyword list names may use letters, digits, dot, dash and underscore, up to 64 characters",
@@ -7929,6 +7927,9 @@
     "Saved content moderation keyword list {{name}} ({{count}} keywords)": "Saved content moderation keyword list {{name}} ({{count}} keywords)",
     "Deleted content moderation keyword list {{name}}": "Deleted content moderation keyword list {{name}}",
     "Flagged events lost before counting": "Flagged events lost before counting",
-    "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.": "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed."
+    "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.": "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.",
+    "Keywords flag at once; other inputs go to the API": "Keywords flag at once; other inputs go to the API",
+    "Only inputs that match a list are reviewed by the API": "Only inputs that match a list are reviewed by the API",
+    "Keywords only: a match is flagged (blocked in block mode, recorded in observe mode) and nothing else is checked. Keywords then the API: a match is flagged the same way without an API call, and every other input goes to the API as usual. Gated: only inputs that match a list are reviewed by the API, which decides; all other inputs are not checked.": "Keywords only: a match is flagged (blocked in block mode, recorded in observe mode) and nothing else is checked. Keywords then the API: a match is flagged the same way without an API call, and every other input goes to the API as usual. Gated: only inputs that match a list are reviewed by the API, which decides; all other inputs are not checked."
   }
 }

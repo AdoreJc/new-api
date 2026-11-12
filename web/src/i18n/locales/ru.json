@@ -7907,7 +7907,6 @@
     "Keyword lists": "Списки ключевых слов",
     "Keyword mode": "Режим ключевых слов",
     "Keywords": "Ключевые слова",
-    "Keywords first, then the API reviews each match": "Сначала ключевые слова, затем API перепроверяет каждое совпадение",
     "Keywords only (no API call)": "Только ключевые слова (без вызова API)",
     "List name": "Имя списка",
     "Lists in use": "Используемые списки",
@@ -7919,7 +7918,6 @@
     "Remembered input": "Запомненный ввод",
     "Saved keyword list {{name}} with {{count}} keywords": "Список ключевых слов {{name}} сохранён, слов: {{count}}",
     "Select at least one keyword list for the keyword mode": "Выберите хотя бы один список ключевых слов для этого режима",
-    "With keywords only, a match is flagged (and blocked in block mode). With keywords then the API, only inputs that match are sent to the API, which decides.": "Только ключевые слова: совпадение помечается (и блокируется в режиме блокировки). Ключевые слова, затем API: в API отправляются только совпавшие вводы, решение принимает API.",
     "{{count}} keywords": "Ключевых слов: {{count}}",
     "Content moderation keyword mode is invalid": "Недопустимый режим ключевых слов модерации контента",
     "Keyword list names may use letters, digits, dot, dash and underscore, up to 64 characters": "Имя списка может содержать буквы, цифры, точку, дефис и подчёркивание, не более 64 символов",
@@ -7929,6 +7927,9 @@
     "Saved content moderation keyword list {{name}} ({{count}} keywords)": "Сохранён список ключевых слов модерации {{name}} ({{count}} слов)",
     "Deleted content moderation keyword list {{name}}": "Удалён список ключевых слов модерации {{name}}",
     "Flagged events lost before counting": "Помеченные события, потерянные до подсчёта",
-    "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.": "В режиме блокировки неотвечающий API может добавить до {{ms}} мс к каждому проверяемому запросу: (повторы + 1) × тайм-аут плюс короткие паузы между повторами. После этого запрос пропускается."
+    "In block mode an unresponsive API can add up to {{ms}} ms to each checked request: (retries + 1) × timeout, plus short waits between retries. The request is then allowed.": "В режиме блокировки неотвечающий API может добавить до {{ms}} мс к каждому проверяемому запросу: (повторы + 1) × тайм-аут плюс короткие паузы между повторами. После этого запрос пропускается.",
+    "Keywords flag at once; other inputs go to the API": "Ключевые слова срабатывают сразу; остальное идёт в API",
+    "Only inputs that match a list are reviewed by the API": "API проверяет только вводы, совпавшие со списком",
+    "Keywords only: a match is flagged (blocked in block mode, recorded in observe mode) and nothing else is checked. Keywords then the API: a match is flagged the same way without an API call, and every other input goes to the API as usual. Gated: only inputs that match a list are reviewed by the API, which decides; all other inputs are not checked.": "Только ключевые слова: совпадение помечается (блокируется в режиме блокировки, записывается в режиме наблюдения), остальное не проверяется. Ключевые слова, затем API: совпадение помечается так же без вызова API, все остальные вводы идут в API как обычно. С фильтром: API проверяет только вводы, совпавшие со списком, и принимает решение; остальные не проверяются."
   }
 }

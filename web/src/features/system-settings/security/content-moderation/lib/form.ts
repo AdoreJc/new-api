@@ -81,7 +81,12 @@ export const contentModerationFormSchema = z
     auto_disable_enabled: z.boolean(),
     disable_threshold: numberField(1, 10000),
     violation_window_hours: numberField(1, 8760),
-    keyword_mode: z.enum(['api_only', 'keyword_only', 'keyword_and_api']),
+    keyword_mode: z.enum([
+      'api_only',
+      'keyword_only',
+      'keyword_and_api',
+      'keyword_gated_api',
+    ]),
     keyword_lists: z.array(z.string()),
     allowlist: z.string(),
     stored_keys: z.array(z.string()),
