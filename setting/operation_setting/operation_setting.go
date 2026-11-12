@@ -5,6 +5,10 @@ import "strings"
 var DemoSiteEnabled = false
 var SelfUseModeEnabled = false
 
+// SubscriptionRateLimitHeaderPassthrough lets a request served by a
+// subscription binding return the usage-limit headers of the bound account.
+var SubscriptionRateLimitHeaderPassthrough = true
+
 var AutomaticDisableKeywords = []string{
 	"Your credit balance is too low",
 	"This organization has been disabled.",

@@ -5839,6 +5839,8 @@
     "Selected when creating a token and used as the default billing group for API calls.": "Выбирается при создании токена и используется как группа тарификации по умолчанию для вызовов API.",
     "Selecting a plugin fills its declared models and default base URL.": "Выбор плагина заполняет заявленные модели и базовый URL по умолчанию.",
     "Self-Use Mode": "Режим самоиспользования",
+    "Subscription usage-limit headers": "Заголовки лимитов подписки",
+    "Return the bound account usage-limit headers to users served by their subscription binding": "Возвращать заголовки лимитов использования привязанного аккаунта пользователям, обслуживаемым их привязкой подписки",
     "Send": "Отправить",
     "Send a request": "Отправить запрос",
     "Send chat completions to the OpenAI-compatible /v1/chat/completions instead of the native Ollama /api/chat": "Отправлять chat completions на OpenAI-совместимый /v1/chat/completions вместо нативного /api/chat Ollama",

@@ -30,6 +30,7 @@ const defaultOperationsSettings: OperationsSettings = {
   DefaultCollapseSidebar: false,
   DemoSiteEnabled: false,
   SelfUseModeEnabled: false,
+  SubscriptionRateLimitHeaderPassthrough: true,
   QuotaRemindEnabled: true,
   QuotaRemindThreshold: '',
   EmailProvider: 'smtp',

@@ -55,6 +55,9 @@ func NewStreamScanner(reader io.Reader, maxBytes ...int) *bufio.Scanner {
 	return scanner
 }
 
+// copyCodexSSEHeaders copies the few upstream headers a stream keeps, plus the
+// bound account's usage-limit headers for the user a subscription binding
+// serves.
 func copyCodexSSEHeaders(c *gin.Context, resp *http.Response) {
 	if c == nil || c.Writer == nil || resp == nil {
 		return
@@ -71,6 +74,7 @@ func copyCodexSSEHeaders(c *gin.Context, resp *http.Response) {
 			}
 		}
 	}
+	service.WriteSubscriptionLimitHeaders(c)
 }
 
 // StreamWriteBudget gives the writes of one stream a deadline of
