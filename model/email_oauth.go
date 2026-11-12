@@ -33,6 +33,7 @@ var emailDeliveryOptionKeys = []string{
 	"EmailProvider", "ResendApiKey", "ResendFrom",
 	common.EmailOAuthProviderOption, common.EmailOAuthClientIdOption,
 	common.EmailOAuthClientSecretOption, common.EmailOAuthTenantOption,
+	common.EmailOAuthFromOption,
 }
 
 // emailOAuthAppKeys identify the OAuth client a stored refresh token belongs to.
@@ -42,8 +43,13 @@ var emailOAuthAppKeys = []string{common.EmailOAuthProviderOption, common.EmailOA
 // Inactive drafts are checked when their method is selected.
 func validateEmailDeliveryOption(key, value string) error {
 	switch key {
-	case common.EmailOAuthRefreshTokenOption, common.EmailOAuthEmailOption, common.EmailOAuthSecretConfiguredOption:
+	case common.EmailOAuthRefreshTokenOption, common.EmailOAuthEmailOption, common.EmailOAuthScopesOption,
+		common.EmailOAuthSecretConfiguredOption, common.EmailOAuthSharedSendGrantedOption:
 		return common.NewMessage("This setting is managed by the mailbox authorization flow")
+	case common.EmailOAuthFromOption:
+		if err := common.ValidateEmailOAuthSender(value); err != nil {
+			return err
+		}
 	}
 	if !slices.Contains(emailDeliveryOptionKeys, key) {
 		return nil
@@ -74,10 +80,10 @@ func validateEmailDeliveryOption(key, value string) error {
 	return nil
 }
 
-// SaveEmailOAuthAuthorization writes the refresh token and mailbox together,
-// replacing any previous authorization.
-func SaveEmailOAuthAuthorization(refreshToken, email string) error {
-	if err := storeEmailOAuthAuthorization(refreshToken, email); err != nil {
+// SaveEmailOAuthAuthorization writes the refresh token, mailbox and granted
+// scopes together, replacing any previous authorization.
+func SaveEmailOAuthAuthorization(grant common.EmailOAuthGrant) error {
+	if err := storeEmailOAuthAuthorization(grant); err != nil {
 		return err
 	}
 	common.ResetEmailOAuthTokenCache()
@@ -86,10 +92,14 @@ func SaveEmailOAuthAuthorization(refreshToken, email string) error {
 
 // storeEmailOAuthAuthorization is the serialized part of an authorization
 // write; the token cache reset stays outside the lock.
-func storeEmailOAuthAuthorization(refreshToken, email string) error {
+func storeEmailOAuthAuthorization(grant common.EmailOAuthGrant) error {
 	emailOAuthWriteMutex.Lock()
 	defer emailOAuthWriteMutex.Unlock()
-	values := map[string]string{common.EmailOAuthRefreshTokenOption: refreshToken, common.EmailOAuthEmailOption: email}
+	values := map[string]string{
+		common.EmailOAuthRefreshTokenOption: grant.RefreshToken,
+		common.EmailOAuthEmailOption:        grant.Email,
+		common.EmailOAuthScopesOption:       grant.Scopes,
+	}
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		for key, value := range values {
 			// Assign with a map so an empty value is written too.
@@ -122,7 +132,7 @@ func ClearEmailOAuthAuthorization() error {
 	if provider == "oauth" {
 		return common.NewMessage("Select another email sending method before removing the mailbox authorization")
 	}
-	return SaveEmailOAuthAuthorization("", "")
+	return SaveEmailOAuthAuthorization(common.EmailOAuthGrant{})
 }
 
 // ReplaceEmailOAuthRefreshToken saves a rotated refresh token only while the

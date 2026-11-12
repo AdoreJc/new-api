@@ -45,6 +45,7 @@ import { OAuthSetupGuide } from '../components/oauth-setup-guide'
 import {
   EMAIL_OAUTH_CALLBACK_PATH,
   revokeEmailOAuthAuthorization,
+  sendEmailOAuthTestMessage,
   startEmailOAuthAuthorization,
 } from './email-oauth-api'
 import type { EmailFormValues } from './email-settings-schema'
@@ -67,6 +68,8 @@ type EmailOAuthSettingsProps = {
     | 'EmailOAuthTenant'
     | 'EmailOAuthSecretConfigured'
     | 'EmailOAuthEmail'
+    | 'EmailOAuthFrom'
+    | 'EmailOAuthSharedSendGranted'
   >
 }
 
@@ -76,13 +79,14 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
   const form = useFormContext<EmailFormValues>()
   const { status } = useStatus()
   const [confirmRevoke, setConfirmRevoke] = useState(false)
-  const [oauthProvider, clientId, tenant, secret] = useWatch({
+  const [oauthProvider, clientId, tenant, secret, sender] = useWatch({
     control: form.control,
     name: [
       'EmailOAuthProvider',
       'EmailOAuthClientId',
       'EmailOAuthTenant',
       'EmailOAuthClientSecret',
+      'EmailOAuthFrom',
     ],
   })
 
@@ -99,7 +103,10 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
     oauthProvider !== props.saved.EmailOAuthProvider ||
     clientId.trim() !== props.saved.EmailOAuthClientId.trim() ||
     tenant.trim() !== props.saved.EmailOAuthTenant.trim() ||
-    secret.trim() !== ''
+    secret.trim() !== '' ||
+    // The saved sender address decides whether the shared-mailbox
+    // permission is requested, and the test email uses it.
+    sender.trim() !== props.saved.EmailOAuthFrom.trim()
   const appSaved =
     props.saved.EmailOAuthClientId.trim() !== '' &&
     props.saved.EmailOAuthSecretConfigured
@@ -123,8 +130,29 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: ['system-options'] }),
   })
-  const busy = props.isSaving || authorize.isPending || revoke.isPending
+  const sendTest = useMutation({
+    mutationFn: sendEmailOAuthTestMessage,
+    onSuccess: (response) =>
+      toast.success(
+        t('Test email sent to {{email}}', { email: response.data?.to ?? '' })
+      ),
+    onError: (error) => handleServerError(error),
+  })
+  const busy =
+    props.isSaving ||
+    authorize.isPending ||
+    revoke.isPending ||
+    sendTest.isPending
   const microsoft = oauthProvider === 'microsoft'
+  const savedSender = props.saved.EmailOAuthFrom.trim()
+  // Sending from a shared Microsoft mailbox needs a grant that includes
+  // Mail.Send.Shared; the server refuses instead of using the mailbox.
+  const sharedNeedsReauthorization =
+    microsoft &&
+    authorized &&
+    savedSender !== '' &&
+    savedSender.toLowerCase() !== authorizedEmail.toLowerCase() &&
+    !props.saved.EmailOAuthSharedSendGranted
   const consoleLinks = microsoft
     ? [
         {
@@ -203,13 +231,33 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
       <OAuthSetupGuide
         title={t('Setup guide')}
         description={
-          microsoft
-            ? t(
-                'In Microsoft Entra, register an app, add a Web platform with the redirect URI below, create a client secret under Certificates & secrets, and add the delegated Microsoft Graph permissions Mail.Send, User.Read and offline_access. Copy the IDs below from the app Overview page and the secret Value (not the Secret ID).'
-              )
-            : t(
-                'In Google Cloud Console, enable the Gmail API, then create an OAuth client ID of type Web application with the redirect URI below. On the OAuth consent screen, choose Internal for Google Workspace; with External, add the sending mailbox as a test user or publish the app, because while in Testing other accounts are denied and refresh tokens expire after 7 days.'
-              )
+          microsoft ? (
+            <>
+              <p>
+                {t(
+                  'In Microsoft Entra, register an app, add a Web platform with the redirect URI below, create a client secret under Certificates & secrets, and add the delegated Microsoft Graph permissions Mail.Send, User.Read and offline_access. Copy the IDs below from the app Overview page and the secret Value (not the Secret ID).'
+                )}
+              </p>
+              <p>
+                {t(
+                  'To send from a shared mailbox, give the authorized account Send As permission on it in the Exchange admin center (Mailboxes > the shared mailbox > Delegation), enter it as the sender address below, save, and re-authorize.'
+                )}
+              </p>
+            </>
+          ) : (
+            <>
+              <p>
+                {t(
+                  'In Google Cloud Console, enable the Gmail API, then create an OAuth client ID of type Web application with the redirect URI below. On the OAuth consent screen, choose Internal for Google Workspace; with External, add the sending mailbox as a test user or publish the app, because while in Testing other accounts are denied and refresh tokens expire after 7 days.'
+                )}
+              </p>
+              <p>
+                {t(
+                  'To send from another address, add and verify it in Gmail under Settings > Accounts > Send mail as, then enter it as the sender address below.'
+                )}
+              </p>
+            </>
+          )
         }
       >
         <div className='flex flex-wrap gap-x-4 gap-y-1'>
@@ -296,6 +344,34 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
           )}
         />
       )}
+      <FormField
+        control={form.control}
+        name='EmailOAuthFrom'
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>{t('Sender email address')}</FormLabel>
+            <FormControl>
+              <Input
+                {...field}
+                type='email'
+                autoComplete='off'
+                disabled={busy}
+                placeholder={authorizedEmail || 'name@example.com'}
+              />
+            </FormControl>
+            <FormDescription>
+              {microsoft
+                ? t(
+                    'Optional. Leave blank to send from the authorized mailbox. A shared mailbox needs Send As or Send on Behalf permission for the authorized account and works only with work or school accounts.'
+                  )
+                : t(
+                    'Optional. Leave blank to send from the authorized mailbox. Must be a verified "Send mail as" address of this Gmail account, or the message may bounce.'
+                  )}
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
       <FormItem data-settings-form-span='full'>
         <FormLabel>{t('Redirect URI')}</FormLabel>
         {redirectURI ? (
@@ -334,6 +410,16 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
             <Button
               type='button'
               variant='outline'
+              disabled={busy || appUnsaved}
+              onClick={() => sendTest.mutate()}
+            >
+              {t('Send test email')}
+            </Button>
+          )}
+          {authorized && (
+            <Button
+              type='button'
+              variant='outline'
               disabled={busy}
               onClick={() => setConfirmRevoke(true)}
             >
@@ -341,7 +427,19 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
             </Button>
           )}
         </div>
+        {sharedNeedsReauthorization && (
+          <p className='text-destructive text-sm' role='alert'>
+            {t('Re-authorize the mailbox to send from the shared mailbox')}
+          </p>
+        )}
         <FormDescription>{authorizeHint}</FormDescription>
+        {authorized && (
+          <FormDescription>
+            {t(
+              'The test email is sent from the sender address to the authorized mailbox.'
+            )}
+          </FormDescription>
+        )}
       </FormItem>
       <ConfirmDialog
         open={confirmRevoke}

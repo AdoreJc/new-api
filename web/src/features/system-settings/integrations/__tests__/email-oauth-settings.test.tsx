@@ -39,6 +39,8 @@ const defaults: EmailValues = {
   EmailOAuthSecretConfigured: false,
   EmailOAuthTenant: 'common',
   EmailOAuthEmail: '',
+  EmailOAuthFrom: '',
+  EmailOAuthSharedSendGranted: false,
   ResendApiKey: '',
   ResendKeyConfigured: false,
   ResendFrom: '',
@@ -283,6 +285,85 @@ describe('OAuth mailbox settings', () => {
     })
     expect(window.location.search).toBe('')
     expect(screen.getByRole('radio', { name: 'OAuth mailbox' })).toBeChecked()
+  })
+
+  it('saves a sender address while a mailbox is authorized', async () => {
+    const request = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true } })
+    const user = renderEmail({
+      ...savedApp,
+      EmailProvider: 'oauth',
+      EmailOAuthEmail: 'sender@example.com',
+    })
+    await user.type(
+      screen.getByRole('textbox', { name: 'Sender email address' }),
+      'shared@example.com'
+    )
+    expect(
+      screen.getByRole('button', { name: 'Send test email' })
+    ).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1))
+    expect(request).toHaveBeenCalledWith('/api/option/', {
+      key: 'EmailOAuthFrom',
+      value: 'shared@example.com',
+    })
+  })
+
+  it('rejects a sender field holding more than one address', async () => {
+    const request = vi.spyOn(api, 'put')
+    const user = renderEmail({ ...savedApp, EmailProvider: 'oauth' })
+    await user.type(
+      screen.getByRole('textbox', { name: 'Sender email address' }),
+      'a@example.com, b@example.com'
+    )
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    expect(
+      await screen.findByText('Enter a valid email or leave blank')
+    ).toBeVisible()
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [false, true],
+    [true, false],
+  ])(
+    'asks to re-authorize a Microsoft shared mailbox when the grant lacks it (granted %s)',
+    (granted, warned) => {
+      renderEmail({
+        ...savedApp,
+        EmailProvider: 'oauth',
+        EmailOAuthProvider: 'microsoft',
+        EmailOAuthEmail: 'sender@contoso.example',
+        EmailOAuthFrom: 'shared@contoso.example',
+        EmailOAuthSharedSendGranted: granted,
+      })
+      const warning = screen.queryByText(
+        'Re-authorize the mailbox to send from the shared mailbox'
+      )
+      if (warned) expect(warning).toBeVisible()
+      else expect(warning).not.toBeInTheDocument()
+    }
+  )
+
+  it('sends a test email from the saved sender address', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      data: {
+        success: true,
+        data: { to: 'sender@example.com', from: 'shared@example.com' },
+      },
+    })
+    const user = renderEmail({
+      ...savedApp,
+      EmailProvider: 'oauth',
+      EmailOAuthEmail: 'sender@example.com',
+      EmailOAuthFrom: 'shared@example.com',
+    })
+    await user.click(screen.getByRole('button', { name: 'Send test email' }))
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/api/option/email_oauth/test')
+    )
   })
 
   it('removes the authorization after confirmation', async () => {

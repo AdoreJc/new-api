@@ -29,6 +29,9 @@ export const createEmailSchema = (t: (key: string) => string) =>
       EmailOAuthTenant: z.string(),
       // Read-only: set by the authorization flow.
       EmailOAuthEmail: z.string(),
+      EmailOAuthSharedSendGranted: z.boolean(),
+      // Optional address to send from instead of the authorized mailbox.
+      EmailOAuthFrom: z.string(),
       ResendApiKey: z.string(),
       ResendKeyConfigured: z.boolean(),
       ResendFrom: z.string(),
@@ -79,6 +82,17 @@ export const createEmailSchema = (t: (key: string) => string) =>
             code: 'custom',
             path: ['EmailOAuthTenant'],
             message: t('Enter a valid tenant ID or domain'),
+          })
+        }
+        const sender = values.EmailOAuthFrom.trim()
+        if (
+          sender &&
+          !/^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+$/.test(sender)
+        ) {
+          context.addIssue({
+            code: 'custom',
+            path: ['EmailOAuthFrom'],
+            message: t('Enter a valid email or leave blank'),
           })
         }
         return

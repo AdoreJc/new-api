@@ -44,6 +44,14 @@ export async function completeEmailOAuthAuthorization(request: {
   return requireServerSuccess(res.data)
 }
 
+// Sends a test message from the sender address to the authorized mailbox.
+export async function sendEmailOAuthTestMessage() {
+  const res = await api.post<BackendBody<{ to: string; from: string }>>(
+    '/api/option/email_oauth/test'
+  )
+  return requireServerSuccess(res.data)
+}
+
 export async function revokeEmailOAuthAuthorization() {
   const res = await api.delete<BackendBody<null>>(
     '/api/option/email_oauth/authorization'

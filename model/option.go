@@ -75,6 +75,8 @@ func InitOptionMap() {
 	common.OptionMap[common.EmailOAuthTenantOption] = common.EmailOAuthDefaultTenant
 	common.OptionMap[common.EmailOAuthRefreshTokenOption] = ""
 	common.OptionMap[common.EmailOAuthEmailOption] = ""
+	common.OptionMap[common.EmailOAuthFromOption] = ""
+	common.OptionMap[common.EmailOAuthScopesOption] = ""
 	common.OptionMap["SMTPFrom"] = ""
 	common.OptionMap["SMTPPort"] = strconv.Itoa(common.SMTPPort)
 	common.OptionMap["SMTPAccount"] = ""

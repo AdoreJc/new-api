@@ -87,6 +87,7 @@ func TestEmailOAuthAuthorizationStoresMailboxOnce(t *testing.T) {
 			for _, scope := range test.scopes {
 				assert.Contains(t, strings.Fields(authorization.Get("scope")), scope)
 			}
+			assert.NotContains(t, authorization.Get("scope"), "Mail.Send.Shared", "no sender address, no shared-mailbox scope")
 			if test.provider == common.EmailOAuthProviderGoogle {
 				assert.Equal(t, "offline", authorization.Get("access_type"))
 			}
@@ -226,7 +227,7 @@ func TestEmailOAuthOptionRulesKeepDeliveryWorking(t *testing.T) {
 	assert.Contains(t, update(common.EmailOAuthProviderOption, "yahoo"), `"message_key":"The OAuth app settings are incomplete or invalid"`)
 	assert.Equal(t, "smtp", common.OptionMap["EmailProvider"])
 
-	require.NoError(t, model.SaveEmailOAuthAuthorization("refresh-0", "sender@gmail.example"))
+	require.NoError(t, model.SaveEmailOAuthAuthorization(common.EmailOAuthGrant{RefreshToken: "refresh-0", Email: "sender@gmail.example"}))
 	// A rotation is saved only over the token it replaces.
 	assert.ErrorIs(t, model.ReplaceEmailOAuthRefreshToken("stale", "refresh-x"), common.ErrEmailOAuthAuthorizationChanged)
 	require.NoError(t, model.ReplaceEmailOAuthRefreshToken("refresh-0", "refresh-1"))
@@ -243,4 +244,111 @@ func TestEmailOAuthOptionRulesKeepDeliveryWorking(t *testing.T) {
 	assert.Empty(t, storedOption(t, common.EmailOAuthRefreshTokenOption))
 	assert.Empty(t, common.OptionMap[common.EmailOAuthEmailOption])
 	assert.Contains(t, update(common.EmailOAuthClientIdOption, "other-client"), `"success":true`)
+}
+
+func TestEmailOAuthSharedMailboxAuthorizationRecordsGrantedScopes(t *testing.T) {
+	const shared = "https://graph.microsoft.com/Mail.Send.Shared"
+	for name, response := range map[string]struct {
+		body    string
+		granted string
+	}{
+		"provider lists the scopes": {
+			`{"access_token":"access-1","expires_in":3600,"refresh_token":"refresh-granted","scope":"https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Send.Shared https://graph.microsoft.com/User.Read"}`,
+			"https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Send.Shared https://graph.microsoft.com/User.Read",
+		},
+		"provider omits the scopes": {
+			`{"access_token":"access-1","expires_in":3600,"refresh_token":"refresh-granted"}`,
+			"offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read " + shared,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			identity, provider := setupEmailOAuthAuthorization(t, common.EmailOAuthProviderMicrosoft)
+			common.OptionMap[common.EmailOAuthFromOption] = "shared@contoso.example"
+			provider.issue = func(url.Values) (int, string) { return http.StatusOK, response.body }
+
+			authorization := startEmailOAuth(t, identity)
+			assert.Contains(t, strings.Fields(authorization.Get("scope")), shared)
+			callback := completeEmailOAuth(identity, `{"state":"`+authorization.Get("state")+`","code":"auth-code"}`)
+			require.Contains(t, callback.Body.String(), `"success":true`, callback.Body.String())
+			require.Len(t, provider.tokenForms, 1)
+			assert.Contains(t, strings.Fields(provider.tokenForms[0].Get("scope")), shared, "the code is redeemed with the requested scope")
+			assert.Equal(t, response.granted, storedOption(t, common.EmailOAuthScopesOption))
+
+			options := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(options)
+			context.Request = httptest.NewRequest(http.MethodGet, "/api/option/", nil)
+			GetOptions(context)
+			assert.Contains(t, options.Body.String(), `"key":"EmailOAuthSharedSendGranted","value":"true"`)
+			assert.NotContains(t, options.Body.String(), `"key":"EmailOAuthScopes"`)
+		})
+	}
+}
+
+func TestEmailOAuthSenderOptionAcceptsOneBareAddress(t *testing.T) {
+	identity, _ := setupEmailOAuthAuthorization(t, common.EmailOAuthProviderMicrosoft)
+	update := func(key string, value any) string {
+		body, err := common.Marshal(OptionUpdateRequest{Key: key, Value: value})
+		require.NoError(t, err)
+		return securityEnrollmentRequest(http.MethodPut, "/api/option/", string(body), "", identity, UpdateOption).Body.String()
+	}
+	for _, invalid := range []string{
+		"not-an-address",
+		"a@example.com, b@example.com",
+		"Shared <shared@contoso.example>",
+		"shared@contoso.example\r\nBcc: attacker@example.com",
+	} {
+		assert.Contains(t, update(common.EmailOAuthFromOption, invalid),
+			`"message_key":"Enter a single sender email address, or leave it blank to send from the authorized mailbox"`, invalid)
+	}
+	assert.Empty(t, common.OptionMap[common.EmailOAuthFromOption])
+	assert.Contains(t, update(common.EmailOAuthFromOption, "shared@contoso.example"), `"success":true`)
+	assert.Contains(t, update(common.EmailOAuthFromOption, ""), `"success":true`)
+	for _, key := range []string{common.EmailOAuthScopesOption, common.EmailOAuthSharedSendGrantedOption} {
+		assert.Contains(t, update(key, "https://graph.microsoft.com/Mail.Send.Shared"), `"message_key":"This setting is managed by the mailbox authorization flow"`, key)
+	}
+}
+
+func TestEmailOAuthTestMessageSendsFromTheSenderAddress(t *testing.T) {
+	identity, provider := setupEmailOAuthAuthorization(t, common.EmailOAuthProviderMicrosoft)
+	sendTest := func() string {
+		return securityEnrollmentRequest(http.MethodPost, "/api/option/email_oauth/test", "", "", identity, SendEmailOAuthTestMessage).Body.String()
+	}
+	assert.Contains(t, sendTest(), `"message_key":"The sender mailbox is not authorized"`)
+
+	require.NoError(t, model.SaveEmailOAuthAuthorization(common.EmailOAuthGrant{
+		RefreshToken: "refresh-1", Email: "sender@contoso.example", Scopes: "Mail.Send User.Read",
+	}))
+	common.OptionMap[common.EmailOAuthFromOption] = "shared@contoso.example"
+	provider.issue = func(url.Values) (int, string) {
+		return http.StatusOK, `{"access_token":"access-1","expires_in":3600}`
+	}
+	assert.Contains(t, sendTest(), `"message_key":"Re-authorize the mailbox to send from the shared mailbox"`)
+	_, sends := provider.counts()
+	assert.Zero(t, sends)
+
+	require.NoError(t, model.SaveEmailOAuthAuthorization(common.EmailOAuthGrant{
+		RefreshToken: "refresh-2", Email: "sender@contoso.example", Scopes: "Mail.Send Mail.Send.Shared User.Read",
+	}))
+	response := sendTest()
+	require.Contains(t, response, `"success":true`, response)
+	assert.Contains(t, response, `"from":"shared@contoso.example"`)
+	require.Len(t, provider.sends, 1)
+	var body struct {
+		Message struct {
+			From struct {
+				EmailAddress struct {
+					Address string `json:"address"`
+				} `json:"emailAddress"`
+			} `json:"from"`
+			ToRecipients []struct {
+				EmailAddress struct {
+					Address string `json:"address"`
+				} `json:"emailAddress"`
+			} `json:"toRecipients"`
+		} `json:"message"`
+	}
+	require.NoError(t, common.Unmarshal(provider.sends[0].body, &body))
+	assert.Equal(t, "shared@contoso.example", body.Message.From.EmailAddress.Address)
+	require.Len(t, body.Message.ToRecipients, 1)
+	assert.Equal(t, "sender@contoso.example", body.Message.ToRecipients[0].EmailAddress.Address)
 }

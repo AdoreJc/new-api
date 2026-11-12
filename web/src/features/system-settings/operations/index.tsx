@@ -40,6 +40,8 @@ const defaultOperationsSettings: OperationsSettings = {
   EmailOAuthSecretConfigured: false,
   EmailOAuthTenant: 'common',
   EmailOAuthEmail: '',
+  EmailOAuthFrom: '',
+  EmailOAuthSharedSendGranted: false,
   ResendApiKey: '',
   ResendKeyConfigured: false,
   ResendFrom: '',
