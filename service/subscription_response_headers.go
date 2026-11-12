@@ -71,9 +71,14 @@ func isSubscriptionLimitHeaderForClient(name string) bool {
 // kept them. They are written only while the request is still served by the
 // binding on the bound channel and that channel holds a single account, which
 // is the same scope the bound user's own usage view has. It must run before
-// the response status is written.
+// the response status is written. Headers an earlier attempt wrote are removed
+// first.
 func WriteSubscriptionLimitHeaders(c *gin.Context) {
-	if c == nil || c.Writer == nil || !operation_setting.SubscriptionRateLimitHeaderPassthrough {
+	if c == nil || c.Writer == nil {
+		return
+	}
+	clearSubscriptionLimitHeaders(c)
+	if !operation_setting.SubscriptionRateLimitHeaderPassthrough {
 		return
 	}
 	route, _ := common.GetContextKeyType[*relaycommon.SubscriptionRoute](c, constant.ContextKeySubscriptionRoute)
@@ -84,6 +89,7 @@ func WriteSubscriptionLimitHeaders(c *gin.Context) {
 		return
 	}
 	headers, _ := common.GetContextKeyType[http.Header](c, constant.ContextKeyUpstreamRateLimitHeaders)
+	var written []string
 	for name, values := range headers {
 		if !isSubscriptionLimitHeaderForClient(strings.ToLower(name)) {
 			continue
@@ -92,5 +98,36 @@ func WriteSubscriptionLimitHeaders(c *gin.Context) {
 		for _, value := range values {
 			c.Writer.Header().Add(name, value)
 		}
+		written = append(written, name)
+	}
+	c.Set(ginKeySubscriptionLimitHeadersWritten, written)
+}
+
+// ginKeySubscriptionLimitHeadersWritten holds the names of the usage-limit
+// headers WriteSubscriptionLimitHeaders put on the response of this request.
+const ginKeySubscriptionLimitHeadersWritten = "subscription_limit_headers_written"
+
+// upstreamAttemptResponseHeaders are the upstream headers a relay attempt
+// copies onto the response before its first byte (see copyCodexSSEHeaders).
+var upstreamAttemptResponseHeaders = []string{"X-Reasoning-Included", "X-Codex-Turn-State"}
+
+func clearSubscriptionLimitHeaders(c *gin.Context) {
+	for _, name := range c.GetStringSlice(ginKeySubscriptionLimitHeadersWritten) {
+		c.Writer.Header().Del(name)
+	}
+	c.Set(ginKeySubscriptionLimitHeadersWritten, nil)
+}
+
+// ResetAttemptResponseHeaders removes the upstream headers an earlier relay
+// attempt of this request put on the response, so a retry or a fallback to
+// another channel answers only with what its own attempt adds. Once the
+// response has been committed (a keep-alive ping), this changes nothing.
+func ResetAttemptResponseHeaders(c *gin.Context) {
+	if c == nil || c.Writer == nil {
+		return
+	}
+	clearSubscriptionLimitHeaders(c)
+	for _, name := range upstreamAttemptResponseHeaders {
+		c.Writer.Header().Del(name)
 	}
 }

@@ -846,4 +846,75 @@ func TestSubscriptionOAuthResponseHeaders(t *testing.T) {
 			assert.Equal(t, claudeUpstream.Get(name), recorder.Header().Get(name), name)
 		}
 	})
+
+	t.Run("anthropic api key channel stream keeps only the two stream headers", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeAnthropic)
+		common.SetContextKey(c, constant.ContextKeyChannelId, boundChannel)
+		common.SetContextKey(c, constant.ContextKeySubscriptionRoute, bound())
+		upstreamHeaders := claudeUpstream.Clone()
+		upstreamHeaders.Set("X-Codex-Turn-State", "turn-9")
+		service.RecordSubscriptionLimitHeaders(c, upstreamHeaders)
+
+		copyCodexSSEHeaders(c, &http.Response{StatusCode: http.StatusOK, Header: upstreamHeaders})
+
+		assert.Equal(t, http.Header{"X-Codex-Turn-State": {"turn-9"}}, c.Writer.Header())
+	})
+
+	// A bound stream whose first event fails falls back to the shared pool;
+	// the next attempt, on another channel, must not answer with the headers
+	// the bound attempt put on the response.
+	for _, nextChannelType := range []int{constant.ChannelTypeAnthropic, constant.ChannelTypeClaudeOAuth, constant.ChannelTypeCodex} {
+		t.Run(fmt.Sprintf("fallback after stream error to type=%d drops bound headers", nextChannelType), func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			route := bound()
+			common.SetContextKey(c, constant.ContextKeySubscriptionRoute, route)
+			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeCodex)
+			common.SetContextKey(c, constant.ContextKeyChannelId, boundChannel)
+			service.RecordSubscriptionLimitHeaders(c, codexUpstream)
+			copyCodexSSEHeaders(c, &http.Response{StatusCode: http.StatusOK, Header: codexUpstream.Clone()})
+			require.Equal(t, "12", c.Writer.Header().Get("X-Codex-Primary-Used-Percent"))
+			require.Equal(t, "turn-1", c.Writer.Header().Get("X-Codex-Turn-State"))
+
+			// The first event was an error: the route falls back and the retry
+			// loop starts the next attempt on a shared-pool channel.
+			route.FellBack = true
+			service.ResetAttemptResponseHeaders(c)
+			assert.Empty(t, c.Writer.Header(), "an attempt that fails before streaming answers without the earlier headers")
+
+			common.SetContextKey(c, constant.ContextKeyChannelType, nextChannelType)
+			common.SetContextKey(c, constant.ContextKeyChannelId, boundChannel+1)
+			nextUpstream := http.Header{"Content-Type": {"text/event-stream"}}
+			if nextChannelType != constant.ChannelTypeAnthropic {
+				service.RecordSubscriptionLimitHeaders(c, http.Header{"Anthropic-Ratelimit-Unified-Status": {"allowed"}, "X-Codex-Primary-Used-Percent": {"80"}})
+			}
+			copyCodexSSEHeaders(c, &http.Response{StatusCode: http.StatusOK, Header: nextUpstream})
+
+			assert.Empty(t, c.Writer.Header())
+		})
+	}
+
+	t.Run("a gated-out write removes headers an earlier attempt wrote", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		route := bound()
+		common.SetContextKey(c, constant.ContextKeySubscriptionRoute, route)
+		common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeClaudeOAuth)
+		common.SetContextKey(c, constant.ContextKeyChannelId, boundChannel)
+		service.RecordSubscriptionLimitHeaders(c, claudeUpstream)
+		service.WriteSubscriptionLimitHeaders(c)
+		require.NotEmpty(t, c.Writer.Header().Get("Anthropic-Ratelimit-Unified-Status"))
+
+		route.FellBack = true
+		service.WriteSubscriptionLimitHeaders(c)
+
+		for _, name := range claudeLimits {
+			assert.Empty(t, c.Writer.Header().Values(name), name)
+		}
+	})
 }
