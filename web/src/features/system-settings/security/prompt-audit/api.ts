@@ -81,6 +81,7 @@ export type PromptAuditRuntime = {
   skipped: number
   skipped_too_large: number
   skipped_no_text: number
+  skipped_agent_context_only: number
   scanned: number
   passed: number
   flagged: number

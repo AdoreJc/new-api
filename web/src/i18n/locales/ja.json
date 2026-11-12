@@ -7748,6 +7748,7 @@
     "Developer": "開発者",
     "Assistant": "アシスタント",
     "Tool": "ツール",
-    "Agent context": "エージェントコンテキスト"
+    "Agent context": "エージェントコンテキスト",
+    "Skipped (agent context only)": "スキップ（エージェントコンテキストのみ）"
   }
 }

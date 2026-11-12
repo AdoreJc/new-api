@@ -7748,6 +7748,7 @@
     "Developer": "Nhà phát triển",
     "Assistant": "Trợ lý",
     "Tool": "Công cụ",
-    "Agent context": "Ngữ cảnh agent"
+    "Agent context": "Ngữ cảnh agent",
+    "Skipped (agent context only)": "Bỏ qua (chỉ ngữ cảnh agent)"
   }
 }

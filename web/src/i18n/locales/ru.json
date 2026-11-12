@@ -7748,6 +7748,7 @@
     "Developer": "Разработчик",
     "Assistant": "Ассистент",
     "Tool": "Инструмент",
-    "Agent context": "Контекст агента"
+    "Agent context": "Контекст агента",
+    "Skipped (agent context only)": "Пропущено (только контекст агента)"
   }
 }

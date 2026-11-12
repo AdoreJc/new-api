@@ -7748,6 +7748,7 @@
     "Developer": "开发者",
     "Assistant": "助手",
     "Tool": "工具",
-    "Agent context": "Agent 上下文"
+    "Agent context": "Agent 上下文",
+    "Skipped (agent context only)": "跳过（仅 Agent 上下文）"
   }
 }

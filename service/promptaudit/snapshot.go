@@ -6,6 +6,7 @@ import (
 	"errors"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -36,16 +37,19 @@ const (
 )
 
 var (
-	errNoPromptText  = errors.New("prompt audit request contains no text")
-	errInvalidJSON   = errors.New("prompt audit request JSON is invalid")
-	bearerPattern    = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+\-/]+=*`)
-	apiKeyPattern    = regexp.MustCompile(`(?i)\b(sk|rk|pk|api[_-]?key|token|secret|password)[-_:=\s]+[A-Za-z0-9._~+\-/]{8,}`)
-	canaryPattern    = regexp.MustCompile(`(?i)([A-Z]+_CANARY_)[A-Za-z0-9_-]+`)
-	emailPattern     = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
-	phonePattern     = regexp.MustCompile(`(?:\+?\d[\d\s().-]{8,}\d)`)
-	hostPortPattern  = regexp.MustCompile(`(?i)\b(?:\d{1,3}(?:\.\d{1,3}){3}|localhost)(?::\d{1,5})?\b`)
-	clientTextRoles  = []string{"user", "system", "developer", "assistant", "tool"}
-	contentTextTypes = []string{"", "text", "input_text", "output_text"}
+	errNoPromptText = errors.New("prompt audit request contains no text")
+	// errAgentContextOnly means the scan scope left nothing to scan because the
+	// only user text was agent wrappers.
+	errAgentContextOnly = errors.New("prompt audit request has only agent context in scope")
+	errInvalidJSON      = errors.New("prompt audit request JSON is invalid")
+	bearerPattern       = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+\-/]+=*`)
+	apiKeyPattern       = regexp.MustCompile(`(?i)\b(sk|rk|pk|api[_-]?key|token|secret|password)[-_:=\s]+[A-Za-z0-9._~+\-/]{8,}`)
+	canaryPattern       = regexp.MustCompile(`(?i)([A-Z]+_CANARY_)[A-Za-z0-9_-]+`)
+	emailPattern        = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
+	phonePattern        = regexp.MustCompile(`(?:\+?\d[\d\s().-]{8,}\d)`)
+	hostPortPattern     = regexp.MustCompile(`(?i)\b(?:\d{1,3}(?:\.\d{1,3}){3}|localhost)(?::\d{1,5})?\b`)
+	clientTextRoles     = []string{"user", "system", "developer", "assistant", "tool"}
+	contentTextTypes    = []string{"", "text", "input_text", "output_text"}
 	// agentContextTags wrap context that coding agents add to user messages.
 	agentContextTags = []string{"system-reminder", "environment_context", "user_instructions"}
 )
@@ -145,6 +149,9 @@ func extractPromptSnapshot(protocol string, body []byte, scope string) (*promptS
 		snapshot.Latest = joinSegments(userOnly(latest))
 	}
 	if snapshot.Latest.text == "" && snapshot.Rest.text == "" {
+		if slices.ContainsFunc(ordered, func(segment promptSegment) bool { return segment.role == roleAgentContext }) {
+			return nil, errAgentContextOnly
+		}
 		return nil, errNoPromptText
 	}
 	return snapshot, nil
@@ -491,12 +498,39 @@ func maskPhoneNumbers(value string) string {
 	var builder strings.Builder
 	previous := 0
 	for _, span := range hostPortPattern.FindAllStringIndex(value, -1) {
+		if !isNetworkAddress(value, span[0], span[1]) {
+			continue
+		}
 		builder.WriteString(phonePattern.ReplaceAllString(value[previous:span[0]], "***PHONE***"))
 		builder.WriteString(value[span[0]:span[1]])
 		previous = span[1]
 	}
 	builder.WriteString(phonePattern.ReplaceAllString(value[previous:], "***PHONE***"))
 	return builder.String()
+}
+
+// isNetworkAddress checks a hostPortPattern match: a localhost port, or four
+// dotted octets of 0-255 without leading zeros that are not part of a longer
+// dotted digit run. Phone numbers written in dotted groups fail the check.
+func isNetworkAddress(value string, start, end int) bool {
+	host, _, _ := strings.Cut(value[start:end], ":")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	isDigit := func(b byte) bool { return b >= '0' && b <= '9' }
+	if start >= 2 && value[start-1] == '.' && isDigit(value[start-2]) {
+		return false
+	}
+	if end+1 < len(value) && value[end] == '.' && isDigit(value[end+1]) {
+		return false
+	}
+	for octet := range strings.SplitSeq(host, ".") {
+		number, err := strconv.Atoi(octet)
+		if err != nil || number > 255 || (len(octet) > 1 && octet[0] == '0') {
+			return false
+		}
+	}
+	return true
 }
 
 // buildPromptPreview keeps at most a quarter (and no more than 24 runes) of the

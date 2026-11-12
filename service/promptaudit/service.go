@@ -40,23 +40,26 @@ const (
 
 // Metrics are process-local counters reset on restart.
 type Metrics struct {
-	enqueued       atomic.Int64
-	dropped        atomic.Int64
-	skipped        atomic.Int64
-	tooLarge       atomic.Int64
-	noText         atomic.Int64
-	scanned        atomic.Int64
-	passed         atomic.Int64
-	flagged        atomic.Int64
-	critical       atomic.Int64
-	failed         atomic.Int64
-	timeouts       atomic.Int64
-	failovers      atomic.Int64
-	retries        atomic.Int64
-	recorded       atomic.Int64
-	recordFailed   atomic.Int64
-	latencyTotalMS atomic.Int64
-	latencyMaxMS   atomic.Int64
+	enqueued atomic.Int64
+	dropped  atomic.Int64
+	skipped  atomic.Int64
+	tooLarge atomic.Int64
+	noText   atomic.Int64
+	// agentContextOnly counts requests whose in-scope user text was only
+	// agent wrappers, so nothing was sent to the Guard.
+	agentContextOnly atomic.Int64
+	scanned          atomic.Int64
+	passed           atomic.Int64
+	flagged          atomic.Int64
+	critical         atomic.Int64
+	failed           atomic.Int64
+	timeouts         atomic.Int64
+	failovers        atomic.Int64
+	retries          atomic.Int64
+	recorded         atomic.Int64
+	recordFailed     atomic.Int64
+	latencyTotalMS   atomic.Int64
+	latencyMaxMS     atomic.Int64
 	// chunksCached counts chunks skipped because they were recently found safe;
 	// chunksOverBudget counts chunks left unscanned by the per-request limit.
 	chunksCached     atomic.Int64
@@ -278,6 +281,10 @@ func (s *Service) process(ctx context.Context, item *job) {
 		return
 	}
 	prompt, err := extractPromptSnapshot(item.protocol, item.body, snapshot.Config.ScanScope)
+	if errors.Is(err, errAgentContextOnly) {
+		s.metrics.agentContextOnly.Add(1)
+		return
+	}
 	if err != nil {
 		s.metrics.noText.Add(1)
 		return
@@ -445,6 +452,7 @@ type RuntimeStatus struct {
 	Skipped          int64  `json:"skipped"`
 	SkippedTooLarge  int64  `json:"skipped_too_large"`
 	SkippedNoText    int64  `json:"skipped_no_text"`
+	SkippedAgentOnly int64  `json:"skipped_agent_context_only"`
 	Scanned          int64  `json:"scanned"`
 	Passed           int64  `json:"passed"`
 	Flagged          int64  `json:"flagged"`
@@ -472,7 +480,7 @@ func (s *Service) runtime() RuntimeStatus {
 		QueueDepth: s.depth.Load(), QueueCapacity: config.QueueCapacity,
 		QueuedBytes: s.queuedBytes.Load(), QueuedBytesLimit: maxQueuedBytes, QueueInMemory: true,
 		Enqueued: m.enqueued.Load(), Dropped: m.dropped.Load(), Skipped: m.skipped.Load(),
-		SkippedTooLarge: m.tooLarge.Load(), SkippedNoText: m.noText.Load(), Scanned: m.scanned.Load(),
+		SkippedTooLarge: m.tooLarge.Load(), SkippedNoText: m.noText.Load(), SkippedAgentOnly: m.agentContextOnly.Load(), Scanned: m.scanned.Load(),
 		Passed: m.passed.Load(), Flagged: m.flagged.Load(), Critical: m.critical.Load(),
 		Failed: m.failed.Load(), Timeouts: m.timeouts.Load(), Failovers: m.failovers.Load(),
 		Retries: m.retries.Load(), Recorded: m.recorded.Load(), RecordFailed: m.recordFailed.Load(),

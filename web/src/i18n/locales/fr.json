@@ -7748,6 +7748,7 @@
     "Developer": "Développeur",
     "Assistant": "Assistant",
     "Tool": "Outil",
-    "Agent context": "Contexte d'agent"
+    "Agent context": "Contexte d'agent",
+    "Skipped (agent context only)": "Ignorés (contexte d'agent uniquement)"
   }
 }
