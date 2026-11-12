@@ -7591,6 +7591,10 @@
     "When off, this gateway is hidden from users and new orders are rejected. Callbacks for orders already placed are still processed.": "关闭后，用户看不到此支付渠道，新订单会被拒绝；已创建订单的支付回调仍会正常处理。",
     "Enable payment method {{name}}": "启用支付方式 {{name}}",
     "This payment channel is disabled": "该支付渠道已关闭",
-    "The enabled field of payment method {{type}} must be true or false": "支付方式 {{type}} 的 enabled 字段必须为 true 或 false"
+    "The enabled field of payment method {{type}} must be true or false": "支付方式 {{type}} 的 enabled 字段必须为 true 或 false",
+    "Copy CC Switch usage script": "复制 CC Switch 用量脚本",
+    "Paste into CC Switch as the custom usage script of a provider that uses an API key of this account": "在 CC Switch 中粘贴为使用本账户 API 密钥的供应商的自定义用量脚本",
+    "Resets in {{time}}": "{{time}}后重置",
+    "No bound subscription": "没有绑定订阅"
   }
 }

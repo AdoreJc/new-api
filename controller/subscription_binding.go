@@ -207,42 +207,135 @@ func projectCodexSubscriptionUsage(body []byte, now time.Time) (map[string]Subsc
 	return windows, strings.TrimSpace(doc.PlanType), doc.RateLimit.LimitReached
 }
 
-// resolveSelfBoundSubscription loads one of the caller's own active
-// subscriptions and the single-key OAuth channel bound to it. On failure the
-// error response has already been written and ok is false; the messages never
-// name the channel or its dedicated group.
-func resolveSelfBoundSubscription(c *gin.Context) (sub *model.UserSubscription, ch *model.Channel, ok bool) {
-	userId := c.GetInt("id")
-	subId, _ := strconv.Atoi(c.Param("id"))
+// resolveBoundSubscription loads one of userId's own active subscriptions and
+// the single-key OAuth channel bound to it. Errors are web console messages
+// that never name the channel or its dedicated group.
+func resolveBoundSubscription(userId int, subId int) (*model.UserSubscription, *model.Channel, error) {
 	if subId <= 0 {
-		common.ApiErrorT(c, "Invalid subscription ID")
-		return nil, nil, false
+		return nil, nil, common.NewMessage("Invalid subscription ID")
 	}
 	sub, err := model.GetUserSubscriptionById(subId)
 	if err != nil || sub.UserId != userId {
 		// Same answer for a foreign and a missing subscription.
-		common.ApiErrorT(c, "Subscription not found")
-		return nil, nil, false
+		return nil, nil, common.NewMessage("Subscription not found")
 	}
 	now := model.GetDBTimestamp()
 	if sub.Status != "active" || sub.EndTime <= now {
-		common.ApiErrorT(c, "This subscription is no longer active")
-		return nil, nil, false
+		return nil, nil, common.NewMessage("This subscription is no longer active")
 	}
 	if sub.BoundChannelId <= 0 {
-		common.ApiErrorT(c, "This subscription is not bound to a channel")
-		return nil, nil, false
+		return nil, nil, common.NewMessage("This subscription is not bound to a channel")
 	}
-	ch, err = model.GetChannelById(sub.BoundChannelId, true)
+	ch, err := model.GetChannelById(sub.BoundChannelId, true)
 	if err != nil || ch == nil || !model.IsSubscriptionBindableChannelType(ch.Type) {
-		common.ApiErrorT(c, "The bound channel is no longer available")
-		return nil, nil, false
+		return nil, nil, common.NewMessage("The bound channel is no longer available")
 	}
 	if ch.ChannelInfo.IsMultiKey {
-		common.ApiErrorT(c, "Multi-key channels are not supported")
+		return nil, nil, common.NewMessage("Multi-key channels are not supported")
+	}
+	return sub, ch, nil
+}
+
+// resolveSelfBoundSubscription is resolveBoundSubscription for the caller and
+// the :id route parameter. On failure the error response has already been
+// written and ok is false.
+func resolveSelfBoundSubscription(c *gin.Context) (sub *model.UserSubscription, ch *model.Channel, ok bool) {
+	subId, _ := strconv.Atoi(c.Param("id"))
+	sub, ch, err := resolveBoundSubscription(c.GetInt("id"), subId)
+	if err != nil {
+		common.ApiError(c, err)
 		return nil, nil, false
 	}
 	return sub, ch, true
+}
+
+// subscriptionAccountUsage is the usage of one bound OAuth account. It is
+// shared through the service cache by every subscriber of the channel and
+// both usage endpoints, so it holds nothing specific to a user.
+type subscriptionAccountUsage struct {
+	Provider       string
+	UpstreamStatus int
+	// Read-only once cached
+	Windows      map[string]SubscriptionUsageWindow
+	PlanType     string
+	LimitReached bool
+	FetchedAt    int64
+}
+
+func (u subscriptionAccountUsage) upstreamSucceeded() bool {
+	return u.UpstreamStatus >= 200 && u.UpstreamStatus < 300
+}
+
+// loadSubscriptionAccountUsage returns the usage windows of the account
+// behind ch, asking upstream at most once per service.SubscriptionUsageCacheTTL.
+// A non-nil error means upstream gave no answer; an upstream failure status
+// is reported by UpstreamStatus instead.
+func loadSubscriptionAccountUsage(ctx context.Context, ch *model.Channel) (subscriptionAccountUsage, error) {
+	// The answer is shared with concurrent callers and the cache, so one
+	// caller going away must not cancel it; the fetch timeouts still apply.
+	ctx = context.WithoutCancel(ctx)
+	return service.LoadSubscriptionUsage(ch.Id, time.Now(), func() (subscriptionAccountUsage, bool, error) {
+		usage := subscriptionAccountUsage{
+			Windows:   map[string]SubscriptionUsageWindow{},
+			FetchedAt: common.GetTimestamp(),
+		}
+		switch ch.Type {
+		case constant.ChannelTypeClaudeOAuth:
+			usage.Provider = "claude"
+			statusCode, payload, err := claudeChannelOAuthFetch(
+				ctx, ch,
+				func(ctx context.Context, client *http.Client, ch *model.Channel, accessToken string) (int, any, error) {
+					status, body, err := service.FetchClaudeOAuthUsage(ctx, client, ch.GetBaseURL(), accessToken)
+					if err != nil {
+						return status, nil, err
+					}
+					var doc any
+					if common.Unmarshal(body, &doc) != nil {
+						doc = nil
+					}
+					if windows, ok := doc.(map[string]any); ok && status >= 200 && status < 300 {
+						service.BackfillClaudeUsageWindows(windows, service.LoadClaudePassiveUsage(ch), time.Now())
+					}
+					return status, doc, nil
+				},
+				claudeUsageRequestTimeout,
+				common.LogText("failed to fetch claude usage for subscription"),
+				"Failed to fetch usage. Please try again later",
+			)
+			if err != nil {
+				return usage, false, err
+			}
+			usage.UpstreamStatus = statusCode
+			if usage.upstreamSucceeded() {
+				usage.Windows = projectClaudeSubscriptionUsage(payload)
+				for _, window := range usage.Windows {
+					if window.Utilization >= 100 {
+						usage.LimitReached = true
+					}
+				}
+			}
+		case constant.ChannelTypeCodex:
+			usage.Provider = "codex"
+			statusCode, body, err := codexChannelWhamFetch(
+				ctx, ch,
+				service.FetchCodexWhamUsage,
+				common.LogText("failed to fetch codex usage for subscription"),
+				"Failed to fetch usage. Please try again later",
+			)
+			if err != nil {
+				return usage, false, err
+			}
+			usage.UpstreamStatus = statusCode
+			if usage.upstreamSucceeded() {
+				usage.Windows, usage.PlanType, usage.LimitReached = projectCodexSubscriptionUsage(body, time.Now())
+			}
+		}
+		return usage, usage.upstreamSucceeded(), nil
+	})
+}
+
+func upstreamStatusMessage(statusCode int) *common.Message {
+	return common.NewMessage("Upstream returned status {{status}}", map[string]any{"status": statusCode})
 }
 
 // GetSubscriptionSelfUsage returns the rate-limit windows of the OAuth
@@ -254,79 +347,30 @@ func GetSubscriptionSelfUsage(c *gin.Context) {
 	if !ok {
 		return
 	}
-
-	result := SubscriptionUsageResponse{
-		SubscriptionId: sub.Id,
-		ChannelType:    ch.Type,
-		Windows:        map[string]SubscriptionUsageWindow{},
-		FetchedAt:      common.GetTimestamp(),
-		CanReset:       userAllowsSubscriptionResetCredit(c.GetInt("id")),
+	usage, err := loadSubscriptionAccountUsage(c.Request.Context(), ch)
+	if err != nil {
+		common.ApiError(c, err)
+		return
 	}
-	var statusCode int
-	switch ch.Type {
-	case constant.ChannelTypeClaudeOAuth:
-		result.Provider = "claude"
-		var payload any
-		var ok bool
-		statusCode, payload, ok = claudeChannelOAuthFetch(
-			c, ch,
-			func(ctx context.Context, client *http.Client, ch *model.Channel, accessToken string) (int, any, error) {
-				status, body, err := service.FetchClaudeOAuthUsage(ctx, client, ch.GetBaseURL(), accessToken)
-				if err != nil {
-					return status, nil, err
-				}
-				var doc any
-				if common.Unmarshal(body, &doc) != nil {
-					doc = nil
-				}
-				if windows, ok := doc.(map[string]any); ok && status >= 200 && status < 300 {
-					service.BackfillClaudeUsageWindows(windows, service.LoadClaudePassiveUsage(ch), time.Now())
-				}
-				return status, doc, nil
-			},
-			claudeUsageRequestTimeout,
-			common.LogText("failed to fetch claude usage for subscription"),
-			"Failed to fetch usage. Please try again later",
-		)
-		if !ok {
-			return
-		}
-		if statusCode >= 200 && statusCode < 300 {
-			result.Windows = projectClaudeSubscriptionUsage(payload)
-			for _, window := range result.Windows {
-				if window.Utilization >= 100 {
-					result.LimitReached = true
-				}
-			}
-		}
-	case constant.ChannelTypeCodex:
-		result.Provider = "codex"
-		var body []byte
-		var ok bool
-		statusCode, body, ok = codexChannelWhamFetch(
-			c, ch,
-			service.FetchCodexWhamUsage,
-			common.LogText("failed to fetch codex usage for subscription"),
-			"Failed to fetch usage. Please try again later",
-		)
-		if !ok {
-			return
-		}
-		if statusCode >= 200 && statusCode < 300 {
-			result.Windows, result.PlanType, result.LimitReached = projectCodexSubscriptionUsage(body, time.Now())
-		}
-	}
-
-	if statusCode < 200 || statusCode >= 300 {
-		common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("Upstream returned status {{status}}", map[string]any{"status": statusCode}), gin.H{
-			"upstream_status": statusCode,
+	if !usage.upstreamSucceeded() {
+		common.ApiErrorStatus(c, http.StatusOK, upstreamStatusMessage(usage.UpstreamStatus), gin.H{
+			"upstream_status": usage.UpstreamStatus,
 		})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success":         true,
 		"message":         "",
-		"upstream_status": statusCode,
-		"data":            result,
+		"upstream_status": usage.UpstreamStatus,
+		"data": SubscriptionUsageResponse{
+			SubscriptionId: sub.Id,
+			Provider:       usage.Provider,
+			ChannelType:    ch.Type,
+			Windows:        usage.Windows,
+			PlanType:       usage.PlanType,
+			LimitReached:   usage.LimitReached,
+			FetchedAt:      usage.FetchedAt,
+			CanReset:       userAllowsSubscriptionResetCredit(c.GetInt("id")),
+		},
 	})
 }

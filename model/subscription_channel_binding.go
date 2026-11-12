@@ -87,6 +87,22 @@ func isSubscriptionBoundGroupOf(sub *UserSubscription, group string) bool {
 	return isChannelSubscriptionBoundGroup(group, sub.BoundChannelId)
 }
 
+// HasBoundGroup reports whether group is the dedicated group of this
+// subscription's binding.
+func (sub *UserSubscription) HasBoundGroup(group string) bool {
+	return isSubscriptionBoundGroupOf(sub, group)
+}
+
+// ListActiveBoundUserSubscriptions returns the user's active subscriptions
+// that are bound to a channel, newest end time first.
+func ListActiveBoundUserSubscriptions(userId int) ([]UserSubscription, error) {
+	var subs []UserSubscription
+	err := DB.Where("user_id = ? AND bound_channel_id > 0 AND status = ? AND end_time > ?", userId, "active", GetDBTimestamp()).
+		Order("end_time desc, id desc").
+		Find(&subs).Error
+	return subs, err
+}
+
 // subscriptionBoundGroupForChannel returns the dedicated group a new binding
 // of channelId would use, or "" when the channel is missing or not bindable;
 // the bind transaction then reports the precise error.

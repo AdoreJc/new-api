@@ -11,6 +11,8 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
@@ -30,11 +32,18 @@ func setupSubscriptionUsageDB(t *testing.T) {
 	sqlDB, err := database.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.UserSubscription{}, &model.User{}, &model.AuditLog{}))
+	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.UserSubscription{}, &model.User{}, &model.AuditLog{}, &model.Token{}))
 	originalLogDB, originalRedisEnabled := model.LOG_DB, common.RedisEnabled
 	model.DB, model.LOG_DB = database, database
 	common.RedisEnabled = false
 	t.Cleanup(func() {
+		// Channel ids restart in every in-memory database; drop the usage the
+		// shared per-channel cache kept for them.
+		var channelIds []int
+		_ = database.Model(&model.Channel{}).Pluck("id", &channelIds).Error
+		for _, id := range channelIds {
+			service.InvalidateSubscriptionUsage(id)
+		}
 		model.DB, model.LOG_DB = originalDB, originalLogDB
 		common.RedisEnabled = originalRedisEnabled
 	})
@@ -504,4 +513,241 @@ func TestSubscriptionResetCreditSwitchIsAdministratorOnly(t *testing.T) {
 
 	adminUpdate(`,"allow_subscription_reset_credit":false`)
 	assert.False(t, stored())
+}
+
+// ---- API key: GET /api/usage/subscription ----
+
+func newSubscriptionUsageTokenUser(t *testing.T, username string) *model.User {
+	t.Helper()
+	user := &model.User{Username: username, Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AffCode: username + "-aff"}
+	require.NoError(t, model.DB.Create(user).Error)
+	return user
+}
+
+func newSubscriptionUsageToken(t *testing.T, userID int, key string, group string, status int) {
+	t.Helper()
+	require.NoError(t, model.DB.Create(&model.Token{UserId: userID, Key: key, Name: key, Status: status, Group: group, ExpiredTime: -1}).Error)
+}
+
+func newCodexSubscriptionTestChannel(t *testing.T, baseURL string) *model.Channel {
+	t.Helper()
+	channel := &model.Channel{
+		Type:    constant.ChannelTypeCodex,
+		BaseURL: &baseURL,
+		Key:     `{"access_token":"codex-token","account_id":"acc-1"}`,
+		Name:    "codex-test",
+		Status:  common.ChannelStatusEnabled,
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+	return channel
+}
+
+// tokenSubscriptionUsageRouter serves the endpoint behind its real
+// middleware chain (read-only token auth and the per-token limit).
+func tokenSubscriptionUsageRouter(t *testing.T) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	// Initialize production column quoting for the token key lookup.
+	t.Setenv("LOG_SQL_DSN", "")
+	require.NoError(t, model.InitLogDB())
+	router := gin.New()
+	router.GET("/api/usage/subscription", middleware.TokenAuthReadOnly(), middleware.SubscriptionUsageRateLimit(), GetTokenSubscriptionUsage)
+	return router
+}
+
+func getTokenSubscriptionUsage(t *testing.T, router *gin.Engine, key string, query string) (int, apiEnvelope) {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/usage/subscription"+query, nil)
+	request.Header.Set("Authorization", "Bearer sk-"+key)
+	request.Header.Set("Accept-Language", "zh-CN")
+	router.ServeHTTP(recorder, request)
+	var envelope apiEnvelope
+	if recorder.Body.Len() > 0 {
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &envelope))
+	}
+	return recorder.Code, envelope
+}
+
+func tokenUsageItems(t *testing.T, envelope apiEnvelope) []map[string]any {
+	t.Helper()
+	raw, ok := envelope.Data["items"].([]any)
+	require.True(t, ok, "items is an array")
+	items := make([]map[string]any, 0, len(raw))
+	for _, item := range raw {
+		items = append(items, item.(map[string]any))
+	}
+	return items
+}
+
+func TestTokenSubscriptionUsageServesBoundWindowsAsItemsFromTheSharedCache(t *testing.T) {
+	setupSubscriptionUsageDB(t)
+	require.NoError(t, i18n.Init())
+	var claudeHits, codexHits atomic.Int32
+	claudeUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claudeHits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"five_hour":{"utilization":23,"resets_at":"2026-11-12T19:00:00Z"},"seven_day":{"utilization":41.5,"resets_at":"2026-11-15T00:00:00Z"},"organization":{"uuid":"org-secret"}}`))
+	}))
+	t.Cleanup(claudeUpstream.Close)
+	codexUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		codexHits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"plan_type":"plus","email":"someone@example.com","rate_limit":{"limit_reached":false,"primary_window":{"used_percent":12,"limit_window_seconds":18000,"reset_at":1762340400},"secondary_window":{"used_percent":40,"limit_window_seconds":604800,"reset_at":1762900000}}}`))
+	}))
+	t.Cleanup(codexUpstream.Close)
+	claude := newClaudeOAuthTestChannel(t, claudeUpstream.URL, service.ClaudeOAuthKey{AccessToken: "token", Scope: "user:profile"})
+	now := time.Now()
+	info := claude.GetOtherInfo()
+	info[service.ClaudePassiveUsageKey] = map[string]service.ClaudePassiveUsageWindow{
+		"seven_day_overage_included": {Utilization: 5, ResetsAt: now.Add(time.Hour).Unix(), SampledAt: now.Unix()},
+	}
+	claude.SetOtherInfo(info)
+	require.NoError(t, model.DB.Model(claude).Update("other_info", claude.OtherInfo).Error)
+	codex := newCodexSubscriptionTestChannel(t, codexUpstream.URL)
+	user := newSubscriptionUsageTokenUser(t, "bound-user")
+	claudeSub := newSubscriptionUsageSub(t, user.Id, claude.Id, time.Hour)
+	newSubscriptionUsageSub(t, user.Id, codex.Id, 2*time.Hour)
+	newSubscriptionUsageToken(t, user.Id, "boundkey", "default", common.TokenStatusEnabled)
+	router := tokenSubscriptionUsageRouter(t)
+
+	code, envelope := getTokenSubscriptionUsage(t, router, "boundkey", "")
+	require.Equal(t, http.StatusOK, code)
+	require.True(t, envelope.Success, envelope.Message)
+	items := tokenUsageItems(t, envelope)
+	require.Len(t, items, 5)
+	var names []string
+	for _, item := range items {
+		names = append(names, item["planName"].(string))
+		assert.EqualValues(t, 100, item["total"])
+		assert.Equal(t, "%", item["unit"])
+		assert.InDelta(t, 100, item["used"].(float64)+item["remaining"].(float64), 1e-9)
+	}
+	assert.ElementsMatch(t, []string{"Claude 5小时", "Claude 7天", "Claude 7天 Fable", "Codex 5小时", "Codex 每周"}, names)
+	for _, item := range items {
+		switch item["planName"] {
+		case "Claude 5小时":
+			assert.EqualValues(t, 23, item["used"])
+			assert.Equal(t, "2026-11-12T19:00:00Z", item["resetsAt"])
+			assert.Nil(t, item["extra"])
+		case "Claude 7天 Fable":
+			assert.EqualValues(t, 95, item["remaining"])
+			assert.Contains(t, item["extra"], "被动采样")
+		case "Codex 每周":
+			assert.EqualValues(t, 40, item["used"])
+			assert.Equal(t, time.Unix(1762900000, 0).UTC().Format(time.RFC3339), item["resetsAt"])
+		}
+	}
+	subscriptions, ok := envelope.Data["subscriptions"].([]any)
+	require.True(t, ok)
+	require.Len(t, subscriptions, 2)
+	for _, raw := range subscriptions {
+		entry := raw.(map[string]any)
+		for _, forbidden := range []string{"can_reset", "channel_id", "email", "organization"} {
+			_, present := entry[forbidden]
+			assert.False(t, present, forbidden)
+		}
+	}
+
+	code, envelope = getTokenSubscriptionUsage(t, router, "boundkey", "?provider=codex")
+	require.Equal(t, http.StatusOK, code)
+	require.True(t, envelope.Success, envelope.Message)
+	items = tokenUsageItems(t, envelope)
+	require.Len(t, items, 2)
+	for _, item := range items {
+		assert.Contains(t, item["planName"], "Codex")
+	}
+
+	// The session endpoint shares the per-channel cache.
+	session := getSubscriptionUsage(t, user.Id, claudeSub.Id)
+	require.True(t, session.Success, session.Message)
+	assert.Equal(t, int32(1), claudeHits.Load(), "repeated queries within the TTL are served from the cache")
+	assert.Equal(t, int32(1), codexHits.Load())
+}
+
+func TestTokenSubscriptionUsageScopesToTheCallerAndTheTokenGroup(t *testing.T) {
+	setupSubscriptionUsageDB(t)
+	require.NoError(t, i18n.Init())
+	var hits atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"five_hour":{"utilization":10}}`))
+	}))
+	t.Cleanup(upstream.Close)
+	first := newClaudeOAuthTestChannel(t, upstream.URL, service.ClaudeOAuthKey{AccessToken: "token", Scope: "user:profile"})
+	second := newClaudeOAuthTestChannel(t, upstream.URL, service.ClaudeOAuthKey{AccessToken: "token", Scope: "user:profile"})
+	user := newSubscriptionUsageTokenUser(t, "two-bindings")
+	other := newSubscriptionUsageTokenUser(t, "someone-else")
+	unbound := newSubscriptionUsageTokenUser(t, "no-binding")
+	newSubscriptionUsageSub(t, user.Id, first.Id, time.Hour)
+	secondSub := newSubscriptionUsageSub(t, user.Id, second.Id, 2*time.Hour)
+	foreign := newSubscriptionUsageSub(t, other.Id, first.Id, time.Hour)
+	newSubscriptionUsageSub(t, unbound.Id, 0, time.Hour)
+	newSubscriptionUsageToken(t, user.Id, "defaultkey", "", common.TokenStatusEnabled)
+	newSubscriptionUsageToken(t, user.Id, "dedicatedkey", secondSub.BoundGroup, common.TokenStatusEnabled)
+	newSubscriptionUsageToken(t, user.Id, "disabledkey", "", common.TokenStatusDisabled)
+	newSubscriptionUsageToken(t, unbound.Id, "unboundkey", "", common.TokenStatusEnabled)
+	router := tokenSubscriptionUsageRouter(t)
+
+	_, envelope := getTokenSubscriptionUsage(t, router, "defaultkey", "")
+	require.True(t, envelope.Success, envelope.Message)
+	items := tokenUsageItems(t, envelope)
+	require.Len(t, items, 2, "every bound subscription, told apart by id")
+	assert.Equal(t, "Claude 5小时 #"+itoa(secondSub.Id), items[0]["planName"], "newest end time first")
+
+	_, envelope = getTokenSubscriptionUsage(t, router, "dedicatedkey", "")
+	require.True(t, envelope.Success, envelope.Message)
+	items = tokenUsageItems(t, envelope)
+	require.Len(t, items, 1, "a dedicated-group token sees its own binding")
+	assert.Equal(t, "Claude 5小时", items[0]["planName"])
+	subscriptions := envelope.Data["subscriptions"].([]any)
+	assert.EqualValues(t, secondSub.Id, subscriptions[0].(map[string]any)["subscription_id"])
+
+	hitsBefore := hits.Load()
+	_, envelope = getTokenSubscriptionUsage(t, router, "defaultkey", "?subscription_id="+itoa(foreign.Id))
+	assert.False(t, envelope.Success)
+	assert.Equal(t, "Subscription not found", envelope.Message)
+	assert.Nil(t, envelope.Data)
+
+	_, envelope = getTokenSubscriptionUsage(t, router, "defaultkey", "?provider=codex")
+	assert.True(t, envelope.Success)
+	assert.Equal(t, "no bound subscription", envelope.Message)
+	assert.Empty(t, tokenUsageItems(t, envelope))
+
+	_, envelope = getTokenSubscriptionUsage(t, router, "unboundkey", "")
+	assert.True(t, envelope.Success)
+	assert.Equal(t, "no bound subscription", envelope.Message)
+	assert.Empty(t, tokenUsageItems(t, envelope))
+
+	code, envelope := getTokenSubscriptionUsage(t, router, "disabledkey", "")
+	assert.Equal(t, http.StatusUnauthorized, code)
+	assert.False(t, envelope.Success)
+	assert.Equal(t, hitsBefore, hits.Load(), "rejected queries never reach upstream")
+}
+
+func TestTokenSubscriptionUsageReportsUpstreamFailureAndRetriesIt(t *testing.T) {
+	setupSubscriptionUsageDB(t)
+	var hits atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"message":"account details that must not leak"}}`))
+	}))
+	t.Cleanup(upstream.Close)
+	channel := newClaudeOAuthTestChannel(t, upstream.URL, service.ClaudeOAuthKey{AccessToken: "token", Scope: "user:profile"})
+	user := newSubscriptionUsageTokenUser(t, "upstream-down")
+	newSubscriptionUsageSub(t, user.Id, channel.Id, time.Hour)
+	newSubscriptionUsageToken(t, user.Id, "downkey", "", common.TokenStatusEnabled)
+	router := tokenSubscriptionUsageRouter(t)
+
+	for range 2 {
+		code, envelope := getTokenSubscriptionUsage(t, router, "downkey", "")
+		assert.Equal(t, http.StatusOK, code)
+		assert.False(t, envelope.Success)
+		assert.Equal(t, "Upstream returned status 500", envelope.Message)
+		assert.Empty(t, tokenUsageItems(t, envelope))
+		assert.NotContains(t, fmt.Sprint(envelope.Data), "must not leak")
+	}
+	assert.Equal(t, int32(2), hits.Load(), "failures are not cached")
 }

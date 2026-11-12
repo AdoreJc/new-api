@@ -110,8 +110,9 @@ func fetchClaudeChannelOAuthData(c *gin.Context, fetch claudeOAuthFetchFunc, tim
 		return
 	}
 
-	statusCode, payload, ok := claudeChannelOAuthFetch(c, ch, fetch, timeout, logPrefix, userMessage)
-	if !ok {
+	statusCode, payload, err := claudeChannelOAuthFetch(c.Request.Context(), ch, fetch, timeout, logPrefix, userMessage)
+	if err != nil {
+		common.ApiError(c, err)
 		return
 	}
 
@@ -131,39 +132,36 @@ func fetchClaudeChannelOAuthData(c *gin.Context, fetch claudeOAuthFetchFunc, tim
 }
 
 // claudeChannelOAuthFetch runs fetch with the channel's access token and
-// retries once after a forced refresh when upstream answers 401. On failure
-// the error response has already been written and ok is false.
-func claudeChannelOAuthFetch(c *gin.Context, ch *model.Channel, fetch claudeOAuthFetchFunc, timeout time.Duration, logPrefix string, userMessage string) (statusCode int, payload any, ok bool) {
+// retries once after a forced refresh when upstream answers 401. A non-nil
+// error is ready for common.ApiError; upstream statuses are not errors.
+func claudeChannelOAuthFetch(ctx context.Context, ch *model.Channel, fetch claudeOAuthFetchFunc, timeout time.Duration, logPrefix string, userMessage string) (statusCode int, payload any, err error) {
 	key, err := service.ParseClaudeOAuthKey(ch.Key)
 	if err != nil {
 		common.SysError(common.LogText("failed to parse oauth key: %s", err.Error()))
-		common.ApiErrorT(c, "Failed to parse credentials. Please check the channel configuration")
-		return 0, nil, false
+		return 0, nil, common.NewMessage("Failed to parse credentials. Please check the channel configuration")
 	}
 	if !key.HasScope("user:profile") {
-		common.ApiErrorT(c, "This credential lacks the user:profile scope required for usage queries. Re-authorize the channel")
-		return 0, nil, false
+		return 0, nil, common.NewMessage("This credential lacks the user:profile scope required for usage queries. Re-authorize the channel")
 	}
 
 	setting := ch.GetSetting()
 	client, err := service.GetHttpClientWithProxySettings(setting.Proxy, setting)
 	if err != nil {
-		common.ApiError(c, err)
-		return 0, nil, false
+		return 0, nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
+	fetchCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	statusCode, payload, err = fetch(ctx, client, ch, key.AccessToken)
+	statusCode, payload, err = fetch(fetchCtx, client, ch, key.AccessToken)
 	if err == nil && statusCode == http.StatusUnauthorized && key.RefreshToken != "" {
-		refreshCtx, refreshCancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+		refreshCtx, refreshCancel := context.WithTimeout(ctx, 20*time.Second)
 		refreshedKey, _, refreshErr := service.RefreshClaudeChannelCredential(refreshCtx, ch.Id, service.ClaudeCredentialRefreshOptions{ResetCaches: true, Force: true})
 		refreshCancel()
 		if refreshErr != nil {
 			common.SysError(common.LogText("%s: token refresh after upstream %d failed: %s", logPrefix, statusCode, refreshErr.Error()))
 		} else {
-			retryCtx, retryCancel := context.WithTimeout(c.Request.Context(), timeout)
+			retryCtx, retryCancel := context.WithTimeout(ctx, timeout)
 			defer retryCancel()
 			statusCode, payload, err = fetch(retryCtx, client, ch, refreshedKey.AccessToken)
 		}
@@ -171,15 +169,14 @@ func claudeChannelOAuthFetch(c *gin.Context, ch *model.Channel, fetch claudeOAut
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrClaudeResetNotAvailable):
-			common.ApiErrorT(c, "No reset credit is redeemable right now")
+			return statusCode, nil, common.NewMessage("No reset credit is redeemable right now")
 		case errors.Is(err, service.ErrClaudeResetOutcomeUnknown):
 			common.SysError(logPrefix + ": " + err.Error())
-			common.ApiErrorT(c, "The reset request was interrupted and its result is unknown. Query the reset credits again before redeeming another credit")
+			return statusCode, nil, common.NewMessage("The reset request was interrupted and its result is unknown. Query the reset credits again before redeeming another credit")
 		default:
 			common.SysError(logPrefix + ": " + err.Error())
-			common.ApiErrorT(c, userMessage)
+			return statusCode, nil, common.NewMessage(userMessage)
 		}
-		return statusCode, nil, false
 	}
-	return statusCode, payload, true
+	return statusCode, payload, nil
 }

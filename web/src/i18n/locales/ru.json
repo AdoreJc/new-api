@@ -7591,6 +7591,10 @@
     "When off, this gateway is hidden from users and new orders are rejected. Callbacks for orders already placed are still processed.": "Если выключено, шлюз скрыт от пользователей и новые заказы отклоняются. Обратные вызовы по уже созданным заказам по-прежнему обрабатываются.",
     "Enable payment method {{name}}": "Включить способ оплаты {{name}}",
     "This payment channel is disabled": "Этот платёжный канал отключён",
-    "The enabled field of payment method {{type}} must be true or false": "Поле enabled способа оплаты {{type}} должно быть true или false"
+    "The enabled field of payment method {{type}} must be true or false": "Поле enabled способа оплаты {{type}} должно быть true или false",
+    "Copy CC Switch usage script": "Скопировать скрипт использования для CC Switch",
+    "Paste into CC Switch as the custom usage script of a provider that uses an API key of this account": "Вставьте в CC Switch как пользовательский скрипт использования для провайдера с API-ключом этой учётной записи",
+    "Resets in {{time}}": "Сброс через {{time}}",
+    "No bound subscription": "Нет привязанной подписки"
   }
 }

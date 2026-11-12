@@ -83,8 +83,8 @@ func GetSubscriptionSelfResetCredits(c *gin.Context) {
 	}
 	switch ch.Type {
 	case constant.ChannelTypeClaudeOAuth:
-		statusCode, payload, fetched := claudeChannelOAuthFetch(
-			c, ch,
+		statusCode, payload, err := claudeChannelOAuthFetch(
+			c.Request.Context(), ch,
 			func(ctx context.Context, client *http.Client, ch *model.Channel, accessToken string) (int, any, error) {
 				status, credits, err := service.FetchClaudeResetCredits(ctx, client, ch.GetBaseURL(), accessToken)
 				if err != nil || credits == nil {
@@ -96,18 +96,20 @@ func GetSubscriptionSelfResetCredits(c *gin.Context) {
 			common.LogText("failed to fetch claude reset credits for subscription"),
 			"Failed to fetch reset credit details. Please try again later",
 		)
-		if !fetched {
+		if err != nil {
+			common.ApiError(c, err)
 			return
 		}
 		writeSubscriptionUpstreamResult(c, statusCode, payload)
 	case constant.ChannelTypeCodex:
-		statusCode, body, fetched := codexChannelWhamFetch(
-			c, ch,
+		statusCode, body, err := codexChannelWhamFetch(
+			c.Request.Context(), ch,
 			service.FetchCodexWhamRateLimitResetCredits,
 			common.LogText("failed to fetch codex reset credits for subscription"),
 			"Failed to fetch reset credit details. Please try again later",
 		)
-		if !fetched {
+		if err != nil {
+			common.ApiError(c, err)
 			return
 		}
 		credits := SubscriptionCodexResetCredits{Credits: []SubscriptionCodexResetCredit{}}
@@ -145,8 +147,8 @@ func ResetSubscriptionSelfUsage(c *gin.Context) {
 	case constant.ChannelTypeClaudeOAuth:
 		provider = "claude"
 		var redeemErr error
-		statusCode, payload, fetched := claudeChannelOAuthFetch(
-			c, ch,
+		statusCode, payload, fetchErr := claudeChannelOAuthFetch(
+			c.Request.Context(), ch,
 			func(ctx context.Context, client *http.Client, ch *model.Channel, accessToken string) (int, any, error) {
 				status, outcome, err := service.RedeemClaudeResetCredit(ctx, client, ch.GetBaseURL(), accessToken)
 				redeemErr = err
@@ -165,7 +167,7 @@ func ResetSubscriptionSelfUsage(c *gin.Context) {
 			result = "not_available"
 		case errors.Is(redeemErr, service.ErrClaudeResetOutcomeUnknown):
 			result = "outcome_unknown"
-		case !fetched:
+		case fetchErr != nil:
 			result = "error"
 		case statusCode < 200 || statusCode >= 300:
 			result = fmt.Sprintf("upstream_status_%d", statusCode)
@@ -174,31 +176,37 @@ func ResetSubscriptionSelfUsage(c *gin.Context) {
 		default:
 			result = "outcome_unknown"
 		}
-		if fetched {
+		if fetchErr != nil {
+			common.ApiError(c, fetchErr)
+		} else {
 			writeSubscriptionUpstreamResult(c, statusCode, payload)
 		}
 	case constant.ChannelTypeCodex:
 		provider = "codex"
-		statusCode, body, fetched := codexChannelWhamFetch(
-			c, ch,
+		statusCode, body, fetchErr := codexChannelWhamFetch(
+			c.Request.Context(), ch,
 			service.ConsumeCodexWhamRateLimitResetCredit,
 			common.LogText("failed to reset codex usage for subscription"),
 			"Failed to reset usage. Please try again later",
 		)
 		switch {
-		case !fetched:
+		case fetchErr != nil:
 			result = "error"
 		case statusCode < 200 || statusCode >= 300:
 			result = fmt.Sprintf("upstream_status_%d", statusCode)
 		default:
 			result = "consumed"
 		}
-		if fetched {
+		if fetchErr != nil {
+			common.ApiError(c, fetchErr)
+		} else {
 			var outcome SubscriptionCodexResetOutcome
 			_ = common.Unmarshal(body, &outcome)
 			writeSubscriptionUpstreamResult(c, statusCode, outcome)
 		}
 	}
+	// A redemption changes the windows; the next usage query asks upstream.
+	service.InvalidateSubscriptionUsage(ch.Id)
 
 	recordUserSecurityAudit(c, sub.UserId, "subscription.reset_credit_redeem", map[string]any{
 		"subscription_id": sub.Id,

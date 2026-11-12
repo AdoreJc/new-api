@@ -311,3 +311,29 @@ describe('SubscriptionUsageDialog reset credits', () => {
     expect(applyResetButton()).toBeDisabled()
   })
 })
+
+describe('SubscriptionUsageDialog CC Switch script', () => {
+  test('the copy button puts a usage script for the bound provider on the clipboard', async () => {
+    const user = userEvent.setup()
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText')
+    vi.spyOn(api, 'get').mockResolvedValue(usageResponse('codex', false))
+
+    render(
+      <SubscriptionUsageDialog
+        open
+        onOpenChange={() => {}}
+        subscription={{ ...subscription, bound_channel_type: 57 }}
+      />
+    )
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Copy CC Switch usage script' })
+    )
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1))
+    const script = writeText.mock.calls[0][0]
+    expect(script).toContain('/api/usage/subscription?provider=codex')
+    expect(script).toContain('Bearer {{apiKey}}')
+    expect(script).not.toContain('reset-credits')
+  })
+})
