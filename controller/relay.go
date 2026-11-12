@@ -26,6 +26,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/promptaudit"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
@@ -156,6 +157,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		stopKeepAlive := helper.StartStreamKeepAlive(c, time.Duration(generalSettings.PingIntervalSeconds)*time.Second)
 		defer stopKeepAlive()
 	}
+
+	// Asynchronous prompt audit: only queues a copy of the body, never blocks
+	// or changes the response, and runs once before billing and retries.
+	promptaudit.EnqueueRelay(c, relayInfo)
 
 	if newAPIError = relay.PrepareRequestBilling(c, relayInfo); newAPIError != nil {
 		return

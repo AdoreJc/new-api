@@ -31,6 +31,7 @@ import (
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/service/promptaudit"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
@@ -134,6 +135,9 @@ func main() {
 
 	// Claude Subscription (OAuth) credential auto-refresh: renew 30 minutes before expiry
 	service.StartClaudeCredentialAutoRefreshTask()
+
+	// Prompt audit workers, event writer and retention cleanup (idle until enabled)
+	promptaudit.Start()
 
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()

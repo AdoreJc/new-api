@@ -31,6 +31,7 @@ import {
   Radio,
   ServerCog,
   Settings,
+  ShieldAlert,
   ShieldCheck,
   Ticket,
   User,
@@ -167,6 +168,12 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             title: t('Task Plugins'),
             url: '/task-plugins',
             icon: PlugZap,
+            requiredRole: ROLE.SUPER_ADMIN,
+          },
+          {
+            title: t('Prompt Audit'),
+            url: '/usage-logs/prompt-audit',
+            icon: ShieldAlert,
             requiredRole: ROLE.SUPER_ADMIN,
           },
           {

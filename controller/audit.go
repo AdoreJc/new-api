@@ -76,6 +76,9 @@ var auditContentTemplates = map[string]string{
 	"subscription.channel_bind":        "Bound channel ${channel_id} to the subscription of user ${target_user_id}",
 	"subscription.channel_unbind":      "Unbound the channel from subscription ${subscription_id} of user ${target_user_id}",
 	"subscription.reset_credit_redeem": "Redeemed a ${provider} reset credit for subscription ${subscription_id} (channel ${channel_id}): ${result}",
+
+	"prompt_audit.event_view":    "Viewed prompt audit event ${id}",
+	"prompt_audit.events_delete": "Deleted ${count} prompt audit events",
 }
 
 func recordPasskeyDomainAudit(c *gin.Context, change *model.PasskeyDomainChange, confirmed bool, err error) {

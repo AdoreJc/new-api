@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/performance_setting"
+	"github.com/QuantumNous/new-api/setting/prompt_audit_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"gorm.io/gorm"
@@ -77,6 +78,8 @@ func InitOptionMap() {
 	common.OptionMap[common.EmailOAuthEmailOption] = ""
 	common.OptionMap[common.EmailOAuthFromOption] = ""
 	common.OptionMap[common.EmailOAuthScopesOption] = ""
+	common.OptionMap[prompt_audit_setting.OptionKey] = ""
+	common.OptionMap[prompt_audit_setting.TokensOptionKey] = ""
 	common.OptionMap["SMTPFrom"] = ""
 	common.OptionMap["SMTPPort"] = strconv.Itoa(common.SMTPPort)
 	common.OptionMap["SMTPAccount"] = ""
@@ -254,6 +257,9 @@ func validateOptionValue(key string, value string) error {
 	if err := validateEmailDeliveryOption(key, value); err != nil {
 		return err
 	}
+	if prompt_audit_setting.IsOptionKey(key) {
+		return common.NewMessage("This setting is managed by the prompt audit settings page")
+	}
 	if key == "ResendKeyConfigured" {
 		return common.NewMessage("Resend key configuration status is read-only")
 	}
@@ -381,6 +387,11 @@ func updateOptionMap(key string, value string) (err error) {
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
 	common.OptionMap[key] = value
+
+	if prompt_audit_setting.IsOptionKey(key) {
+		prompt_audit_setting.ApplyOption(key, value)
+		return nil
+	}
 
 	// 检查是否是模型配置 - 使用更规范的方式处理
 	if handleConfigUpdate(key, value) {
