@@ -373,7 +373,13 @@ export type OperationsSettings = {
   SelfUseModeEnabled: boolean
   QuotaRemindEnabled: boolean
   QuotaRemindThreshold: string
-  EmailProvider: 'smtp' | 'resend'
+  EmailProvider: 'smtp' | 'resend' | 'oauth'
+  EmailOAuthProvider: 'google' | 'microsoft'
+  EmailOAuthClientId: string
+  EmailOAuthClientSecret: string
+  EmailOAuthSecretConfigured: boolean
+  EmailOAuthTenant: string
+  EmailOAuthEmail: string
   ResendApiKey: string
   ResendKeyConfigured: boolean
   ResendFrom: string

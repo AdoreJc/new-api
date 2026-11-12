@@ -36,6 +36,12 @@ function Fixture() {
         <EmailSettingsSection
           defaultValues={{
             EmailProvider: 'smtp',
+            EmailOAuthProvider: 'google',
+            EmailOAuthClientId: '',
+            EmailOAuthClientSecret: '',
+            EmailOAuthSecretConfigured: false,
+            EmailOAuthTenant: 'common',
+            EmailOAuthEmail: '',
             ResendApiKey: '',
             ResendKeyConfigured: false,
             ResendFrom: '',

@@ -21,7 +21,14 @@ import * as z from 'zod'
 export const createEmailSchema = (t: (key: string) => string) =>
   z
     .object({
-      EmailProvider: z.enum(['smtp', 'resend']),
+      EmailProvider: z.enum(['smtp', 'resend', 'oauth']),
+      EmailOAuthProvider: z.enum(['google', 'microsoft']),
+      EmailOAuthClientId: z.string(),
+      EmailOAuthClientSecret: z.string(),
+      EmailOAuthSecretConfigured: z.boolean(),
+      EmailOAuthTenant: z.string(),
+      // Read-only: set by the authorization flow.
+      EmailOAuthEmail: z.string(),
       ResendApiKey: z.string(),
       ResendKeyConfigured: z.boolean(),
       ResendFrom: z.string(),
@@ -44,6 +51,38 @@ export const createEmailSchema = (t: (key: string) => string) =>
       }, t('Must be greater than or equal to 0')),
     })
     .superRefine((values, context) => {
+      if (values.EmailProvider === 'oauth') {
+        if (!values.EmailOAuthClientId.trim()) {
+          context.addIssue({
+            code: 'custom',
+            path: ['EmailOAuthClientId'],
+            message: t('Enter the Client ID'),
+          })
+        }
+        if (
+          !values.EmailOAuthSecretConfigured &&
+          !values.EmailOAuthClientSecret.trim()
+        ) {
+          context.addIssue({
+            code: 'custom',
+            path: ['EmailOAuthClientSecret'],
+            message: t('Enter the client secret'),
+          })
+        }
+        const tenant = values.EmailOAuthTenant.trim()
+        if (
+          values.EmailOAuthProvider === 'microsoft' &&
+          tenant &&
+          !/^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$/.test(tenant)
+        ) {
+          context.addIssue({
+            code: 'custom',
+            path: ['EmailOAuthTenant'],
+            message: t('Enter a valid tenant ID or domain'),
+          })
+        }
+        return
+      }
       if (values.EmailProvider === 'resend') {
         if (!values.ResendKeyConfigured && !values.ResendApiKey.trim()) {
           context.addIssue({

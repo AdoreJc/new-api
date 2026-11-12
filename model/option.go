@@ -69,6 +69,12 @@ func InitOptionMap() {
 	common.OptionMap["EmailProvider"] = "smtp"
 	common.OptionMap["ResendApiKey"] = ""
 	common.OptionMap["ResendFrom"] = ""
+	common.OptionMap[common.EmailOAuthProviderOption] = common.EmailOAuthProviderGoogle
+	common.OptionMap[common.EmailOAuthClientIdOption] = ""
+	common.OptionMap[common.EmailOAuthClientSecretOption] = ""
+	common.OptionMap[common.EmailOAuthTenantOption] = common.EmailOAuthDefaultTenant
+	common.OptionMap[common.EmailOAuthRefreshTokenOption] = ""
+	common.OptionMap[common.EmailOAuthEmailOption] = ""
 	common.OptionMap["SMTPFrom"] = ""
 	common.OptionMap["SMTPPort"] = strconv.Itoa(common.SMTPPort)
 	common.OptionMap["SMTPAccount"] = ""
@@ -242,23 +248,8 @@ func validateOptionValue(key string, value string) error {
 	if err := operation_setting.ValidateQuotaOption(key, value); err != nil {
 		return err
 	}
-	if key == "EmailProvider" || key == "ResendApiKey" || key == "ResendFrom" {
-		if key == "EmailProvider" && value != "smtp" && value != "resend" {
-			return common.NewMessage("Email sending method must be SMTP or Resend")
-		}
-		common.OptionMapRWMutex.RLock()
-		settings := map[string]string{
-			"EmailProvider": common.OptionMap["EmailProvider"],
-			"ResendApiKey":  common.OptionMap["ResendApiKey"],
-			"ResendFrom":    common.OptionMap["ResendFrom"],
-		}
-		common.OptionMapRWMutex.RUnlock()
-		settings[key] = value
-		// While Resend is the active method, a change must keep settings it can
-		// send with. Inactive drafts are checked when Resend is turned on.
-		if settings["EmailProvider"] == "resend" {
-			return common.ValidateResendConfiguration(settings["ResendApiKey"], settings["ResendFrom"])
-		}
+	if err := validateEmailDeliveryOption(key, value); err != nil {
+		return err
 	}
 	if key == "ResendKeyConfigured" {
 		return common.NewMessage("Resend key configuration status is read-only")
