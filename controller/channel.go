@@ -546,6 +546,20 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	if channel.CostRatio != nil && !(*channel.CostRatio > 0 && *channel.CostRatio <= model.MaxChannelCostRatio) {
 		return common.NewMessage("Channel cost ratio must be greater than 0 and at most {{max}}", map[string]any{"max": model.MaxChannelCostRatio})
 	}
+	if channel.CostMode != nil && *channel.CostMode != "" && !model.IsValidChannelCostMode(*channel.CostMode) {
+		return common.NewMessage("Invalid channel cost mode")
+	}
+	if channel.MonthlyCostUSD != nil && !(*channel.MonthlyCostUSD >= 0 && *channel.MonthlyCostUSD <= model.MaxChannelMonthlyCostUSD) {
+		return common.NewMessage("Monthly cost must be between 0 and {{max}} USD", map[string]any{"max": model.MaxChannelMonthlyCostUSD})
+	}
+	if channel.CostEffectiveFrom != nil && channel.CostEffectiveTo != nil && *channel.CostEffectiveTo <= *channel.CostEffectiveFrom {
+		return common.NewMessage("The cost end date must be after the start date")
+	}
+	// Subscription fields are parsed from the account, never taken from a request.
+	channel.SubscriptionPlanType = ""
+	channel.SubscriptionActiveStart = nil
+	channel.SubscriptionActiveUntil = nil
+	channel.SubscriptionSyncedAt = nil
 
 	// 校验 channel settings
 	if err := channel.ValidateSettings(); err != nil {
@@ -871,6 +885,11 @@ func AddChannel(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	for i := range channels {
+		if channels[i].Type == constant.ChannelTypeCodex {
+			service.SyncCodexChannelSubscription(channels[i].Id)
+		}
 	}
 	createAudit := map[string]any{
 		"name":  addChannelRequest.Channel.Name,
@@ -1286,6 +1305,13 @@ func UpdateChannel(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if err := model.UpdateChannelCostSettings(&channel.Channel, requestData); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if channel.Type == constant.ChannelTypeCodex {
+		service.SyncCodexChannelSubscription(channel.Id)
 	}
 	model.InitChannelCache()
 	if proxyChanged {

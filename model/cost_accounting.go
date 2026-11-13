@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 
@@ -32,7 +33,15 @@ type consumeCostAccounting struct {
 // admin_info so later ratio changes never rewrite history.
 func newConsumeCostAccounting(channelId int, standardQuota int, other *LogOther) consumeCostAccounting {
 	standardQuota = max(standardQuota, 0)
-	costRatio := channelCostRatio(channelId)
+	channel := channelCostConfig(channelId)
+	if channel.GetCostMode() == ChannelCostModeFixedMonthly {
+		// Subscription accounts cost a fixed monthly amount that the
+		// dashboard amortizes per day; a request adds no usage cost.
+		other.SetAdmin("cost_mode", ChannelCostModeFixedMonthly)
+		return consumeCostAccounting{StandardQuota: standardQuota}
+	}
+	costRatio := channel.GetCostRatio()
+	other.SetAdmin("cost_mode", ChannelCostModeRatio)
 	other.SetAdmin("channel_cost_ratio", costRatio)
 	return consumeCostAccounting{
 		StandardQuota: standardQuota,
@@ -40,20 +49,71 @@ func newConsumeCostAccounting(channelId int, standardQuota int, other *LogOther)
 	}
 }
 
-func channelCostRatio(channelId int) float64 {
+// channelCostConfig returns the cost settings of a channel; an unknown
+// channel counts as ratio mode with ratio 1.
+func channelCostConfig(channelId int) *Channel {
 	if channelId <= 0 {
-		return 1
+		return &Channel{}
 	}
 	if common.MemoryCacheEnabled {
 		if channel, err := CacheGetChannel(channelId); err == nil {
-			return channel.GetCostRatio()
+			return channel
 		}
 	}
 	var channel Channel
-	if err := DB.Model(&Channel{}).Select("id, cost_ratio").Where("id = ?", channelId).Take(&channel).Error; err != nil {
-		return 1
+	if err := DB.Model(&Channel{}).Select("id, type, cost_ratio, cost_mode").Where("id = ?", channelId).Take(&channel).Error; err != nil {
+		return &Channel{}
 	}
-	return channel.GetCostRatio()
+	return &channel
+}
+
+func channelCostRatio(channelId int) float64 {
+	return channelCostConfig(channelId).GetCostRatio()
+}
+
+// ChannelCostSettingFields are the administrator-editable cost settings that
+// may be cleared back to NULL ("not entered" / "use the subscription window").
+var ChannelCostSettingFields = []string{"cost_mode", "monthly_cost_usd", "cost_effective_from", "cost_effective_to"}
+
+// UpdateChannelCostSettings writes the cost settings present in the request,
+// including explicit nulls, which a struct update would skip.
+func UpdateChannelCostSettings(channel *Channel, provided map[string]any) error {
+	updates := map[string]any{}
+	for _, field := range ChannelCostSettingFields {
+		if _, ok := provided[field]; !ok {
+			continue
+		}
+		switch field {
+		case "cost_mode":
+			updates[field] = channel.CostMode
+		case "monthly_cost_usd":
+			updates[field] = channel.MonthlyCostUSD
+		case "cost_effective_from":
+			updates[field] = channel.CostEffectiveFrom
+		case "cost_effective_to":
+			updates[field] = channel.CostEffectiveTo
+		}
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	return DB.Model(&Channel{}).Where("id = ?", channel.Id).Updates(updates).Error
+}
+
+// UpdateChannelSubscriptionWindow stores the subscription plan and window
+// parsed from the account. Missing values keep what was stored before.
+func UpdateChannelSubscriptionWindow(channelId int, planType string, start, until *int64, syncedAt int64) error {
+	updates := map[string]any{"subscription_synced_at": syncedAt}
+	if planType != "" {
+		updates["subscription_plan_type"] = planType
+	}
+	if start != nil {
+		updates["subscription_active_start"] = *start
+	}
+	if until != nil {
+		updates["subscription_active_until"] = *until
+	}
+	return DB.Model(&Channel{}).Where("id = ?", channelId).Updates(updates).Error
 }
 
 // EnsureCostAccountingStartTime records when cost accounting started. It keeps
@@ -119,12 +179,19 @@ type CostSummaryRow struct {
 	// PendingRows counts quota_data rows not yet backfilled; their amounts
 	// are missing from StandardQuota, CostQuota and AccountedQuota.
 	PendingRows int64 `json:"pending_rows"`
+	// CostQuota above is the usage-based cost; FixedCostQuota is the
+	// amortized fixed monthly cost allocated to this row.
+	FixedCostQuota int64 `json:"fixed_cost_quota"`
+	// Unallocated marks fixed cost of days without requests on the channel,
+	// which no group, model or user can carry.
+	Unallocated bool `json:"unallocated,omitempty"`
 }
 
 type CostSummary struct {
-	Total               CostSummaryRow    `json:"total"`
-	Rows                []*CostSummaryRow `json:"rows"`
-	AccountingStartTime int64             `json:"accounting_start_time"`
+	Total               CostSummaryRow     `json:"total"`
+	Rows                []*CostSummaryRow  `json:"rows"`
+	AccountingStartTime int64              `json:"accounting_start_time"`
+	FixedChannels       []FixedCostChannel `json:"fixed_channels"`
 }
 
 const costSummarySums = "COALESCE(sum(count), 0) as count, COALESCE(sum(quota), 0) as quota, " +
@@ -167,6 +234,10 @@ func GetCostSummary(startTime int64, endTime int64, username string, dimension C
 		if err := fillCostChannelNames(summary.Rows); err != nil {
 			return nil, err
 		}
+	}
+	summary.FixedChannels = []FixedCostChannel{}
+	if err := applyFixedCosts(summary, startTime, endTime, username, dimension, common.GetTimestamp(), time.Local); err != nil {
+		return nil, err
 	}
 	summary.AccountingStartTime = GetCostAccountingStartTime()
 	return summary, nil
@@ -222,12 +293,17 @@ func BackfillLogCostBatch(ctx context.Context, afterId int, limit int) (lastId i
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		return 0, 0, nil
 	}
-	var rows []struct {
-		Id    int
-		Quota int
-		Other string
+	fixed, err := fixedCostChannelIDs(ctx)
+	if err != nil {
+		return 0, 0, err
 	}
-	err = LOG_DB.WithContext(ctx).Model(&Log{}).Select("id, quota, other").
+	var rows []struct {
+		Id        int
+		Quota     int
+		ChannelId int
+		Other     string
+	}
+	err = LOG_DB.WithContext(ctx).Model(&Log{}).Select("id, quota, channel_id, other").
 		Where("id > ? AND type = ? AND standard_quota IS NULL", afterId, LogTypeConsume).
 		Order("id asc").Limit(limit).Find(&rows).Error
 	if err != nil || len(rows) == 0 {
@@ -236,8 +312,12 @@ func BackfillLogCostBatch(ctx context.Context, afterId int, limit int) (lastId i
 	err = LOG_DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, row := range rows {
 			standard := EstimateStandardQuota(row.Quota, row.Other)
+			cost := standard
+			if fixed[row.ChannelId] {
+				cost = 0
+			}
 			result := tx.Model(&Log{}).Where("id = ? AND standard_quota IS NULL", row.Id).
-				Updates(map[string]any{"standard_quota": standard, "cost_quota": standard})
+				Updates(map[string]any{"standard_quota": standard, "cost_quota": cost})
 			if result.Error != nil {
 				return result.Error
 			}
@@ -249,6 +329,22 @@ func BackfillLogCostBatch(ctx context.Context, afterId int, limit int) (lastId i
 		return 0, 0, err
 	}
 	return rows[len(rows)-1].Id, updated, nil
+}
+
+// fixedCostChannelIDs lists the channels whose cost is a fixed monthly amount;
+// their requests carry no usage cost, also when estimated.
+func fixedCostChannelIDs(ctx context.Context) (map[int]bool, error) {
+	var channels []Channel
+	if err := DB.WithContext(ctx).Model(&Channel{}).Select("id, type, cost_mode").Find(&channels).Error; err != nil {
+		return nil, err
+	}
+	fixed := make(map[int]bool)
+	for i := range channels {
+		if channels[i].GetCostMode() == ChannelCostModeFixedMonthly {
+			fixed[channels[i].Id] = true
+		}
+	}
+	return fixed, nil
 }
 
 // costBackfillWindow is the quota_data time span processed per batch.
@@ -312,6 +408,10 @@ func BackfillQuotaDataCostWindow(ctx context.Context) (updated int, more bool, e
 		Find(&logs).Error; err != nil {
 		return 0, false, err
 	}
+	fixed, err := fixedCostChannelIDs(ctx)
+	if err != nil {
+		return 0, false, err
+	}
 	buckets := make(map[costBucketKey]*costBucketSum)
 	for _, log := range logs {
 		key := costBucketKey{log.UserId, log.ModelName, log.CreatedAt - log.CreatedAt%3600, log.Group, log.TokenId, log.ChannelId}
@@ -331,6 +431,9 @@ func BackfillQuotaDataCostWindow(ctx context.Context) (updated int, more bool, e
 		} else {
 			standard = EstimateStandardQuota(log.Quota, log.Other)
 			cost = standard
+			if fixed[log.ChannelId] {
+				cost = 0
+			}
 		}
 		sum.Quota += int64(log.Quota)
 		sum.Standard += int64(standard)
@@ -340,6 +443,9 @@ func BackfillQuotaDataCostWindow(ctx context.Context) (updated int, more bool, e
 	err = DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, row := range dataRows {
 			standardRatio, costRatio := 1.0, 1.0
+			if fixed[row.ChannelID] {
+				costRatio = 0
+			}
 			sum := buckets[costBucketKey{row.UserID, row.ModelName, row.CreatedAt, row.UseGroup, row.TokenID, row.ChannelID}]
 			if sum != nil && sum.Quota > 0 {
 				standardRatio = float64(sum.Standard) / float64(sum.Quota)

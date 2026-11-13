@@ -2,10 +2,13 @@ package model
 
 import (
 	"context"
+	"math"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -21,6 +24,7 @@ func resetCostAccountingTables(t *testing.T) {
 		DB.Exec("DELETE FROM logs")
 		DB.Exec("DELETE FROM quota_data")
 		DB.Exec("DELETE FROM users")
+		DB.Exec("DELETE FROM channels")
 		CacheQuotaDataLock.Lock()
 		CacheQuotaData = make(map[string]*QuotaData)
 		CacheQuotaDataLock.Unlock()
@@ -419,4 +423,166 @@ func runCostAccountingMatrix(t *testing.T, kind common.DatabaseType, db, logDB *
 		_, err := GetCostSummary(hour-7200, hour+7200, "", dimension)
 		require.NoError(t, err, dimension)
 	}
+}
+
+func utcUnix(year int, month time.Month, day, hour int) int64 {
+	return time.Date(year, month, day, hour, 0, 0, 0, time.UTC).Unix()
+}
+
+func sumUSD(perDay map[int64]float64) float64 {
+	total := 0.0
+	for _, usd := range perDay {
+		total += usd
+	}
+	return total
+}
+
+func TestAmortizeMonthlyCost(t *testing.T) {
+	utc := time.UTC
+	// Two days across a month end: 1/31 of January plus 1/28 of February.
+	perDay := AmortizeMonthlyCost(310, utcUnix(2026, 1, 31, 0), utcUnix(2026, 2, 2, 0), nil, nil, utc)
+	assert.Len(t, perDay, 2)
+	assert.InDelta(t, 10.0, perDay[utcUnix(2026, 1, 31, 0)], 1e-9)
+	assert.InDelta(t, 310.0/28, perDay[utcUnix(2026, 2, 1, 0)], 1e-9)
+
+	// Less than a month: 10 of 30 April days.
+	assert.InDelta(t, 100.0, sumUSD(AmortizeMonthlyCost(300, utcUnix(2026, 4, 1, 0), utcUnix(2026, 4, 11, 0), nil, nil, utc)), 1e-9)
+
+	// The window truncates the range: subscription April 5..8 inside April.
+	from, to := utcUnix(2026, 4, 5, 0), utcUnix(2026, 4, 8, 0)
+	perDay = AmortizeMonthlyCost(300, utcUnix(2026, 4, 1, 0), utcUnix(2026, 5, 1, 0), &from, &to, utc)
+	assert.Len(t, perDay, 3)
+	assert.InDelta(t, 30.0, sumUSD(perDay), 1e-9)
+
+	// A partial day counts its covered share.
+	assert.InDelta(t, 5.0, sumUSD(AmortizeMonthlyCost(300, utcUnix(2026, 4, 1, 0), utcUnix(2026, 4, 1, 12), nil, nil, utc)), 1e-9)
+
+	// A whole month costs the monthly amount; an empty window costs nothing.
+	assert.InDelta(t, 300.0, sumUSD(AmortizeMonthlyCost(300, utcUnix(2026, 4, 1, 0), utcUnix(2026, 5, 1, 0), nil, nil, utc)), 1e-9)
+	assert.Empty(t, AmortizeMonthlyCost(300, utcUnix(2026, 4, 1, 0), utcUnix(2026, 5, 1, 0), &to, &from, utc))
+}
+
+func TestChannelCostModeDefaultsAndWindow(t *testing.T) {
+	assert.Equal(t, ChannelCostModeFixedMonthly, (&Channel{Type: constant.ChannelTypeCodex}).GetCostMode())
+	assert.Equal(t, ChannelCostModeFixedMonthly, (&Channel{Type: constant.ChannelTypeClaudeOAuth}).GetCostMode())
+	assert.Equal(t, ChannelCostModeRatio, (&Channel{Type: constant.ChannelTypeOpenAI}).GetCostMode())
+	assert.Equal(t, ChannelCostModeRatio, (&Channel{Type: constant.ChannelTypeCodex, CostMode: new(ChannelCostModeRatio)}).GetCostMode())
+
+	start, until, manual := int64(100), int64(200), int64(150)
+	channel := &Channel{SubscriptionActiveStart: &start, SubscriptionActiveUntil: &until}
+	from, fromAuto, to, toAuto := channel.FixedCostWindow()
+	assert.Equal(t, start, *from)
+	assert.Equal(t, until, *to)
+	assert.True(t, fromAuto && toAuto)
+	channel.CostEffectiveTo = &manual
+	_, _, to, toAuto = channel.FixedCostWindow()
+	assert.Equal(t, manual, *to, "a manual end date overrides the subscription")
+	assert.False(t, toAuto)
+}
+
+// Fixed-cost channel requests record no usage cost and say so in admin_info.
+func TestFixedCostChannelLogsNoUsageCost(t *testing.T) {
+	resetCostAccountingTables(t)
+	require.NoError(t, DB.Create(&Channel{Id: 41, Name: "codex", Key: "k", Type: constant.ChannelTypeCodex, CostRatio: new(2.0)}).Error)
+	other := NewLogOther()
+	accounting := newConsumeCostAccounting(41, 500, other)
+	assert.Equal(t, 500, accounting.StandardQuota)
+	assert.Zero(t, accounting.CostQuota)
+	assert.Equal(t, ChannelCostModeFixedMonthly, other.adminInfo["cost_mode"])
+	assert.NotContains(t, other.adminInfo, "channel_cost_ratio")
+
+	require.NoError(t, DB.Model(&Channel{}).Where("id = ?", 41).Update("cost_mode", ChannelCostModeRatio).Error)
+	accounting = newConsumeCostAccounting(41, 500, NewLogOther())
+	assert.Equal(t, 1000, accounting.CostQuota, "ratio mode is unchanged")
+
+	// Clearing a manual date or the monthly cost ("restore auto", "not
+	// entered") writes NULL; fields absent from the request stay.
+	from, to := int64(100), int64(200)
+	require.NoError(t, DB.Model(&Channel{}).Where("id = ?", 41).Updates(map[string]any{"monthly_cost_usd": 20, "cost_effective_from": from, "cost_effective_to": to}).Error)
+	require.NoError(t, UpdateChannelCostSettings(&Channel{Id: 41}, map[string]any{"cost_effective_from": nil, "monthly_cost_usd": nil}))
+	var stored Channel
+	require.NoError(t, DB.First(&stored, 41).Error)
+	assert.Nil(t, stored.CostEffectiveFrom)
+	assert.Nil(t, stored.MonthlyCostUSD)
+	assert.Equal(t, to, *stored.CostEffectiveTo)
+}
+
+func TestFixedCostAllocation(t *testing.T) {
+	resetCostAccountingTables(t)
+	utc := time.UTC
+	day1, day3 := utcUnix(2026, 4, 1, 0), utcUnix(2026, 4, 3, 0)
+	end := utcUnix(2026, 4, 4, 0) - 1
+	expiredUntil := utcUnix(2026, 4, 2, 12)
+	require.NoError(t, DB.Create(&[]Channel{
+		{Id: 51, Name: "claude-sub", Key: "k", Type: constant.ChannelTypeClaudeOAuth, MonthlyCostUSD: new(300.0)},
+		{Id: 52, Name: "codex-unset", Key: "k", Type: constant.ChannelTypeCodex},
+		{Id: 53, Name: "codex-expired", Key: "k", Type: constant.ChannelTypeCodex, MonthlyCostUSD: new(60.0), SubscriptionPlanType: "pro", SubscriptionActiveUntil: &expiredUntil},
+		{Id: 54, Name: "api", Key: "k", Type: constant.ChannelTypeOpenAI},
+	}).Error)
+	// Day 1: channel 51 serves vip (list price 300) and default (100).
+	// Day 2: no requests on 51. Day 3: only vip.
+	require.NoError(t, DB.Create(&[]QuotaData{
+		{UserID: 1, Username: "a", ModelName: "m", UseGroup: "vip", ChannelID: 51, CreatedAt: day1 + 3600, Count: 1, Quota: 600, StandardQuota: new(300), CostQuota: new(0)},
+		{UserID: 2, Username: "b", ModelName: "m", UseGroup: "default", ChannelID: 51, CreatedAt: day1 + 7200, Count: 1, Quota: 100, StandardQuota: new(100), CostQuota: new(0)},
+		{UserID: 1, Username: "a", ModelName: "m", UseGroup: "vip", ChannelID: 51, CreatedAt: day3, Count: 1, Quota: 200, StandardQuota: new(200), CostQuota: new(0)},
+		{UserID: 1, Username: "a", ModelName: "m", UseGroup: "vip", ChannelID: 54, CreatedAt: day1, Count: 1, Quota: 50, StandardQuota: new(50), CostQuota: new(40)},
+	}).Error)
+	now := utcUnix(2026, 4, 10, 0)
+	quotaPerDay := 10 * common.QuotaPerUnit // 300 USD / 30 days
+
+	summarize := func(username string, dimension CostDimension) *CostSummary {
+		columns := map[CostDimension]string{CostDimensionGroup: "use_group", CostDimensionChannel: "channel_id", CostDimensionUser: "user_id, username"}[dimension]
+		tx := DB.Table("quota_data").Where("created_at >= ? and created_at <= ?", day1, end)
+		if username != "" {
+			tx = tx.Where("username = ?", username)
+		}
+		summary := &CostSummary{}
+		require.NoError(t, tx.Select(columns+", "+costSummarySums).Group(columns).Scan(&summary.Rows).Error)
+		require.NoError(t, applyFixedCosts(summary, day1, end, username, dimension, now, utc))
+		return summary
+	}
+	byKey := func(summary *CostSummary, dimension CostDimension) map[string]int64 {
+		result := map[string]int64{}
+		for _, row := range summary.Rows {
+			key := costRowKey(dimension, row.UseGroup, row.ChannelID, row.ModelName, row.UserID)
+			if row.Unallocated {
+				key = "unallocated"
+			}
+			result[key] = row.FixedCostQuota
+		}
+		return result
+	}
+	near := func(want float64) int64 { return int64(math.Round(want)) }
+
+	byGroup := summarize("", CostDimensionGroup)
+	groups := byKey(byGroup, CostDimensionGroup)
+	// 51: day 1 split 3:1 by list price, day 2 unallocated, day 3 all vip.
+	// 53: 1.5 days of 60/30 USD until the subscription expired, unallocated.
+	assert.Equal(t, near(quotaPerDay*0.75)+near(quotaPerDay), groups["g:vip"])
+	assert.Equal(t, near(quotaPerDay*0.25), groups["g:default"])
+	assert.Equal(t, near(quotaPerDay+3*common.QuotaPerUnit), groups["unallocated"])
+
+	byChannel := summarize("", CostDimensionChannel)
+	channels := byKey(byChannel, CostDimensionChannel)
+	assert.Equal(t, near(3*quotaPerDay), channels["c:51"], "fixed cost stays on its channel, idle days included")
+	assert.Equal(t, near(3*common.QuotaPerUnit), channels["c:53"], "amortization stops when the subscription expires")
+	assert.Zero(t, channels["c:54"])
+	assert.InDelta(t, byChannel.Total.FixedCostQuota, byGroup.Total.FixedCostQuota, 2)
+
+	infos := map[int]FixedCostChannel{}
+	for _, info := range byChannel.FixedChannels {
+		infos[info.ChannelID] = info
+	}
+	require.Len(t, infos, 3, "ratio channels are not fixed-cost channels")
+	assert.True(t, infos[52].Missing, "a channel without a monthly cost is reported, not counted as 0")
+	assert.Zero(t, infos[52].CostQuota)
+	assert.True(t, infos[53].Expired)
+	assert.True(t, infos[53].ToAuto)
+	assert.Equal(t, "pro", infos[53].PlanType)
+	assert.False(t, infos[51].Expired)
+
+	// A user filter counts only that user's share; idle days belong to nobody.
+	byUser := summarize("b", CostDimensionUser)
+	assert.Equal(t, near(quotaPerDay*0.25), byKey(byUser, CostDimensionUser)["u:2"])
+	assert.Equal(t, near(quotaPerDay*0.25), byUser.Total.FixedCostQuota)
 }

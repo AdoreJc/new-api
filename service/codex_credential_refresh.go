@@ -151,6 +151,7 @@ func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts Code
 
 	persistRenewedChannelKey(ctx, ch.Id, usedRefreshToken, oauthKey.RefreshToken, string(encoded))
 	ch.Key = string(encoded)
+	syncCodexSubscriptionFromIDToken(ch.Id, oauthKey.IDToken)
 
 	if opts.ResetCaches {
 		model.InitChannelCache()
