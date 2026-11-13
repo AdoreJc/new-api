@@ -34,6 +34,8 @@ type Subject struct {
 	Group          string
 	RequestedGroup string
 	Model          string
+	// Format is the relay format, matched by format conditions of the rules.
+	Format string
 }
 
 // Decision is a scope policy's answer for one request.

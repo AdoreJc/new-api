@@ -8158,5 +8158,7 @@
   "Select at least one keyword list for the keyword mode": "关键词模式至少要选择一个词表",
   "Unreadable": "无法读取",
   "Edit or delete the rules that could not be read before saving the audit policy": "保存审核策略前，请先编辑或删除无法读取的规则",
-  "The saved audit policy could not be read in full. Rules marked unreadable run no checks; where they asked to block, their failure policy decides. Edit or delete each of them, then save to repair the policy.": "已保存的审核策略无法完整读取。标为无法读取的规则不执行检查；原本要求拦截的按其故障策略处理。请逐条编辑或删除这些规则，再保存以修复策略。"
+  "The saved audit policy could not be read in full. Rules marked unreadable run no checks; where they asked to block, their failure policy decides. Edit or delete each of them, then save to repair the policy.": "已保存的审核策略无法完整读取。标为无法读取的规则不执行检查；原本要求拦截的按其故障策略处理。请逐条编辑或删除这些规则，再保存以修复策略。",
+  "This rule could not be read. The fields below are a placeholder that only keeps its blocking intent, not its original settings. Set the actions and conditions you want: once applied and saved, they become the rule.": "该规则无法读取。下面的内容只是保留拦截意图的占位，并非原来的设置。请设置你需要的动作和条件：应用并保存后，它们就成为正式规则。",
+  "Approximate result for any format: rules limited to some formats were matched as if the request had one of them.": "任意格式下的近似结果：限定格式的规则按请求属于其中一种格式来匹配。"
 }

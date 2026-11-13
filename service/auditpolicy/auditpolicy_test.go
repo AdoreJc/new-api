@@ -481,17 +481,45 @@ func TestStoredActionValuesFitTheirColumns(t *testing.T) {
 	}
 }
 
-// TestExplainWithoutAFormatMatchesFormatRules tests a request with no format,
-// as the admin page's "any format" does: rules derived from the engine
-// settings, which list formats, still match it.
-func TestExplainWithoutAFormatMatchesFormatRules(t *testing.T) {
+// TestExplainForAnyFormatMatchesFormatRules tests a request whose format is
+// left open, as the admin page's "any format" does: rules derived from the
+// engine settings, which list formats, match it and the result says so.
+// Without the flag an empty format matches no format rule.
+func TestExplainForAnyFormatMatchesFormatRules(t *testing.T) {
 	endpoint, _ := guardEndpoint(t, "Safety: Safe\nCategories: None", 0)
 	config := blockingConfig(endpoint)
 	config.Mode = prompt_audit_setting.ModeAsync
 	usePromptAudit(t, config)
-	plan := Explain(audit_policy_setting.Subject{UserID: 1, Group: "default", Model: "m"})
+	plan := Explain(audit_policy_setting.Subject{UserID: 1, Group: "default", Model: "m", AnyFormat: true})
 	assert.Equal(t, "legacy-prompt-audit", plan.RuleID)
 	assert.Equal(t, engineAsync, plan.PromptAudit)
+	assert.True(t, plan.AnyFormat)
+	unknown := Explain(audit_policy_setting.Subject{UserID: 1, Group: "default", Model: "m"})
+	assert.Equal(t, audit_policy_setting.DefaultRuleID, unknown.RuleID)
 	websocket := Explain(audit_policy_setting.Subject{UserID: 1, Group: "default", Model: "m", Format: FormatResponsesWebSocket})
 	assert.Equal(t, audit_policy_setting.DefaultRuleID, websocket.RuleID, "a named format still has to match")
+}
+
+// TestFormatLimitedExemptionStaysInItsFormat exempts Claude requests from
+// content moderation with a format rule: through the engine's scope policy,
+// requests of other formats still reach the default rule.
+func TestFormatLimitedExemptionStaysInItsFormat(t *testing.T) {
+	cm := content_moderation_setting.DefaultConfig()
+	cm.Mode = content_moderation_setting.ModePreBlock
+	useContentModeration(t, cm, []string{"k"})
+	usePolicy(t, audit_policy_setting.Config{
+		Rules: []audit_policy_setting.Rule{{ID: "claude-exempt", Enabled: true, Match: audit_policy_setting.Match{Formats: []string{"claude"}}}},
+		Default: audit_policy_setting.Rule{ContentModeration: audit_policy_setting.ContentModeration{
+			Enabled: true, Action: audit_policy_setting.ActionBlock, SampleRate: 100, CountDisposal: true}},
+	})
+	policy := contentmoderation.CurrentScopePolicy()
+	exempt := policy.Decide(contentmoderation.Subject{UserID: 1, Group: "default", Model: "m", Format: "claude"})
+	assert.False(t, exempt.Moderate, "the exempt format is not moderated")
+	other := policy.Decide(contentmoderation.Subject{UserID: 1, Group: "default", Model: "m", Format: "openai"})
+	assert.True(t, other.Moderate, "another format is not exempt")
+	assert.Equal(t, contentmoderation.ActionBlock, other.Action)
+
+	c, info := relayRequest("hello", 1)
+	info.RelayFormat = types.RelayFormatClaude
+	assert.Equal(t, "claude", contentmoderation.SubjectOf(c, info).Format, "relay requests carry their format into the policy")
 }

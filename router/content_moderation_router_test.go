@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service/contentmoderation"
 	"github.com/QuantumNous/new-api/service/promptaudit"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/audit_policy_setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/content_moderation_setting"
@@ -500,4 +501,38 @@ func TestAuditRerouteCoversEveryPromptFormat(t *testing.T) {
 		response := fixture.send(request.path, request.body)
 		assert.Equal(t, "safe-model", fixture.lastModel.Load(), "%s: upstream receives the target model (%d %s)", request.name, response.Code, response.Body.String())
 	}
+}
+
+// TestAuditRerouteOfAnAutoTokenRetriesInTheTarget sends a flagged request of
+// a real "auto" token whose original model is only served in its second auto
+// group; the target model is only served in the first, where the preferred
+// channel fails. The reroute finds the target in the first group and the
+// retry stays there.
+func TestAuditRerouteOfAnAutoTokenRetriesInTheTarget(t *testing.T) {
+	fixture := newAuditRelayFixture(t, verifiedReroutePolicy(audit_policy_setting.RerouteTarget{Model: "safe-model"}))
+	previousRetries := common.RetryTimes
+	common.RetryTimes = 2
+	t.Cleanup(func() { common.RetryTimes = previousRetries })
+	previousGroups := setting.UserUsableGroups2JSONString()
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP","auto":"Auto"}`))
+	t.Cleanup(func() { require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(previousGroups)) })
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-4o-mini":0.075,"safe-model":0.075}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":1}`))
+	original := addAuditChannel(t, "vip-original", "gpt-4o-mini", "vip", 0, http.StatusOK, "")
+	failing := addAuditChannel(t, "default-failing", "safe-model", "default", 10, http.StatusInternalServerError, "")
+	working := addAuditChannel(t, "default-working", "safe-model", "default", 0, http.StatusOK, "")
+	var token model.Token
+	require.NoError(t, model.DB.Where("user_id = ?", fixture.user.Id).First(&token).Error)
+	require.NoError(t, token.SetAutoGroups([]string{"default", "vip"}))
+	require.NoError(t, model.DB.Model(&token).Updates(map[string]any{"group": "auto", "auto_groups": token.AutoGroups}).Error)
+
+	response := fixture.send("/v1/chat/completions", `{"model":"gpt-4o-mini","messages":[{"role":"user","content":"something forbidden"}]}`)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, int64(1), failing.Load(), "the preferred target channel was tried first")
+	assert.Equal(t, int64(1), working.Load(), "the retry stayed with the target model")
+	assert.Zero(t, original.Load(), "the original model was never called")
+	var log model.Log
+	require.NoError(t, model.DB.Where("type = ?", model.LogTypeConsume).Order("id desc").First(&log).Error)
+	assert.Equal(t, "safe-model", log.ModelName)
+	assert.Equal(t, "default", log.Group)
 }

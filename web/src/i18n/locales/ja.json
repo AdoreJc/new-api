@@ -8158,5 +8158,7 @@
   "Select at least one keyword list for the keyword mode": "キーワードモードには少なくとも 1 つのリストを選択してください",
   "Unreadable": "読み込み不可",
   "Edit or delete the rules that could not be read before saving the audit policy": "監査ポリシーを保存する前に、読み込めないルールを編集または削除してください",
-  "The saved audit policy could not be read in full. Rules marked unreadable run no checks; where they asked to block, their failure policy decides. Edit or delete each of them, then save to repair the policy.": "保存された監査ポリシーを完全には読み込めませんでした。読み込み不可のルールはチェックを行わず、ブロックを指定していた場合は障害時ポリシーに従います。各ルールを編集または削除してから保存し、ポリシーを修復してください。"
+  "The saved audit policy could not be read in full. Rules marked unreadable run no checks; where they asked to block, their failure policy decides. Edit or delete each of them, then save to repair the policy.": "保存された監査ポリシーを完全には読み込めませんでした。読み込み不可のルールはチェックを行わず、ブロックを指定していた場合は障害時ポリシーに従います。各ルールを編集または削除してから保存し、ポリシーを修復してください。",
+  "This rule could not be read. The fields below are a placeholder that only keeps its blocking intent, not its original settings. Set the actions and conditions you want: once applied and saved, they become the rule.": "このルールは読み込めませんでした。以下の項目はブロックの意図だけを残したプレースホルダーで、元の設定ではありません。必要なアクションと条件を設定してください。適用して保存すると、それが正式なルールになります。",
+  "Approximate result for any format: rules limited to some formats were matched as if the request had one of them.": "任意の形式での近似結果：形式を限定したルールは、リクエストがその形式のいずれかであるとして照合されました。"
 }

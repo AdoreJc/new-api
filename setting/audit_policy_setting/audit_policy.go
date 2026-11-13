@@ -683,6 +683,10 @@ type Subject struct {
 	RequestedGroup string
 	Model          string
 	Format         string
+	// AnyFormat matches every format condition. Only the admin test panel
+	// sets it, for a request whose format was left open; relay requests
+	// always match by their own format.
+	AnyFormat bool
 }
 
 // Listing is a subject's place on the lists.
@@ -698,6 +702,8 @@ type Resolution struct {
 	// Index is the rule's position, or -1 for the default rule.
 	Index   int
 	Listing Listing
+	// AnyFormat repeats Subject.AnyFormat for the caller.
+	AnyFormat bool
 }
 
 // Resolve returns the first enabled rule that matches the subject, or the
@@ -711,10 +717,10 @@ func (c *Config) Resolve(subject Subject) Resolution {
 	for index := range c.Rules {
 		rule := &c.Rules[index]
 		if rule.Enabled && rule.Match.matches(subject, listing) {
-			return Resolution{Rule: rule, Index: index, Listing: listing}
+			return Resolution{Rule: rule, Index: index, Listing: listing, AnyFormat: subject.AnyFormat}
 		}
 	}
-	return Resolution{Rule: &c.Default, Index: -1, Listing: listing}
+	return Resolution{Rule: &c.Default, Index: -1, Listing: listing, AnyFormat: subject.AnyFormat}
 }
 
 // findEntry finds a token entry first, then a whole-user entry.
@@ -758,9 +764,7 @@ func (m *Match) matches(subject Subject, listing Listing) bool {
 	if len(m.TokenIDs) > 0 && !slices.Contains(m.TokenIDs, subject.TokenID) {
 		return false
 	}
-	// Relay requests always carry their format; an empty one comes from the
-	// test panel's "any format" and matches every format condition.
-	if len(m.Formats) > 0 && subject.Format != "" && !slices.Contains(m.Formats, subject.Format) {
+	if len(m.Formats) > 0 && !subject.AnyFormat && !slices.Contains(m.Formats, subject.Format) {
 		return false
 	}
 	switch m.List {

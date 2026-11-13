@@ -167,3 +167,39 @@ it('marks unreadable rules and does not save them', async () => {
 
   expect(put).not.toHaveBeenCalled()
 })
+
+it('labels a test without a format as approximate', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: policy() },
+  })
+  vi.spyOn(api, 'post').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        rule_id: 'first',
+        rule_name: 'First',
+        rule_index: 0,
+        saved: true,
+        any_format: true,
+        allowlisted: false,
+        verified: false,
+        blocklisted: false,
+        prompt_audit: 'off',
+        prompt_audit_action: '',
+        prompt_audit_fail_policy: '',
+        content_moderation: 'off',
+        content_moderation_action: '',
+        content_moderation_fail_policy: '',
+        notes: [],
+      },
+    },
+  })
+  const user = userEvent.setup()
+  renderSection()
+
+  await user.click(await screen.findByRole('button', { name: 'Test' }))
+
+  expect(
+    await screen.findByText(/Approximate result for any format/)
+  ).toBeInTheDocument()
+})

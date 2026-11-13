@@ -171,6 +171,13 @@ function TestResult(props: { result: AuditPolicyTestResult }) {
   ]
   return (
     <div className='bg-muted/30 flex flex-col gap-2 rounded-md p-3 text-sm'>
+      {result.any_format && (
+        <p className='text-muted-foreground text-xs'>
+          {t(
+            'Approximate result for any format: rules limited to some formats were matched as if the request had one of them.'
+          )}
+        </p>
+      )}
       <dl className='grid gap-x-4 gap-y-2 sm:grid-cols-2'>
         <div className='flex min-w-0 flex-col'>
           <dt className='text-muted-foreground text-xs'>{t('Matched rule')}</dt>

@@ -70,6 +70,9 @@ type Plan struct {
 	RuleName  string `json:"rule_name"`
 	RuleIndex int    `json:"rule_index"`
 	Saved     bool   `json:"saved"`
+	// AnyFormat marks a result computed for any format: rules limited to
+	// some formats matched as if the request had one of them.
+	AnyFormat bool `json:"any_format"`
 	// Allowlisted, Verified and Blocklisted are the subject's list places.
 	Allowlisted bool `json:"allowlisted"`
 	Verified    bool `json:"verified"`
@@ -110,7 +113,7 @@ func ExplainDraft(config audit_policy_setting.Config, subject audit_policy_setti
 func plan(snapshot *audit_policy_setting.Snapshot, resolution audit_policy_setting.Resolution) Plan {
 	rule := resolution.Rule
 	result := Plan{
-		RuleID: rule.ID, RuleName: rule.Name, RuleIndex: resolution.Index, Saved: snapshot.Saved,
+		RuleID: rule.ID, RuleName: rule.Name, RuleIndex: resolution.Index, Saved: snapshot.Saved, AnyFormat: resolution.AnyFormat,
 		Allowlisted: resolution.Listing.Allowlisted, Verified: resolution.Listing.Verified, Blocklisted: resolution.Listing.Blocklisted,
 		PromptAudit: engineOff, ContentModeration: engineOff, Notes: []string{},
 	}
@@ -227,6 +230,7 @@ func (contentPolicy) Decide(subject contentmoderation.Subject) contentmoderation
 	snapshot := audit_policy_setting.Current()
 	resolution := snapshot.Config.Resolve(audit_policy_setting.Subject{
 		UserID: subject.UserID, TokenID: subject.TokenID, Group: subject.Group, RequestedGroup: subject.RequestedGroup, Model: subject.Model,
+		Format: subject.Format,
 	})
 	return contentDecision(resolution.Rule, resolution.Listing, content_moderation_setting.Current().Config.Mode)
 }
@@ -313,7 +317,7 @@ func evaluate(c *gin.Context, info *relaycommon.RelayInfo, format string) Result
 		promptaudit.CountSkipped()
 	}
 	cmSubject := contentmoderation.Subject{UserID: subject.UserID, TokenID: subject.TokenID, Group: subject.Group,
-		RequestedGroup: subject.RequestedGroup, Model: subject.Model}
+		RequestedGroup: subject.RequestedGroup, Model: subject.Model, Format: format}
 	cmDecision := contentDecision(rule, resolution.Listing, content_moderation_setting.Current().Config.Mode)
 
 	var meta promptaudit.Meta

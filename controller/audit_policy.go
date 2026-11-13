@@ -170,6 +170,8 @@ func TestAuditPolicy(c *gin.Context) {
 		UserID: request.UserID, TokenID: request.TokenID, Group: strings.TrimSpace(request.Group),
 		RequestedGroup: strings.TrimSpace(request.RequestedGroup), Model: strings.TrimSpace(request.Model), Format: strings.TrimSpace(request.Format),
 	}
+	// A format left open matches every format condition; the result says so.
+	subject.AnyFormat = subject.Format == ""
 	if request.Config == nil {
 		common.ApiSuccess(c, auditpolicy.Explain(subject))
 		return

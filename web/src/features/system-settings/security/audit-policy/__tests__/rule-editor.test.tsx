@@ -75,3 +75,21 @@ it('keeps the dialog open when a reroute rule has no target', async () => {
   ).toBeVisible()
   expect(onSave).not.toHaveBeenCalled()
 })
+
+it('says that an unreadable rule opens as a placeholder', async () => {
+  render(
+    <RuleEditorDialog
+      rule={{ ...createRule([]), degraded: true }}
+      isDefault={false}
+      otherIds={[]}
+      promptAuditCategories={['jailbreak']}
+      moderationCategories={['harassment']}
+      relayFormats={['openai']}
+      onSave={vi.fn()}
+      onOpenChange={() => undefined}
+    />
+  )
+  await screen.findByRole('dialog')
+
+  expect(screen.getByText(/The fields below are a placeholder/)).toBeVisible()
+})

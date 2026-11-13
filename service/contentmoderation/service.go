@@ -237,7 +237,7 @@ const (
 // token the group is the one the distributor chose, and "auto" stays the
 // requested group.
 func SubjectOf(c *gin.Context, info *relaycommon.RelayInfo) Subject {
-	subject := Subject{UserID: info.UserId, TokenID: info.TokenId, Group: info.UsingGroup, Model: info.OriginModelName}
+	subject := Subject{UserID: info.UserId, TokenID: info.TokenId, Group: info.UsingGroup, Model: info.OriginModelName, Format: string(info.RelayFormat)}
 	if subject.Group == "auto" {
 		if selected := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); selected != "" {
 			subject.Group, subject.RequestedGroup = selected, "auto"

@@ -144,6 +144,8 @@ export type AuditPolicyTestResult = {
   /** -1 is the default rule. */
   rule_index: number
   saved: boolean
+  /** The format was left open; format conditions matched any format. */
+  any_format?: boolean
   allowlisted: boolean
   verified: boolean
   blocklisted: boolean

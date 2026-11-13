@@ -160,6 +160,15 @@ export function RuleEditorDialog(props: RuleEditorProps) {
     >
       <Form {...form}>
         <form id={RULE_FORM_ID} onSubmit={onSubmit} className='space-y-4'>
+          {props.rule.degraded && (
+            <Alert variant='destructive'>
+              <AlertDescription>
+                {t(
+                  'This rule could not be read. The fields below are a placeholder that only keeps its blocking intent, not its original settings. Set the actions and conditions you want: once applied and saved, they become the rule.'
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
           {!props.isDefault && (
             <RuleMatchFields form={form} relayFormats={props.relayFormats} />
           )}
