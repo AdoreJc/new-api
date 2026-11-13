@@ -158,11 +158,12 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	usage *dto.RealtimeUsage, extraContent []*common.Message) {
 
 	var tieredResult *billingexpr.TieredResult
-	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, billingexpr.TokenParams{
+	tieredParams := billingexpr.TokenParams{
 		P:   float64(usage.InputTokens),
 		C:   float64(usage.OutputTokens),
 		Len: float64(usage.InputTokens),
-	})
+	}
+	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, tieredParams)
 	if tieredOk {
 		tieredResult = tieredRes
 	}
@@ -201,8 +202,12 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 
 	quota, clamp := calculateAudioQuota(quotaInfo)
 	noteQuotaClamp(relayInfo, clamp)
+	standardQuotaInfo := quotaInfo
+	standardQuotaInfo.GroupRatio = 1
+	standardQuota, _ := calculateAudioQuota(standardQuotaInfo)
 	if tieredOk {
 		quota = tieredQuota
+		_, standardQuota, _ = TryTieredSettle(StandardPricingRelayInfo(relayInfo), tieredParams)
 	}
 
 	totalTokens := usage.TotalTokens
@@ -227,6 +232,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		// in this case, must be some error happened
 		// we cannot just return, because we may have to return the pre-consumed quota
 		quota = 0
+		standardQuota = 0
 		logContent = append(logContent, common.NewMessage("Possibly an upstream timeout"))
 		logger.LogError(ctx, common.LogText("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d",
 			relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, modelName, relayInfo.FinalPreConsumedQuota))
@@ -260,6 +266,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		IsStream:         relayInfo.IsStream,
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
+		StandardQuota:    standardQuota,
 	})
 }
 
@@ -299,7 +306,8 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		tieredUsedVars = billingexpr.UsedVarsByHash(snap.ExprString, snap.ExprHash)
 	}
 	var tieredResult *billingexpr.TieredResult
-	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredTokenParams(usage, false, tieredUsedVars))
+	tieredParams := BuildTieredTokenParams(usage, false, tieredUsedVars)
+	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, tieredParams)
 	if tieredOk {
 		tieredResult = tieredRes
 	}
@@ -340,8 +348,12 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 
 	quota, clamp := calculateAudioQuota(quotaInfo)
 	noteQuotaClamp(relayInfo, clamp)
+	standardQuotaInfo := quotaInfo
+	standardQuotaInfo.GroupRatio = 1
+	standardQuota, _ := calculateAudioQuota(standardQuotaInfo)
 	if tieredOk {
 		quota = tieredQuota
+		_, standardQuota, _ = TryTieredSettle(StandardPricingRelayInfo(relayInfo), tieredParams)
 	}
 
 	totalTokens := usage.TotalTokens
@@ -366,6 +378,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		// in this case, must be some error happened
 		// we cannot just return, because we may have to return the pre-consumed quota
 		quota = 0
+		standardQuota = 0
 		logContent = append(logContent, common.NewMessage("Possibly an upstream timeout"))
 		logger.LogError(ctx, common.LogText("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d",
 			relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, billingModelName, relayInfo.FinalPreConsumedQuota))
@@ -399,6 +412,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		IsStream:         relayInfo.IsStream,
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
+		StandardQuota:    standardQuota,
 	})
 	relayInfo.PerformanceOutputTokens = int64(usage.CompletionTokens)
 }

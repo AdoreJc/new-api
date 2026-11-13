@@ -274,3 +274,63 @@ export interface FAQItem {
   question: string
   answer: string
 }
+
+// ============================================================================
+// Cost accounting (admin only)
+// ============================================================================
+
+export type CostDimension = 'group' | 'channel' | 'model' | 'user'
+
+export interface CostSummaryRow {
+  use_group?: string
+  channel_id?: number
+  channel_name?: string
+  model_name?: string
+  user_id?: number
+  username?: string
+  count: number
+  quota: number
+  standard_quota: number
+  cost_quota: number
+  accounted_quota: number
+  pending_rows: number
+  // Amortized fixed monthly cost allocated to this row.
+  fixed_cost_quota: number
+  // Fixed cost of days without requests on the channel.
+  unallocated?: boolean
+}
+
+export interface FixedCostChannel {
+  channel_id: number
+  channel_name: string
+  channel_type: number
+  monthly_cost_usd: number | null
+  effective_from: number | null
+  effective_to: number | null
+  effective_from_auto: boolean
+  effective_to_auto: boolean
+  plan_type?: string
+  expired: boolean
+  missing: boolean
+  cost_quota: number
+}
+
+export interface CostSummary {
+  total: CostSummaryRow
+  rows: CostSummaryRow[]
+  accounting_start_time: number
+  fixed_channels: FixedCostChannel[]
+}
+
+export interface CostBackfillTask {
+  task_id: string
+  status: 'pending' | 'running' | 'succeeded' | 'failed'
+  state?: { processed?: number; total?: number; progress?: number } | null
+  error?: string
+  updated_at?: number
+}
+
+export interface CostBackfillStatus {
+  pending_quota_data: number
+  task: CostBackfillTask | null
+}

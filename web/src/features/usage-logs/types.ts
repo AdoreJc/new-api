@@ -144,6 +144,8 @@ export interface LogOtherData {
       original: number
       clamped: number
     }
+    // Channel cost ratio snapshot used for cost_quota (admin only)
+    channel_cost_ratio?: number
     // Reject / intercept reason (admin only)
     reject_reason?: string
     task_plugin?: TaskPluginInfo

@@ -45,6 +45,9 @@ export const usageLogSchema = z.object({
   other: z.string().default(''),
   request_id: z.string().default(''),
   upstream_request_id: z.string().default(''),
+  // Admin-only cost accounting; absent for users and for unestimated history.
+  standard_quota: z.number().nullish(),
+  cost_quota: z.number().nullish(),
 })
 
 export type UsageLog = z.infer<typeof usageLogSchema>

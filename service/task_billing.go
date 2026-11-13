@@ -87,6 +87,8 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 		TokenId:   info.TokenId,
 		Group:     info.UsingGroup,
 		Other:     other,
+		// Task submit billing tracks the group-ratio-1 charge alongside Quota.
+		StandardQuota: info.PriceData.StandardQuota,
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
@@ -363,17 +365,29 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		attachQuotaSaturationToOther(other, clamp)
 	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
-		UserId:    task.UserId,
-		LogType:   logType,
-		Content:   []*common.Message{reason},
-		ChannelId: task.ChannelId,
-		ModelName: taskModelName(task),
-		Quota:     logQuota,
-		TokenId:   task.PrivateData.TokenId,
-		Group:     task.Group,
-		Other:     other,
-		NodeName:  task.PrivateData.NodeName,
+		UserId:        task.UserId,
+		LogType:       logType,
+		Content:       []*common.Message{reason},
+		ChannelId:     task.ChannelId,
+		ModelName:     taskModelName(task),
+		Quota:         logQuota,
+		TokenId:       task.PrivateData.TokenId,
+		Group:         task.Group,
+		Other:         other,
+		NodeName:      task.PrivateData.NodeName,
+		StandardQuota: standardQuotaFromGroupDelta(logQuota, taskGroupRatio(task)),
 	})
+}
+
+// taskGroupRatio is the group ratio frozen into the task's billing context.
+// Tasks submitted before the context existed have no ratio on record; their
+// list price is taken as the charged delta (ratio 1), the same assumption the
+// historical backfill makes.
+func taskGroupRatio(task *model.Task) float64 {
+	if bc := task.PrivateData.BillingContext; bc != nil {
+		return bc.GroupRatio
+	}
+	return 1
 }
 
 // RecalculateTaskQuotaByTokens 根据实际 token 消耗重新计费（异步差额结算）。

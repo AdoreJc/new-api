@@ -88,6 +88,9 @@ export interface ApiResponse<T = unknown> {
 // ============================================================================
 
 export interface SystemStatus {
+  // Time zone that splits calendar days for cost accounting.
+  server_timezone?: string
+  server_utc_offset?: number
   success?: boolean
   message?: string
   data?: {

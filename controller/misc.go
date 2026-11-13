@@ -53,7 +53,10 @@ func GetStatus(c *gin.Context) {
 
 	legalSetting := system_setting.GetLegalSettings()
 
+	serverTimeZone, serverUTCOffset := model.ServerTimeZone()
 	data := gin.H{
+		"server_timezone":             serverTimeZone,
+		"server_utc_offset":           serverUTCOffset,
 		"version":                     common.Version,
 		"start_time":                  common.StartTime,
 		"email_verification":          common.EmailVerificationEnabled,

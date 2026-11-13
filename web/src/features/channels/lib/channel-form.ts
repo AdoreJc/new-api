@@ -19,6 +19,12 @@ For commercial licensing, please contact support@quantumnous.com
 import { z } from 'zod'
 
 import {
+  type ServerTimeZone,
+  zonedDateString,
+  zonedMidnightUnix,
+} from '@/lib/server-time-zone'
+
+import {
   CLAUDE_FIELD_PASSTHROUGH_TYPES,
   CHANNEL_TYPE_CLAUDE_OAUTH,
   CHANNEL_TYPE_NEW_API,
@@ -237,6 +243,26 @@ export const channelFormSchema = z
       ),
     priority: z.number().optional(),
     weight: z.number().optional(),
+    cost_ratio: z
+      .number()
+      .gt(0, 'Channel cost ratio must be greater than 0 and at most 10')
+      .max(10, 'Channel cost ratio must be greater than 0 and at most 10'),
+    // '' follows the channel type default (see defaultChannelCostMode).
+    cost_mode: z.enum(['', 'ratio', 'fixed_monthly']),
+    // '' means the monthly cost has not been entered yet.
+    monthly_cost_usd: z
+      .string()
+      .refine(
+        (value) =>
+          value.trim() === '' ||
+          (Number.isFinite(Number(value)) &&
+            Number(value) >= 0 &&
+            Number(value) <= 1_000_000),
+        'Monthly cost must be between 0 and 1000000 USD'
+      ),
+    // YYYY-MM-DD; '' falls back to the subscription window.
+    cost_effective_from: z.string(),
+    cost_effective_to: z.string(),
     test_model: z.string().optional(),
     auto_ban: z.number().optional(),
     status: z.number(),
@@ -475,6 +501,11 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   model_mapping: '',
   priority: 0,
   weight: 0,
+  cost_ratio: 1,
+  cost_mode: '',
+  monthly_cost_usd: '',
+  cost_effective_from: '',
+  cost_effective_to: '',
   test_model: '',
   auto_ban: 1,
   status: CHANNEL_STATUS.ENABLED,
@@ -533,7 +564,8 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
  * Transform Channel from API to Form default values
  */
 export function transformChannelToFormDefaults(
-  channel: Channel
+  channel: Channel,
+  zone: ServerTimeZone = {}
 ): ChannelFormValues {
   // Parse channel extra settings from setting field
   let extraSettings = {
@@ -650,6 +682,19 @@ export function transformChannelToFormDefaults(
     model_mapping: channel.model_mapping || '',
     priority: channel.priority || 0,
     weight: channel.weight || 0,
+    cost_ratio: channel.cost_ratio ?? 1,
+    cost_mode:
+      channel.cost_mode === 'ratio' || channel.cost_mode === 'fixed_monthly'
+        ? channel.cost_mode
+        : '',
+    monthly_cost_usd:
+      channel.monthly_cost_usd == null ? '' : String(channel.monthly_cost_usd),
+    cost_effective_from: unixToDateInput(
+      channel.cost_effective_from,
+      false,
+      zone
+    ),
+    cost_effective_to: unixToDateInput(channel.cost_effective_to, true, zone),
     test_model: channel.test_model || '',
     auto_ban: channel.auto_ban ?? 1,
     status: channel.status,
@@ -899,7 +944,10 @@ function normalizeBaseUrl(value: string | undefined): string {
 /**
  * Transform form data to API payload for creating channel
  */
-export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
+export function transformFormDataToCreatePayload(
+  formData: ChannelFormValues,
+  zone: ServerTimeZone = {}
+): {
   mode: 'single' | 'batch' | 'multi_to_single'
   multi_key_mode?: 'random' | 'polling'
   batch_add_set_key_prefix_2_name?: boolean
@@ -918,6 +966,8 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     model_mapping: formData.model_mapping || null,
     priority: formData.priority || null,
     weight: formData.weight || null,
+    cost_ratio: formData.cost_ratio,
+    ...costSettingsPayload(formData, zone),
     test_model: formData.test_model || null,
     auto_ban: formData.auto_ban ?? 1,
     status: formData.status,
@@ -953,7 +1003,8 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
  */
 export function transformFormDataToUpdatePayload(
   formData: ChannelFormValues,
-  channelId: number
+  channelId: number,
+  zone: ServerTimeZone = {}
 ): Partial<Channel> {
   const payload: Partial<Channel> = {
     id: channelId,
@@ -966,6 +1017,8 @@ export function transformFormDataToUpdatePayload(
     model_mapping: formData.model_mapping || null,
     priority: formData.priority ?? 0,
     weight: formData.weight ?? 0,
+    cost_ratio: formData.cost_ratio,
+    ...costSettingsPayload(formData, zone),
     test_model: formData.test_model || null,
     auto_ban: formData.auto_ban ?? 1,
     status_code_mapping: formData.status_code_mapping || null,
@@ -1063,4 +1116,68 @@ export function formatModels(models: string[]): string {
  */
 export function formatGroups(groups: string[]): string {
   return groups.join(',')
+}
+
+// ============================================================================
+// Cost accounting settings
+// ============================================================================
+
+const SUBSCRIPTION_CHANNEL_TYPES = new Set([57, 64])
+
+/** Subscription (OAuth) accounts default to a fixed monthly cost. */
+export function defaultChannelCostMode(
+  channelType: number
+): 'ratio' | 'fixed_monthly' {
+  return SUBSCRIPTION_CHANNEL_TYPES.has(channelType) ? 'fixed_monthly' : 'ratio'
+}
+
+/**
+ * Converts a stored bound to a date input value in the server's time zone,
+ * which splits calendar days for cost accounting. End bounds are exclusive,
+ * so the input shows the last included day.
+ */
+export function unixToDateInput(
+  value: number | null | undefined,
+  exclusiveEnd = false,
+  zone: ServerTimeZone = {}
+): string {
+  if (value == null) return ''
+  return zonedDateString(exclusiveEnd ? value - 1 : value, zone)
+}
+
+/**
+ * Midnight of a date input in the server's time zone; an end date includes
+ * its whole day.
+ */
+export function dateInputToUnix(
+  value: string,
+  exclusiveEnd = false,
+  zone: ServerTimeZone = {}
+): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim())
+  if (!match) return null
+  return zonedMidnightUnix(
+    Number(match[1]),
+    Number(match[2]),
+    Number(match[3]) + (exclusiveEnd ? 1 : 0),
+    zone
+  )
+}
+
+/** Cost settings are always sent so cleared values are stored as null. */
+function costSettingsPayload(
+  formData: ChannelFormValues,
+  zone: ServerTimeZone
+) {
+  const monthly = formData.monthly_cost_usd.trim()
+  return {
+    cost_mode: formData.cost_mode || null,
+    monthly_cost_usd: monthly === '' ? null : Number(monthly),
+    cost_effective_from: dateInputToUnix(
+      formData.cost_effective_from,
+      false,
+      zone
+    ),
+    cost_effective_to: dateInputToUnix(formData.cost_effective_to, true, zone),
+  }
 }

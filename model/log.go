@@ -76,6 +76,11 @@ type Log struct {
 	RequestId         string `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
 	UpstreamRequestId string `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
 	Other             string `json:"other"`
+	// StandardQuota is the list price (group ratio treated as 1) and CostQuota
+	// the channel cost (StandardQuota x channel cost ratio). Both are admin-only
+	// and NULL on rows written before cost accounting until the backfill runs.
+	StandardQuota *int `json:"standard_quota,omitempty"`
+	CostQuota     *int `json:"cost_quota,omitempty"`
 }
 
 // don't use iota, avoid change log type value
@@ -114,6 +119,8 @@ func assignDisplayLogIds(logs []*Log, startIdx int) {
 func formatUserLogs(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].ChannelName = ""
+		logs[i].StandardQuota = nil
+		logs[i].CostQuota = nil
 		logs[i].Other = formatLogOtherJSON(logs[i].Other, logOtherVisibilityUser)
 	}
 	assignDisplayLogIds(logs, startIdx)
@@ -334,6 +341,8 @@ type RecordConsumeLogParams struct {
 	IsStream         bool              `json:"is_stream"`
 	Group            string            `json:"group"`
 	Other            *LogOther         `json:"other"`
+	// StandardQuota is the same charge computed with the group ratio as 1.
+	StandardQuota int `json:"standard_quota"`
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
@@ -346,6 +355,10 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 	createdAt := common.GetTimestamp()
 	other := params.Other
+	if other == nil {
+		other = NewLogOther()
+	}
+	accounting := newConsumeCostAccounting(params.ChannelId, params.StandardQuota, other)
 	content := other.setContent(params.Content)
 	otherStr := other.JSONString()
 	// 判断是否需要记录 IP
@@ -380,6 +393,8 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		RequestId:         requestId,
 		UpstreamRequestId: upstreamRequestId,
 		Other:             otherStr,
+		StandardQuota:     &accounting.StandardQuota,
+		CostQuota:         &accounting.CostQuota,
 	}
 	err := createLog(log)
 	if err != nil {
@@ -406,6 +421,8 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			TokenID:             params.TokenId,
 			ChannelID:           params.ChannelId,
 			NodeName:            common.NodeName,
+			StandardQuota:       accounting.StandardQuota,
+			CostQuota:           accounting.CostQuota,
 		})
 	}
 }
@@ -421,6 +438,9 @@ type RecordTaskBillingLogParams struct {
 	Group     string
 	Other     *LogOther
 	NodeName  string // 任务发起节点；为空时回退当前节点
+	// StandardQuota is Quota computed with the group ratio as 1; only consume
+	// logs record it.
+	StandardQuota int
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
@@ -436,6 +456,13 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 	createdAt := common.GetTimestamp()
 	other := params.Other
+	var accounting consumeCostAccounting
+	if params.LogType == LogTypeConsume {
+		if other == nil {
+			other = NewLogOther()
+		}
+		accounting = newConsumeCostAccounting(params.ChannelId, params.StandardQuota, other)
+	}
 	log := &Log{
 		UserId:    params.UserId,
 		Username:  username,
@@ -450,6 +477,10 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		Group:     params.Group,
 		Other:     other.JSONString(),
 	}
+	if params.LogType == LogTypeConsume {
+		log.StandardQuota = &accounting.StandardQuota
+		log.CostQuota = &accounting.CostQuota
+	}
 	err := createLog(log)
 	if err != nil {
 		common.SysLog(common.LogText("failed to record task billing log: %s", err.Error()))
@@ -460,15 +491,17 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 			nodeName = common.NodeName
 		}
 		LogQuotaData(QuotaDataLogParams{
-			UserID:    params.UserId,
-			Username:  username,
-			ModelName: params.ModelName,
-			Quota:     params.Quota,
-			CreatedAt: createdAt,
-			UseGroup:  params.Group,
-			TokenID:   params.TokenId,
-			ChannelID: params.ChannelId,
-			NodeName:  nodeName,
+			UserID:        params.UserId,
+			Username:      username,
+			ModelName:     params.ModelName,
+			Quota:         params.Quota,
+			CreatedAt:     createdAt,
+			UseGroup:      params.Group,
+			TokenID:       params.TokenId,
+			ChannelID:     params.ChannelId,
+			NodeName:      nodeName,
+			StandardQuota: accounting.StandardQuota,
+			CostQuota:     accounting.CostQuota,
 		})
 	}
 }
@@ -654,6 +687,8 @@ func StreamUserLogs(ctx context.Context, userId int, filter LogFilter, fn func(*
 		count++
 		log.Id = count
 		log.ChannelName = ""
+		log.StandardQuota = nil
+		log.CostQuota = nil
 		log.Other = formatLogOtherJSON(log.Other, logOtherVisibilityUser)
 		return fn(log)
 	})

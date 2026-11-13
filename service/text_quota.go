@@ -397,6 +397,47 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) 
 	return "openai"
 }
 
+type textQuotaSettlement struct {
+	summary       textQuotaSummary
+	billingUsage  *dto.Usage
+	tieredResult  *billingexpr.TieredResult
+	tieredApplied bool
+}
+
+// settleTextQuota computes the final text charge: the ratio-based summary,
+// replaced by the tiered expression result when the request uses one.
+func settleTextQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, billingUsage *dto.Usage) textQuotaSettlement {
+	summary := calculateTextQuotaSummary(ctx, relayInfo, billingUsage)
+	settlement := textQuotaSettlement{}
+	snap := relayInfo.TieredBillingSnapshot
+	// Providers normally estimate missing usage before settlement. Preserve the
+	// same prompt estimate when a fixed-price expression reaches us without it;
+	// its conditions must still run and may select a token-priced fallback.
+	if billingUsage == nil && snap != nil && billingexpr.UsesFixedPricingByHash(snap.ExprString, snap.ExprHash) {
+		billingUsage = &dto.Usage{PromptTokens: summary.PromptTokens, CompletionTokens: summary.CompletionTokens, TotalTokens: summary.TotalTokens}
+	}
+	if billingUsage != nil {
+		var tieredUsedVars map[string]bool
+		if snap != nil {
+			tieredUsedVars = billingexpr.UsedVarsByHash(snap.ExprString, snap.ExprHash)
+		}
+		tieredTokens := BuildTieredTokenParams(billingUsage, summary.IsClaudeUsageSemantic, tieredUsedVars)
+		tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, tieredTokens)
+		if tieredOk {
+			settlement.tieredApplied = true
+			settlement.tieredResult = tieredRes
+			summary.Quota = composeTieredTextQuota(relayInfo, summary, tieredQuota, tieredRes)
+			summary.FixedPriceBilling = isFixedPriceSettlement(relayInfo, tieredRes)
+			if summary.FixedPriceBilling {
+				summary.AudioInputPrice = 0
+			}
+		}
+	}
+	settlement.summary = summary
+	settlement.billingUsage = billingUsage
+	return settlement
+}
+
 func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []*common.Message) {
 	originUsage := usage
 	billingUsage := effectiveBillingUsage(usage)
@@ -408,35 +449,13 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}
 
 	adminRejectReason := common.GetContextKeyString(ctx, constant.ContextKeyAdminRejectReason)
-	summary := calculateTextQuotaSummary(ctx, relayInfo, billingUsage)
-
-	var tieredResult *billingexpr.TieredResult
-	var tieredTokens billingexpr.TokenParams
-	tieredBillingApplied := false
-	snap := relayInfo.TieredBillingSnapshot
-	// Providers normally estimate missing usage before settlement. Preserve the
-	// same prompt estimate when a fixed-price expression reaches us without it;
-	// its conditions must still run and may select a token-priced fallback.
-	if billingUsage == nil && snap != nil && billingexpr.UsesFixedPricingByHash(snap.ExprString, snap.ExprHash) {
-		billingUsage = &dto.Usage{PromptTokens: summary.PromptTokens, CompletionTokens: summary.CompletionTokens, TotalTokens: summary.TotalTokens}
-	}
-	if billingUsage != nil {
-		var tieredUsedVars map[string]bool
-		if snap := relayInfo.TieredBillingSnapshot; snap != nil {
-			tieredUsedVars = billingexpr.UsedVarsByHash(snap.ExprString, snap.ExprHash)
-		}
-		tieredTokens = BuildTieredTokenParams(billingUsage, summary.IsClaudeUsageSemantic, tieredUsedVars)
-		tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, tieredTokens)
-		if tieredOk {
-			tieredBillingApplied = true
-			tieredResult = tieredRes
-			summary.Quota = composeTieredTextQuota(relayInfo, summary, tieredQuota, tieredRes)
-			summary.FixedPriceBilling = isFixedPriceSettlement(relayInfo, tieredRes)
-			if summary.FixedPriceBilling {
-				summary.AudioInputPrice = 0
-			}
-		}
-	}
+	// The list price runs the same settlement with the group ratio as 1.
+	standardQuota := settleTextQuota(ctx, StandardPricingRelayInfo(relayInfo), billingUsage).summary.Quota
+	settlement := settleTextQuota(ctx, relayInfo, billingUsage)
+	summary := settlement.summary
+	billingUsage = settlement.billingUsage
+	tieredResult := settlement.tieredResult
+	tieredBillingApplied := settlement.tieredApplied
 
 	for _, item := range summary.ToolSurchargeItems {
 		q := decimal.NewFromFloat(item.Price).
@@ -555,6 +574,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		IsStream:         relayInfo.IsStream,
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
+		StandardQuota:    standardQuota,
 	})
 	relayInfo.PerformanceOutputTokens = int64(summary.CompletionTokens)
 }
