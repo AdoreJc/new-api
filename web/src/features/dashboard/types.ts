@@ -300,7 +300,6 @@ export interface CostSummary {
   total: CostSummaryRow
   rows: CostSummaryRow[]
   accounting_start_time: number
-  pending_backfill_count: number
 }
 
 export interface CostBackfillTask {
@@ -312,7 +311,6 @@ export interface CostBackfillTask {
 }
 
 export interface CostBackfillStatus {
-  pending_logs: number
   pending_quota_data: number
   task: CostBackfillTask | null
 }

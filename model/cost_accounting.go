@@ -122,10 +122,9 @@ type CostSummaryRow struct {
 }
 
 type CostSummary struct {
-	Total                CostSummaryRow    `json:"total"`
-	Rows                 []*CostSummaryRow `json:"rows"`
-	AccountingStartTime  int64             `json:"accounting_start_time"`
-	PendingBackfillCount int64             `json:"pending_backfill_count"`
+	Total               CostSummaryRow    `json:"total"`
+	Rows                []*CostSummaryRow `json:"rows"`
+	AccountingStartTime int64             `json:"accounting_start_time"`
 }
 
 const costSummarySums = "COALESCE(sum(count), 0) as count, COALESCE(sum(quota), 0) as quota, " +
@@ -170,9 +169,6 @@ func GetCostSummary(startTime int64, endTime int64, username string, dimension C
 		}
 	}
 	summary.AccountingStartTime = GetCostAccountingStartTime()
-	if err := DB.Model(&QuotaData{}).Where("standard_quota IS NULL").Count(&summary.PendingBackfillCount).Error; err != nil {
-		return nil, err
-	}
 	return summary, nil
 }
 

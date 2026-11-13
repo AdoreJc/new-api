@@ -30,10 +30,12 @@ func GetCostSummary(c *gin.Context) {
 	})
 }
 
-// GetCostBackfillStatus reports the latest backfill run and what is left.
+// GetCostBackfillStatus reports the latest backfill run and how many
+// dashboard rows still lack estimates. It deliberately does not count logs:
+// that needs a full scan of the log table, which only the backfill run does.
 func GetCostBackfillStatus(c *gin.Context) {
-	pendingLogs, pendingData, err := model.CountCostBackfillPending(c.Request.Context())
-	if err != nil {
+	var pendingData int64
+	if err := model.DB.WithContext(c.Request.Context()).Model(&model.QuotaData{}).Where("standard_quota IS NULL").Count(&pendingData).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -43,7 +45,6 @@ func GetCostBackfillStatus(c *gin.Context) {
 		return
 	}
 	data := gin.H{
-		"pending_logs":       pendingLogs,
 		"pending_quota_data": pendingData,
 		"task":               nil,
 	}

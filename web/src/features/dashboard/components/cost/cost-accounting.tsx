@@ -182,8 +182,13 @@ export function CostAccounting(props: CostAccountingProps) {
   const backfillTask = backfill?.task
   const backfillRunning =
     backfillTask?.status === 'pending' || backfillTask?.status === 'running'
-  const pendingRows =
-    (backfill?.pending_logs ?? 0) + (backfill?.pending_quota_data ?? 0)
+  const pendingRows = backfill?.pending_quota_data ?? 0
+  // Logs are only counted by the backfill run itself, so offer it until one
+  // run has succeeded, and again whenever dashboard rows are still missing.
+  const canStartBackfill =
+    isRoot &&
+    !backfillRunning &&
+    (pendingRows > 0 || backfillTask?.status !== 'succeeded')
   const startTime = summary?.accounting_start_time ?? 0
   const rangeHasEstimates =
     startTime > 0 && timeRange.start_timestamp < startTime
@@ -317,7 +322,7 @@ export function CostAccounting(props: CostAccountingProps) {
                 })}
               </p>
             )}
-            {isRoot && pendingRows > 0 && !backfillRunning && (
+            {canStartBackfill && (
               <Button
                 size='sm'
                 variant='outline'

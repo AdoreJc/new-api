@@ -201,7 +201,6 @@ func TestCostSummaryBreakdown(t *testing.T) {
 	require.Len(t, summary.Rows, 2)
 	assert.Equal(t, "vip", summary.Rows[0].UseGroup)
 	assert.Equal(t, int64(400), summary.Rows[0].Quota)
-	assert.Equal(t, int64(1), summary.PendingBackfillCount)
 
 	byUser, err := GetCostSummary(0, 10_000, "b", CostDimensionUser)
 	require.NoError(t, err)
