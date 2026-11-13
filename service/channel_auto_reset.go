@@ -1275,6 +1275,9 @@ func (e *ChannelAutoResetEngine) redeem(ctx context.Context, ch *model.Channel, 
 	decision.Credits = credits
 	recheck.credits = credits
 	matched, hits := evaluateChannelAutoResetRule(cfg.Rule, recheck)
+	// The alarms recorded with the redemption are those of the re-check on
+	// the stored rule, not of the evaluation before the lease.
+	due = collectChannelAutoResetDue(cfg.Rule, recheck)
 	decision.Matched = matched
 	decision.Hits = hits
 	if hits == nil {
@@ -1297,7 +1300,16 @@ func (e *ChannelAutoResetEngine) redeem(ctx context.Context, ch *model.Channel, 
 
 	// The upstream reads above may have taken minutes: the switch is read
 	// once more right before anything is sent.
-	if latest, err := model.GetChannelById(ch.Id, true); err != nil || !LoadChannelAutoResetConfig(latest).Enabled || latest.Status != common.ChannelStatusEnabled {
+	latest, err := model.GetChannelById(ch.Id, true)
+	if err != nil {
+		// Unknown, not off: nothing is sent and the due alarms are not
+		// consumed, so the next tick tries again.
+		decision.Reason = AutoResetReasonBusy
+		decision.Result = err.Error()
+		e.recordSkip(ch.Id, &state, *decision)
+		return
+	}
+	if !LoadChannelAutoResetConfig(latest).Enabled || latest.Status != common.ChannelStatusEnabled {
 		decision.Reason = AutoResetReasonDisabled
 		return
 	}

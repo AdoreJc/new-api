@@ -764,3 +764,37 @@ func TestSaveChannelAutoResetConfigTwice(t *testing.T) {
 	require.NoError(t, SaveChannelAutoResetConfig(ch.Id, cfg))
 	require.NoError(t, SaveChannelAutoResetConfig(ch.Id, cfg))
 }
+
+// The database read right before the redemption fails: nothing is sent, the
+// due alarm is not consumed, and the reason is visible in the state.
+func TestChannelAutoResetPreSendReadErrorIsBusy(t *testing.T) {
+	now := autoResetTestNow
+	ch := seedAutoResetChannel(t, autoResetTestConfig(ChannelAutoResetRule{Type: ChannelAutoResetCondAtTime, Times: []string{"2026-11-12T08:00:00Z"}}), nil)
+	provider := &gatedAutoResetProvider{
+		fakeAutoResetProvider: &fakeAutoResetProvider{credits: ChannelAutoResetCredits{Available: 1}},
+		creditsGate:           make(chan struct{}),
+		creditsIn:             make(chan struct{}),
+	}
+	done := make(chan ChannelAutoResetDecision)
+	go func() {
+		done <- NewChannelAutoResetEngine(provider).Evaluate(context.Background(), ch, now, false, nil)
+	}()
+	<-provider.creditsIn
+	callback := "test:fail_channel_read_before_send"
+	require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(callback, func(tx *gorm.DB) {
+		if tx.Statement != nil && tx.Statement.Table == "channels" {
+			tx.AddError(errors.New("database unavailable"))
+		}
+	}))
+	close(provider.creditsGate)
+	decision := <-done
+	require.NoError(t, model.DB.Callback().Query().Remove(callback))
+
+	assert.Equal(t, AutoResetReasonBusy, decision.Reason)
+	_, _, redeems := provider.calls()
+	assert.Zero(t, redeems)
+	state := loadAutoResetState(t, ch.Id)
+	assert.Empty(t, state.FiredAlarms)
+	assert.Equal(t, AutoResetReasonBusy, state.LastSkipReason)
+	assert.Zero(t, state.InFlightSince)
+}
