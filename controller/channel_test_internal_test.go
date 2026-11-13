@@ -191,6 +191,56 @@ func TestCopyChannelRejectsInvalidLegacyProxySettings(t *testing.T) {
 	assert.Equal(t, int64(1), channelCount)
 }
 
+// A copy carries neither the automatic reset-credit setting (it starts off,
+// with no runtime state) nor the subscription cost of the account; the cost
+// mode and ratio stay.
+func TestCopyChannelDropsAutoResetAndSubscriptionCost(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.ChannelAutoResetState{}))
+	monthly, ratio, mode, synced := 200.0, 0.5, "fixed_monthly", int64(1_800_000_000)
+	origin := &model.Channel{
+		Type:                 constant.ChannelTypeClaudeOAuth,
+		Name:                 "subscription account",
+		Key:                  "{}",
+		Models:               "claude-test",
+		Group:                "default",
+		CostRatio:            &ratio,
+		CostMode:             &mode,
+		MonthlyCostUSD:       &monthly,
+		SubscriptionPlanType: "max",
+		SubscriptionSyncedAt: &synced,
+	}
+	origin.SetOtherInfo(map[string]any{
+		service.ChannelAutoResetConfigKey: map[string]any{"enabled": true},
+		"status_reason":                   "kept",
+	})
+	require.NoError(t, db.Create(origin).Error)
+	require.NoError(t, db.Create(&model.ChannelAutoResetState{ChannelId: origin.Id, AutoEnabled: true, LastRedeemAt: 1}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: fmt.Sprintf("%d", origin.Id)}}
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/copy", nil)
+	CopyChannel(ctx)
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+
+	var clone model.Channel
+	require.NoError(t, db.Where("id <> ?", origin.Id).First(&clone).Error)
+	assert.NotContains(t, clone.GetOtherInfo(), service.ChannelAutoResetConfigKey)
+	assert.Equal(t, "kept", clone.GetOtherInfo()["status_reason"])
+	state, err := model.GetChannelAutoResetState(clone.Id)
+	require.NoError(t, err)
+	assert.False(t, state.AutoEnabled)
+	assert.Zero(t, state.LastRedeemAt)
+	assert.Nil(t, clone.MonthlyCostUSD)
+	assert.Empty(t, clone.SubscriptionPlanType)
+	assert.Nil(t, clone.SubscriptionSyncedAt)
+	require.NotNil(t, clone.CostMode)
+	assert.Equal(t, mode, *clone.CostMode)
+	require.NotNil(t, clone.CostRatio)
+	assert.Equal(t, ratio, *clone.CostRatio)
+}
+
 func TestDeleteChannelResetsProxyCacheWhenPreReadFails(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.AuditLog{}))
