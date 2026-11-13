@@ -1,3 +1,5 @@
+import { z } from 'zod'
+
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -16,7 +18,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { z } from 'zod'
+import {
+  type ServerTimeZone,
+  zonedDateString,
+  zonedMidnightUnix,
+} from '@/lib/server-time-zone'
 
 import {
   CLAUDE_FIELD_PASSTHROUGH_TYPES,
@@ -558,7 +564,8 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
  * Transform Channel from API to Form default values
  */
 export function transformChannelToFormDefaults(
-  channel: Channel
+  channel: Channel,
+  zone: ServerTimeZone = {}
 ): ChannelFormValues {
   // Parse channel extra settings from setting field
   let extraSettings = {
@@ -682,8 +689,12 @@ export function transformChannelToFormDefaults(
         : '',
     monthly_cost_usd:
       channel.monthly_cost_usd == null ? '' : String(channel.monthly_cost_usd),
-    cost_effective_from: unixToDateInput(channel.cost_effective_from),
-    cost_effective_to: unixToDateInput(channel.cost_effective_to, true),
+    cost_effective_from: unixToDateInput(
+      channel.cost_effective_from,
+      false,
+      zone
+    ),
+    cost_effective_to: unixToDateInput(channel.cost_effective_to, true, zone),
     test_model: channel.test_model || '',
     auto_ban: channel.auto_ban ?? 1,
     status: channel.status,
@@ -933,7 +944,10 @@ function normalizeBaseUrl(value: string | undefined): string {
 /**
  * Transform form data to API payload for creating channel
  */
-export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
+export function transformFormDataToCreatePayload(
+  formData: ChannelFormValues,
+  zone: ServerTimeZone = {}
+): {
   mode: 'single' | 'batch' | 'multi_to_single'
   multi_key_mode?: 'random' | 'polling'
   batch_add_set_key_prefix_2_name?: boolean
@@ -953,7 +967,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     priority: formData.priority || null,
     weight: formData.weight || null,
     cost_ratio: formData.cost_ratio,
-    ...costSettingsPayload(formData),
+    ...costSettingsPayload(formData, zone),
     test_model: formData.test_model || null,
     auto_ban: formData.auto_ban ?? 1,
     status: formData.status,
@@ -989,7 +1003,8 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
  */
 export function transformFormDataToUpdatePayload(
   formData: ChannelFormValues,
-  channelId: number
+  channelId: number,
+  zone: ServerTimeZone = {}
 ): Partial<Channel> {
   const payload: Partial<Channel> = {
     id: channelId,
@@ -1003,7 +1018,7 @@ export function transformFormDataToUpdatePayload(
     priority: formData.priority ?? 0,
     weight: formData.weight ?? 0,
     cost_ratio: formData.cost_ratio,
-    ...costSettingsPayload(formData),
+    ...costSettingsPayload(formData, zone),
     test_model: formData.test_model || null,
     auto_ban: formData.auto_ban ?? 1,
     status_code_mapping: formData.status_code_mapping || null,
@@ -1117,41 +1132,52 @@ export function defaultChannelCostMode(
 }
 
 /**
- * Converts a stored bound to a date input value in local time. End bounds
- * are exclusive, so the input shows the last included day.
+ * Converts a stored bound to a date input value in the server's time zone,
+ * which splits calendar days for cost accounting. End bounds are exclusive,
+ * so the input shows the last included day.
  */
 export function unixToDateInput(
   value: number | null | undefined,
-  exclusiveEnd = false
+  exclusiveEnd = false,
+  zone: ServerTimeZone = {}
 ): string {
   if (value == null) return ''
-  const date = new Date((exclusiveEnd ? value - 1 : value) * 1000)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  return zonedDateString(exclusiveEnd ? value - 1 : value, zone)
 }
 
-/** Local midnight of a date input; an end date includes its whole day. */
+/**
+ * Midnight of a date input in the server's time zone; an end date includes
+ * its whole day.
+ */
 export function dateInputToUnix(
   value: string,
-  exclusiveEnd = false
+  exclusiveEnd = false,
+  zone: ServerTimeZone = {}
 ): number | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim())
   if (!match) return null
-  const date = new Date(
+  return zonedMidnightUnix(
     Number(match[1]),
-    Number(match[2]) - 1,
-    Number(match[3]) + (exclusiveEnd ? 1 : 0)
+    Number(match[2]),
+    Number(match[3]) + (exclusiveEnd ? 1 : 0),
+    zone
   )
-  return Math.floor(date.getTime() / 1000)
 }
 
 /** Cost settings are always sent so cleared values are stored as null. */
-function costSettingsPayload(formData: ChannelFormValues) {
+function costSettingsPayload(
+  formData: ChannelFormValues,
+  zone: ServerTimeZone
+) {
   const monthly = formData.monthly_cost_usd.trim()
   return {
     cost_mode: formData.cost_mode || null,
     monthly_cost_usd: monthly === '' ? null : Number(monthly),
-    cost_effective_from: dateInputToUnix(formData.cost_effective_from),
-    cost_effective_to: dateInputToUnix(formData.cost_effective_to, true),
+    cost_effective_from: dateInputToUnix(
+      formData.cost_effective_from,
+      false,
+      zone
+    ),
+    cost_effective_to: dateInputToUnix(formData.cost_effective_to, true, zone),
   }
 }

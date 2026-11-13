@@ -7980,7 +7980,6 @@
     "The last backfill failed: {{error}}": "The last backfill failed: {{error}}",
     "Estimate historical data": "Estimate historical data",
     "Cost breakdown": "Cost breakdown",
-    "Revenue is the quota charged, including quota drawn from subscriptions.": "Revenue is the quota charged, including quota drawn from subscriptions.",
     "Fill in list price and cost for logs and dashboard data written before cost accounting. It runs in the background in batches and can be started again if interrupted. Charged quota and balances are not changed.": "Fill in list price and cost for logs and dashboard data written before cost accounting. It runs in the background in batches and can be started again if interrupted. Charged quota and balances are not changed.",
     "Historical cost backfill started": "Historical cost backfill started",
     "Historical cost backfill": "Historical cost backfill",
@@ -8013,6 +8012,12 @@
     "Unallocated fixed cost": "Unallocated fixed cost",
     "Fixed monthly costs need attention": "Fixed monthly costs need attention",
     "Monthly cost not entered for: {{channels}}. Their cost is left out until it is entered.": "Monthly cost not entered for: {{channels}}. Their cost is left out until it is entered.",
-    "Subscription expired for: {{channels}}. Their fixed cost stops at the end date until a renewal is read.": "Subscription expired for: {{channels}}. Their fixed cost stops at the end date until a renewal is read."
+    "Subscription expired for: {{channels}}. Their fixed cost stops at the end date until a renewal is read.": "Subscription expired for: {{channels}}. Their fixed cost stops at the end date until a renewal is read.",
+    "Billing & Cost": "Billing & Cost",
+    "Dates are calendar days in the server time zone ({{zone}}); the end date is included.": "Dates are calendar days in the server time zone ({{zone}}); the end date is included.",
+    "Incomplete: {{count}} monthly costs not entered": "Incomplete: {{count}} monthly costs not entered",
+    "Not shown until every monthly cost is entered": "Not shown until every monthly cost is entered",
+    "History is estimated with the current channel settings: channels now on a fixed monthly cost record no usage cost, and their monthly cost is amortized as usual.": "History is estimated with the current channel settings: channels now on a fixed monthly cost record no usage cost, and their monthly cost is amortized as usual.",
+    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}})."
   }
 }

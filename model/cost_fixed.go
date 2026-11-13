@@ -2,6 +2,7 @@ package model
 
 import (
 	"math"
+	"os"
 	"sort"
 	"strconv"
 	"time"
@@ -19,6 +20,23 @@ import (
 // Days outside the cost window, and the part of the range after now, cost
 // nothing. The window is the manual effective_from/to, falling back to the
 // subscription start/until parsed from the account.
+
+// ServerTimeZone returns the zone that splits calendar days: its IANA name
+// (from TZ; empty when the process only knows "Local") and its current UTC
+// offset in seconds. The frontend converts cost dates with it.
+func ServerTimeZone() (string, int) {
+	_, offset := time.Now().Zone()
+	name := time.Local.String()
+	if tz := os.Getenv("TZ"); tz != "" {
+		if _, err := time.LoadLocation(tz); err == nil {
+			name = tz
+		}
+	}
+	if name == "Local" {
+		name = ""
+	}
+	return name, offset
+}
 
 // maxAmortizedDays bounds the per-day loop for absurd ranges.
 const maxAmortizedDays = 3700

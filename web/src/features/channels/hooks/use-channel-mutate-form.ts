@@ -1,3 +1,7 @@
+import { useMutation } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
+
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -16,10 +20,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMutation } from '@tanstack/react-query'
-import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
-
+import { useStatus } from '@/hooks/use-status'
 import {
   ADMIN_PERMISSION_ACTIONS,
   ADMIN_PERMISSION_RESOURCES,
@@ -60,6 +61,11 @@ const SENSITIVE_UPDATE_FIELDS = [
 export function useChannelMutateForm(props: UseChannelMutateFormParams) {
   const { t } = useTranslation()
   const currentUser = useAuthStore((s) => s.auth.user)
+  const { status } = useStatus()
+  const zone = {
+    name: status?.server_timezone,
+    utcOffsetSeconds: status?.server_utc_offset,
+  }
   const canEditSensitive = hasPermission(
     currentUser,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
@@ -71,7 +77,8 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
       if (props.isEditing && props.currentRow) {
         const payload = transformFormDataToUpdatePayload(
           data,
-          props.currentRow.id
+          props.currentRow.id,
+          zone
         )
         if (!data.key?.trim()) {
           delete payload.key
@@ -104,7 +111,7 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
         return SUCCESS_MESSAGES.UPDATED
       }
 
-      const payload = transformFormDataToCreatePayload(data)
+      const payload = transformFormDataToCreatePayload(data, zone)
       const response = await createChannel(payload)
       if (!response.success) {
         throw createServerError(response, t(ERROR_MESSAGES.CREATE_FAILED))

@@ -39,6 +39,10 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { formatTimestamp } from '@/lib/format'
+import {
+  serverTimeZoneLabel,
+  type ServerTimeZone,
+} from '@/lib/server-time-zone'
 
 import { CHANNEL_TYPE_CLAUDE_OAUTH } from '../../../constants'
 import {
@@ -55,6 +59,8 @@ type ChannelCostFieldsProps = {
   channelType: number
   // The saved channel, for the read-only subscription values.
   savedChannel?: Channel | null
+  // Cost dates are calendar days in the server's time zone.
+  zone: ServerTimeZone
   heading: ReactNode
 }
 
@@ -68,10 +74,18 @@ export function ChannelCostFields(props: ChannelCostFieldsProps) {
   const subscription = props.savedChannel
   const autoDates: Record<DateFieldName, string> = {
     cost_effective_from: isCodex
-      ? unixToDateInput(subscription?.subscription_active_start)
+      ? unixToDateInput(
+          subscription?.subscription_active_start,
+          false,
+          props.zone
+        )
       : '',
     cost_effective_to: isCodex
-      ? unixToDateInput(subscription?.subscription_active_until, true)
+      ? unixToDateInput(
+          subscription?.subscription_active_until,
+          true,
+          props.zone
+        )
       : '',
   }
 
@@ -224,6 +238,12 @@ export function ChannelCostFields(props: ChannelCostFieldsProps) {
             {renderDateField('cost_effective_from', t('Cost starts'))}
             {renderDateField('cost_effective_to', t('Cost ends'))}
           </div>
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'Dates are calendar days in the server time zone ({{zone}}); the end date is included.',
+              { zone: serverTimeZoneLabel(props.zone) }
+            )}
+          </p>
           {isCodex && (
             <p className='text-muted-foreground text-xs'>
               {subscription?.subscription_synced_at

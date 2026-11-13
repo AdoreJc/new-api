@@ -47,6 +47,7 @@ type ChannelConfigurationProps = {
   quickOptions: ReactNode
   routing: ReactNode
   request: ReactNode
+  billing: ReactNode
   other: ReactNode
 }
 
@@ -105,6 +106,7 @@ export function ChannelConfiguration(props: ChannelConfigurationProps) {
     { id: 'connection', label: t('Connection & Models') },
     { id: 'routing', label: t('Routing & Mapping') },
     { id: 'request', label: t('Request & Response') },
+    { id: 'billing', label: t('Billing & Cost') },
     { id: 'other', label: t('Other Settings') },
   ] as const
 
@@ -181,6 +183,14 @@ export function ChannelConfiguration(props: ChannelConfigurationProps) {
       >
         {(props.section === 'request' || visited.has('request')) &&
           props.request}
+      </TabsContent>
+      <TabsContent
+        value='billing'
+        keepMounted
+        className='-m-1 min-h-0 space-y-5 overflow-y-auto overscroll-contain p-1'
+      >
+        {(props.section === 'billing' || visited.has('billing')) &&
+          props.billing}
       </TabsContent>
       <TabsContent
         value='other'

@@ -197,6 +197,9 @@ type CostSummary struct {
 	Rows                []*CostSummaryRow  `json:"rows"`
 	AccountingStartTime int64              `json:"accounting_start_time"`
 	FixedChannels       []FixedCostChannel `json:"fixed_channels"`
+	// TimeZone splits calendar days for fixed-cost amortization.
+	TimeZone      string `json:"time_zone"`
+	UTCOffsetSecs int    `json:"utc_offset_seconds"`
 }
 
 const costSummarySums = "COALESCE(sum(count), 0) as count, COALESCE(sum(quota), 0) as quota, " +
@@ -247,6 +250,7 @@ func GetCostSummary(startTime int64, endTime int64, username string, dimension C
 		}
 	}
 	summary.AccountingStartTime = GetCostAccountingStartTime()
+	summary.TimeZone, summary.UTCOffsetSecs = ServerTimeZone()
 	return summary, nil
 }
 

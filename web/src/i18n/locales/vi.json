@@ -7980,7 +7980,6 @@
     "The last backfill failed: {{error}}": "Lần bổ sung trước thất bại: {{error}}",
     "Estimate historical data": "Ước tính dữ liệu lịch sử",
     "Cost breakdown": "Phân tích chi phí",
-    "Revenue is the quota charged, including quota drawn from subscriptions.": "Doanh thu là hạn mức đã tính phí, bao gồm cả phần trừ từ gói đăng ký.",
     "Fill in list price and cost for logs and dashboard data written before cost accounting. It runs in the background in batches and can be started again if interrupted. Charged quota and balances are not changed.": "Bổ sung giá niêm yết và chi phí cho nhật ký và dữ liệu bảng điều khiển ghi trước khi có hạch toán chi phí. Tác vụ chạy nền theo lô và có thể chạy lại nếu bị gián đoạn. Hạn mức đã tính phí và số dư không thay đổi.",
     "Historical cost backfill started": "Đã bắt đầu bổ sung chi phí lịch sử",
     "Historical cost backfill": "Bổ sung chi phí lịch sử",
@@ -8013,6 +8012,12 @@
     "Unallocated fixed cost": "Chi phí cố định chưa phân bổ",
     "Fixed monthly costs need attention": "Chi phí cố định hằng tháng cần được xử lý",
     "Monthly cost not entered for: {{channels}}. Their cost is left out until it is entered.": "Chưa nhập chi phí hằng tháng cho: {{channels}}. Chi phí của các kênh này chưa được tính cho đến khi nhập.",
-    "Subscription expired for: {{channels}}. Their fixed cost stops at the end date until a renewal is read.": "Gói đăng ký đã hết hạn: {{channels}}. Chi phí cố định dừng ở ngày kết thúc cho đến khi đọc được gia hạn."
+    "Subscription expired for: {{channels}}. Their fixed cost stops at the end date until a renewal is read.": "Gói đăng ký đã hết hạn: {{channels}}. Chi phí cố định dừng ở ngày kết thúc cho đến khi đọc được gia hạn.",
+    "Billing & Cost": "Tính phí và chi phí",
+    "Dates are calendar days in the server time zone ({{zone}}); the end date is included.": "Ngày được tính theo ngày lịch ở múi giờ của máy chủ ({{zone}}); bao gồm cả ngày kết thúc.",
+    "Incomplete: {{count}} monthly costs not entered": "Chưa đầy đủ: {{count}} chi phí hằng tháng chưa nhập",
+    "Not shown until every monthly cost is entered": "Chỉ hiển thị khi đã nhập đủ mọi chi phí hằng tháng",
+    "History is estimated with the current channel settings: channels now on a fixed monthly cost record no usage cost, and their monthly cost is amortized as usual.": "Lịch sử được ước tính theo cài đặt hiện tại của kênh: kênh đang tính chi phí cố định hằng tháng có chi phí theo lượng dùng bằng 0, chi phí tháng vẫn được phân bổ theo ngày.",
+    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "Doanh thu là hạn mức đã tính phí, bao gồm cả phần trừ từ gói đăng ký. Ngày được chia theo múi giờ máy chủ ({{zone}})."
   }
 }

@@ -110,6 +110,7 @@ import { SecureVerificationDialog } from '@/features/auth/secure-verification'
 import { PluginIcon } from '@/features/task-plugins/components/plugin-icon'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
+import { useStatus } from '@/hooks/use-status'
 import {
   ADMIN_PERMISSION_ACTIONS,
   ADMIN_PERMISSION_RESOURCES,
@@ -126,6 +127,7 @@ import {
   createServerError,
   getServerErrorMessage,
 } from '@/lib/server-error-message'
+import type { ServerTimeZone } from '@/lib/server-time-zone'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -582,6 +584,16 @@ export function ChannelMutateDrawer({
   // Check if this is a multi-key channel
   const isMultiKeyChannel =
     isEditing && channelData?.data?.channel_info?.is_multi_key === true
+
+  // Cost dates are calendar days in the server's time zone.
+  const { status } = useStatus()
+  const serverZone = useMemo<ServerTimeZone>(
+    () => ({
+      name: status?.server_timezone,
+      utcOffsetSeconds: status?.server_utc_offset,
+    }),
+    [status?.server_timezone, status?.server_utc_offset]
+  )
 
   // Form setup
   const form = useForm<ChannelFormValues>({
@@ -1062,7 +1074,10 @@ export function ChannelMutateDrawer({
       ) {
         return
       }
-      const defaults = transformChannelToFormDefaults(channelData.data)
+      const defaults = transformChannelToFormDefaults(
+        channelData.data,
+        serverZone
+      )
       form.reset(defaults)
       loadedForm.current = {
         channelId: channelData.data.id,
@@ -1092,7 +1107,7 @@ export function ChannelMutateDrawer({
       initialModelMappingRef.current = ''
       initialStatusCodeMappingRef.current = ''
     }
-  }, [isEditing, channelId, channelData, form, open])
+  }, [isEditing, channelId, channelData, form, open, serverZone])
 
   // Handle type change - set default values for specific types
   useEffect(() => {
@@ -2249,6 +2264,7 @@ export function ChannelMutateDrawer({
     <ChannelCostFields
       form={form}
       channelType={currentType}
+      zone={serverZone}
       savedChannel={isEditing ? channelData?.data : null}
       heading={
         <SubHeading
@@ -4892,9 +4908,9 @@ export function ChannelMutateDrawer({
           <>
             {redirectPanelActive ? redirectPanelNotice : modelMappingFields}
             {routingFields}
-            {costFields}
           </>
         }
+        billing={costFields}
         request={
           <>
             {overrideFields}

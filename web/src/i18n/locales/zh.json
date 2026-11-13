@@ -7980,7 +7980,6 @@
     "The last backfill failed: {{error}}": "上次回填失败：{{error}}",
     "Estimate historical data": "估算历史数据",
     "Cost breakdown": "成本拆分",
-    "Revenue is the quota charged, including quota drawn from subscriptions.": "实收是实际扣费的额度，包含从订阅额度中扣除的部分。",
     "Fill in list price and cost for logs and dashboard data written before cost accounting. It runs in the background in batches and can be started again if interrupted. Charged quota and balances are not changed.": "为成本核算上线前的日志和看板数据补上原价和成本。任务在后台分批执行，中断后可以重新开始。不会改动已扣费额度和余额。",
     "Historical cost backfill started": "已开始回填历史成本",
     "Historical cost backfill": "历史成本回填",
@@ -8013,6 +8012,12 @@
     "Unallocated fixed cost": "未分摊的固定成本",
     "Fixed monthly costs need attention": "月固定成本需要处理",
     "Monthly cost not entered for: {{channels}}. Their cost is left out until it is entered.": "以下渠道未录入月成本：{{channels}}。录入前不计入成本。",
-    "Subscription expired for: {{channels}}. Their fixed cost stops at the end date until a renewal is read.": "以下渠道订阅已过期：{{channels}}。固定成本在到期日停止摊销，读取到续费后恢复。"
+    "Subscription expired for: {{channels}}. Their fixed cost stops at the end date until a renewal is read.": "以下渠道订阅已过期：{{channels}}。固定成本在到期日停止摊销，读取到续费后恢复。",
+    "Billing & Cost": "计费与成本",
+    "Dates are calendar days in the server time zone ({{zone}}); the end date is included.": "日期按服务器时区（{{zone}}）的自然日计算，包含结束日期当天。",
+    "Incomplete: {{count}} monthly costs not entered": "不完整：{{count}} 个渠道未录入月成本",
+    "Not shown until every monthly cost is entered": "所有月成本录入后才显示",
+    "History is estimated with the current channel settings: channels now on a fixed monthly cost record no usage cost, and their monthly cost is amortized as usual.": "历史数据按渠道当前的成本设置估算：当前走月固定成本的渠道，按量成本记 0，月成本照常按天摊销。",
+    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "实收是实际扣费的额度，包含从订阅额度中扣除的部分。按服务器时区（{{zone}}）划分自然日。"
   }
 }

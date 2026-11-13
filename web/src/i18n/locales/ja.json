@@ -7980,7 +7980,6 @@
     "The last backfill failed: {{error}}": "前回の補完に失敗しました：{{error}}",
     "Estimate historical data": "過去データを推定",
     "Cost breakdown": "コスト内訳",
-    "Revenue is the quota charged, including quota drawn from subscriptions.": "売上は請求されたクォータで、サブスクリプションから差し引かれた分も含みます。",
     "Fill in list price and cost for logs and dashboard data written before cost accounting. It runs in the background in batches and can be started again if interrupted. Charged quota and balances are not changed.": "コスト会計導入前のログとダッシュボードデータに定価とコストを補完します。バックグラウンドでバッチ実行され、中断しても再開できます。請求済みクォータと残高は変更されません。",
     "Historical cost backfill started": "過去コストの補完を開始しました",
     "Historical cost backfill": "過去コストの補完",
@@ -8013,6 +8012,12 @@
     "Unallocated fixed cost": "未配分の固定コスト",
     "Fixed monthly costs need attention": "月額固定コストの確認が必要です",
     "Monthly cost not entered for: {{channels}}. Their cost is left out until it is entered.": "月額コストが未入力のチャネル：{{channels}}。入力されるまでコストに含めません。",
-    "Subscription expired for: {{channels}}. Their fixed cost stops at the end date until a renewal is read.": "サブスクリプションが期限切れのチャネル：{{channels}}。更新が読み取られるまで、固定コストは終了日で止まります。"
+    "Subscription expired for: {{channels}}. Their fixed cost stops at the end date until a renewal is read.": "サブスクリプションが期限切れのチャネル：{{channels}}。更新が読み取られるまで、固定コストは終了日で止まります。",
+    "Billing & Cost": "課金とコスト",
+    "Dates are calendar days in the server time zone ({{zone}}); the end date is included.": "日付はサーバーのタイムゾーン（{{zone}}）の暦日で、終了日を含みます。",
+    "Incomplete: {{count}} monthly costs not entered": "不完全：{{count}} 件の月額コストが未入力",
+    "Not shown until every monthly cost is entered": "すべての月額コストを入力すると表示されます",
+    "History is estimated with the current channel settings: channels now on a fixed monthly cost record no usage cost, and their monthly cost is amortized as usual.": "過去データは現在のチャネル設定で推定します：月額固定コストのチャネルは従量コストを 0 とし、月額コストは通常どおり日割りします。",
+    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "売上は請求されたクォータで、サブスクリプションから差し引かれた分も含みます。日付はサーバーのタイムゾーン（{{zone}}）で区切ります。"
   }
 }

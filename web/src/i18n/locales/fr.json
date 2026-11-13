@@ -7980,7 +7980,6 @@
     "The last backfill failed: {{error}}": "Le dernier remplissage a échoué : {{error}}",
     "Estimate historical data": "Estimer les données historiques",
     "Cost breakdown": "Répartition des coûts",
-    "Revenue is the quota charged, including quota drawn from subscriptions.": "Le revenu est le quota facturé, y compris le quota prélevé sur les abonnements.",
     "Fill in list price and cost for logs and dashboard data written before cost accounting. It runs in the background in batches and can be started again if interrupted. Charged quota and balances are not changed.": "Renseigne le prix catalogue et le coût des journaux et des données du tableau de bord antérieurs à la comptabilité des coûts. L’opération s’exécute en arrière-plan par lots et peut être relancée si elle est interrompue. Le quota facturé et les soldes ne sont pas modifiés.",
     "Historical cost backfill started": "Remplissage des coûts historiques démarré",
     "Historical cost backfill": "Remplissage des coûts historiques",
@@ -8013,6 +8012,12 @@
     "Unallocated fixed cost": "Coût fixe non réparti",
     "Fixed monthly costs need attention": "Des coûts mensuels fixes demandent votre attention",
     "Monthly cost not entered for: {{channels}}. Their cost is left out until it is entered.": "Coût mensuel non renseigné pour : {{channels}}. Leur coût est exclu jusqu’à sa saisie.",
-    "Subscription expired for: {{channels}}. Their fixed cost stops at the end date until a renewal is read.": "Abonnement expiré pour : {{channels}}. Leur coût fixe s’arrête à la date de fin jusqu’à la lecture d’un renouvellement."
+    "Subscription expired for: {{channels}}. Their fixed cost stops at the end date until a renewal is read.": "Abonnement expiré pour : {{channels}}. Leur coût fixe s’arrête à la date de fin jusqu’à la lecture d’un renouvellement.",
+    "Billing & Cost": "Facturation et coûts",
+    "Dates are calendar days in the server time zone ({{zone}}); the end date is included.": "Les dates sont des jours civils dans le fuseau horaire du serveur ({{zone}}) ; la date de fin est incluse.",
+    "Incomplete: {{count}} monthly costs not entered": "Incomplet : {{count}} coûts mensuels non renseignés",
+    "Not shown until every monthly cost is entered": "Affiché une fois tous les coûts mensuels renseignés",
+    "History is estimated with the current channel settings: channels now on a fixed monthly cost record no usage cost, and their monthly cost is amortized as usual.": "L’historique est estimé avec les réglages actuels des canaux : les canaux désormais au coût mensuel fixe n’ont pas de coût à l’usage, et leur coût mensuel est amorti normalement.",
+    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "Le revenu est le quota facturé, y compris le quota prélevé sur les abonnements. Les jours suivent le fuseau horaire du serveur ({{zone}})."
   }
 }

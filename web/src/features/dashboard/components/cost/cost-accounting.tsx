@@ -50,10 +50,17 @@ import type {
   CostSummaryRow,
   DashboardFilters,
 } from '@/features/dashboard/types'
+import { useStatus } from '@/hooks/use-status'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber, formatPercent, formatQuota } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
 import { requireServerSuccess } from '@/lib/server-error-message'
+import {
+  serverTimeZoneLabel,
+  zonedDateString,
+  zonedMidnightUnix,
+  type ServerTimeZone,
+} from '@/lib/server-time-zone'
 import { computeTimeRange, formatDate } from '@/lib/time'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -118,6 +125,36 @@ function dimensionLabel(
   }
 }
 
+/**
+ * Re-reads a range picked in the browser's time zone as the same calendar
+ * days in the server's zone: the start becomes server midnight of its date,
+ * and an end before now becomes the end of its date in the server's zone.
+ */
+function toServerDayRange(
+  range: { start_timestamp: number; end_timestamp: number },
+  zone: ServerTimeZone
+): { start_timestamp: number; end_timestamp: number } {
+  const localDate = (unix: number) => {
+    const date = new Date(unix * 1000)
+    return [date.getFullYear(), date.getMonth() + 1, date.getDate()] as const
+  }
+  const [sy, sm, sd] = localDate(range.start_timestamp)
+  const start = zonedMidnightUnix(sy, sm, sd, zone)
+  const now = Math.floor(Date.now() / 1000)
+  if (range.end_timestamp >= now - 60) {
+    return { start_timestamp: start, end_timestamp: range.end_timestamp }
+  }
+  const [ey, em, ed] = localDate(range.end_timestamp)
+  const end = zonedMidnightUnix(ey, em, ed + 1, zone) - 1
+  // Keep the server's view of "today" when the picked end is today.
+  const serverToday = zonedDateString(now, zone)
+  const endDate = zonedDateString(end, zone)
+  return {
+    start_timestamp: start,
+    end_timestamp: endDate >= serverToday ? now : end,
+  }
+}
+
 function rowKey(row: CostSummaryRow, dimension: CostDimension): string {
   if (row.unallocated) return 'unallocated'
   switch (dimension) {
@@ -144,17 +181,31 @@ export function CostAccounting(props: CostAccountingProps) {
   const [usageCostOnly, setUsageCostOnly] = useState(false)
   const includeFixed = !usageCostOnly
 
+  const { status } = useStatus()
+  const serverZone = useMemo<ServerTimeZone>(
+    () => ({
+      name: status?.server_timezone,
+      utcOffsetSeconds: status?.server_utc_offset,
+    }),
+    [status?.server_timezone, status?.server_utc_offset]
+  )
+  // Fixed costs are amortized per calendar day of the server's time zone, so
+  // the selected days are taken as server days, not browser days.
   const timeRange = useMemo(
     () =>
-      computeTimeRange(
-        getDefaultDays(props.filters?.time_granularity),
-        props.filters?.start_timestamp,
-        props.filters?.end_timestamp
+      toServerDayRange(
+        computeTimeRange(
+          getDefaultDays(props.filters?.time_granularity),
+          props.filters?.start_timestamp,
+          props.filters?.end_timestamp
+        ),
+        serverZone
       ),
     [
       props.filters?.end_timestamp,
       props.filters?.start_timestamp,
       props.filters?.time_granularity,
+      serverZone,
     ]
   )
   const username = props.filters?.username
@@ -217,6 +268,9 @@ export function CostAccounting(props: CostAccountingProps) {
     list
       .map((channel) => channel.channel_name || `#${channel.channel_id}`)
       .join(', ')
+  // Without every monthly cost the fixed cost is understated, so profit and
+  // margin are shown as incomplete instead of looking better than they are.
+  const incomplete = includeFixed && missingFixed.length > 0
   const allCost = total ? totalCost(total, true) : 0
   const fixedShare =
     total && allCost > 0 ? (total.fixed_cost_quota / allCost) * 100 : 0
@@ -253,19 +307,25 @@ export function CostAccounting(props: CostAccountingProps) {
     {
       key: 'profit',
       title: t('Gross profit'),
-      description: t('Revenue minus channel cost'),
+      description: incomplete
+        ? t('Incomplete: {{count}} monthly costs not entered', {
+            count: missingFixed.length,
+          })
+        : t('Revenue minus channel cost'),
       icon: TrendingUp,
-      value: formatQuota(total ? grossProfit(total, includeFixed) : 0),
+      value: `${formatQuota(total ? grossProfit(total, includeFixed) : 0)}${incomplete ? ' *' : ''}`,
       tone: 'accent-1' as const,
     },
     {
       key: 'margin',
       title: t('Gross margin'),
-      description: t('Gross profit as a share of revenue'),
+      description: incomplete
+        ? t('Not shown until every monthly cost is entered')
+        : t('Gross profit as a share of revenue'),
       icon: Percent,
-      value: formatPercent(
-        total ? grossMargin(total, includeFixed) : undefined
-      ),
+      value: incomplete
+        ? '—'
+        : formatPercent(total ? grossMargin(total, includeFixed) : undefined),
       tone: 'accent-2' as const,
     },
   ]
@@ -318,7 +378,8 @@ export function CostAccounting(props: CostAccountingProps) {
       header: t('Gross margin'),
       className: 'text-right',
       cellClassName: 'text-right tabular-nums',
-      cell: (row) => formatPercent(grossMargin(row, includeFixed)),
+      cell: (row) =>
+        incomplete ? '—' : formatPercent(grossMargin(row, includeFixed)),
     },
   ]
 
@@ -357,6 +418,11 @@ export function CostAccounting(props: CostAccountingProps) {
               {t(
                 'Data before {{date}} has no recorded list price. It is estimated as charged quota divided by the group ratio, with a channel cost ratio of 1.',
                 { date: startTime > 0 ? formatDate(startTime) : '-' }
+              )}
+            </p>
+            <p>
+              {t(
+                'History is estimated with the current channel settings: channels now on a fixed monthly cost record no usage cost, and their monthly cost is amortized as usual.'
               )}
             </p>
             {pendingRows > 0 && (
@@ -418,7 +484,8 @@ export function CostAccounting(props: CostAccountingProps) {
       <PanelWrapper
         title={t('Cost breakdown')}
         description={t(
-          'Revenue is the quota charged, including quota drawn from subscriptions.'
+          'Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).',
+          { zone: serverTimeZoneLabel(serverZone) }
         )}
         loading={summaryQuery.isLoading}
         headerActions={

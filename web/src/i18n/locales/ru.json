@@ -7980,7 +7980,6 @@
     "The last backfill failed: {{error}}": "Последнее заполнение не удалось: {{error}}",
     "Estimate historical data": "Оценить исторические данные",
     "Cost breakdown": "Разбивка затрат",
-    "Revenue is the quota charged, including quota drawn from subscriptions.": "Выручка — списанная квота, включая квоту из подписок.",
     "Fill in list price and cost for logs and dashboard data written before cost accounting. It runs in the background in batches and can be started again if interrupted. Charged quota and balances are not changed.": "Заполняет базовую цену и затраты для журналов и данных панели, записанных до учёта затрат. Выполняется в фоне пакетами и может быть запущено снова после прерывания. Списанная квота и балансы не меняются.",
     "Historical cost backfill started": "Заполнение исторических затрат запущено",
     "Historical cost backfill": "Заполнение исторических затрат",
@@ -8013,6 +8012,12 @@
     "Unallocated fixed cost": "Нераспределённая фиксированная стоимость",
     "Fixed monthly costs need attention": "Фиксированные месячные затраты требуют внимания",
     "Monthly cost not entered for: {{channels}}. Their cost is left out until it is entered.": "Месячная стоимость не указана для: {{channels}}. До ввода их затраты не учитываются.",
-    "Subscription expired for: {{channels}}. Their fixed cost stops at the end date until a renewal is read.": "Подписка истекла для: {{channels}}. Их фиксированная стоимость перестаёт начисляться с даты окончания, пока не будет прочитано продление."
+    "Subscription expired for: {{channels}}. Their fixed cost stops at the end date until a renewal is read.": "Подписка истекла для: {{channels}}. Их фиксированная стоимость перестаёт начисляться с даты окончания, пока не будет прочитано продление.",
+    "Billing & Cost": "Тарификация и затраты",
+    "Dates are calendar days in the server time zone ({{zone}}); the end date is included.": "Даты — календарные дни в часовом поясе сервера ({{zone}}); дата окончания включается.",
+    "Incomplete: {{count}} monthly costs not entered": "Неполно: не указано месячных затрат — {{count}}",
+    "Not shown until every monthly cost is entered": "Появится после ввода всех месячных затрат",
+    "History is estimated with the current channel settings: channels now on a fixed monthly cost record no usage cost, and their monthly cost is amortized as usual.": "История оценивается по текущим настройкам каналов: у каналов с фиксированной месячной стоимостью затраты по использованию равны 0, а месячная стоимость распределяется как обычно.",
+    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "Выручка — списанная квота, включая квоту из подписок. Дни считаются по часовому поясу сервера ({{zone}})."
   }
 }
