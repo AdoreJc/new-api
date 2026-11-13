@@ -117,6 +117,13 @@ export function ContentModerationEventDialog(props: {
               : '-'
           }
         />
+        {event.rule_id && (
+          <DetailRow
+            label={t('Audit policy rule')}
+            value={event.rule_id}
+            mono
+          />
+        )}
         {event.error && <DetailRow label={t('Error')} value={event.error} />}
         <DetailRow
           label={t('Call')}

@@ -108,6 +108,24 @@ export const PROMPT_AUDIT_ROLE_LABELS: Record<string, string> = {
   agent_context: 'Agent context',
 }
 
+/** What the audit policy did with an event, with English i18n keys. */
+export const PROMPT_AUDIT_POLICY_ACTION_LABELS: Record<string, string> = {
+  observe: 'Observed',
+  block: 'Blocked',
+  reroute: 'Rerouted',
+  ignore: 'Ignored by rule',
+}
+
+export const PROMPT_AUDIT_SEVERITY: Record<
+  string,
+  { label: string; variant: 'danger' | 'warning' | 'info' | 'neutral' }
+> = {
+  critical: { label: 'Critical', variant: 'danger' },
+  high: { label: 'High', variant: 'warning' },
+  medium: { label: 'Medium', variant: 'info' },
+  low: { label: 'Low', variant: 'neutral' },
+}
+
 export const PROMPT_AUDIT_DECISION_LABELS: Record<string, string> = {
   critical: 'Critical',
   flag: 'Flagged',

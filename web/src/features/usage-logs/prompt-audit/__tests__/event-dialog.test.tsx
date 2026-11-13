@@ -142,3 +142,42 @@ it('loads the full prompt only after the viewer asks for it', async () => {
   ).toBeVisible()
   expect(get).toHaveBeenCalledWith('/api/prompt_audit/events/7')
 })
+
+it('shows the policy rule at once and the issues after the viewer asks for them', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        ...event,
+        rule_id: 'claude-block',
+        policy_action: 'block',
+        issues: [
+          {
+            category: 'jailbreak',
+            title: 'Jailbreak or prompt injection',
+            severity: 'critical',
+            action: 'Blocked',
+            chunks: [1, 3],
+          },
+        ],
+      },
+    },
+  })
+  const dialog = await openDialog({
+    ...event,
+    rule_id: 'claude-block',
+    policy_action: 'block',
+  })
+  expect(within(dialog).getByText('claude-block')).toBeVisible()
+
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: 'Show issues' })
+  )
+
+  const issues = await within(dialog).findByRole('list', { name: 'Issues' })
+  expect(
+    within(issues).getByText('Jailbreak or prompt injection')
+  ).toBeVisible()
+  expect(within(issues).getByText('Blocked')).toBeVisible()
+  expect(within(issues).getByText('Chunks 1, 3')).toBeVisible()
+})

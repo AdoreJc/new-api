@@ -12,10 +12,12 @@
 package contentmoderation
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"html"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -36,8 +38,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ErrorCodeBlocked is returned to clients whose request was blocked.
-const ErrorCodeBlocked = types.ErrorCode("content_moderation_blocked")
+// Error codes returned to clients whose request was blocked, or rejected
+// because the engine failed under a fail-closed rule.
+const (
+	ErrorCodeBlocked     = types.ErrorCode("content_moderation_blocked")
+	ErrorCodeUnavailable = types.ErrorCode("content_moderation_unavailable")
+)
 
 const (
 	// maxBodyBytes skips larger request bodies; they are media uploads.
@@ -90,6 +96,9 @@ type Metrics struct {
 	latencyMaxMS    atomic.Int64
 	syncTotalMS     atomic.Int64
 	syncChecks      atomic.Int64
+	rerouted        atomic.Int64
+	// unavailableBlocked counts requests rejected by a fail-closed rule.
+	unavailableBlocked atomic.Int64
 }
 
 // request is one input with the relay metadata needed for its event.
@@ -208,11 +217,39 @@ func RelayProtocol(format types.RelayFormat, path string) (string, bool) {
 	return "", false
 }
 
-// CheckRelay moderates the latest user message of a relay request. It runs
-// once, before billing and channel retries. It returns an error only when
-// pre_block mode flags the input (or the hash blocklist matches it); every
-// other outcome, including an engine failure, lets the request continue.
-// When moderation is off it costs one atomic load.
+// Outcome is the result of a moderation check for the request path.
+type Outcome int
+
+const (
+	// OutcomeContinue lets the request go on: out of scope, not flagged,
+	// checked in the background, or failed open.
+	OutcomeContinue Outcome = iota
+	// OutcomeBlock rejects the request (flagged, or the hash blocklist).
+	OutcomeBlock
+	// OutcomeReroute sends the request to the rule's reroute target.
+	OutcomeReroute
+	// OutcomeUnavailable rejects the request because the engine failed and
+	// the decision fails closed.
+	OutcomeUnavailable
+)
+
+// SubjectOf builds the policy subject of a relay request. For an "auto"
+// token the group is the one the distributor chose, and "auto" stays the
+// requested group.
+func SubjectOf(c *gin.Context, info *relaycommon.RelayInfo) Subject {
+	subject := Subject{UserID: info.UserId, TokenID: info.TokenId, Group: info.UsingGroup, Model: info.OriginModelName, Format: string(info.RelayFormat)}
+	if subject.Group == "auto" {
+		if selected := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); selected != "" {
+			subject.Group, subject.RequestedGroup = selected, "auto"
+		}
+	}
+	return subject
+}
+
+// CheckRelay moderates the latest user message of a relay request with the
+// current scope policy. It returns an error when the request is blocked; a
+// reroute outcome is reported as a block because only the audit policy
+// coordinator can reroute.
 func CheckRelay(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	return defaultService.checkRelay(c, info)
 }
@@ -221,36 +258,56 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 	if info == nil {
 		return nil
 	}
-	subject := Subject{UserID: info.UserId, TokenID: info.TokenId, Group: info.UsingGroup, Model: info.OriginModelName}
-	// An "auto" token routes to a concrete group chosen by the distributor;
-	// the policy and the event see that group, and "auto" still matches.
-	if subject.Group == "auto" {
-		if selected := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); selected != "" {
-			subject.Group, subject.RequestedGroup = selected, "auto"
-		}
+	subject := SubjectOf(c, info)
+	switch s.check(c, info, subject, CurrentScopePolicy().Decide(subject)) {
+	case OutcomeBlock, OutcomeReroute:
+		return BlockError(c)
+	case OutcomeUnavailable:
+		return UnavailableError(c)
 	}
-	decision := currentScopePolicy().Decide(subject)
+	return nil
+}
+
+// Check moderates the latest user message of a relay request as the decision
+// says. It runs once, before billing and channel retries. Only a synchronous
+// decision (block or reroute) can return anything but OutcomeContinue. When
+// the decision is out of scope it costs nothing.
+func Check(c *gin.Context, info *relaycommon.RelayInfo, subject Subject, decision Decision) Outcome {
+	if info == nil {
+		return OutcomeContinue
+	}
+	return defaultService.check(c, info, subject, decision)
+}
+
+func (s *Service) check(c *gin.Context, info *relaycommon.RelayInfo, subject Subject, decision Decision) Outcome {
 	if !decision.Moderate {
 		if decision.Mode != "" {
 			s.metrics.skipped.Add(1)
 		}
-		return nil
+		return OutcomeContinue
 	}
 	protocol, covered := RelayProtocol(info.RelayFormat, info.RequestURLPath)
 	if !covered {
 		s.metrics.skipped.Add(1)
-		return nil
+		return OutcomeContinue
 	}
 	snapshot := content_moderation_setting.Current()
 	config := &snapshot.Config
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
 		s.metrics.skipped.Add(1)
-		return nil
+		return OutcomeContinue
+	}
+	keywordMode, keywordLists := config.KeywordMode, config.KeywordLists
+	if decision.KeywordMode != "" {
+		keywordMode = decision.KeywordMode
+	}
+	if decision.KeywordLists != nil {
+		keywordLists = decision.KeywordLists
 	}
 	var input Input
 	keywordText := ""
-	useKeywords := config.KeywordMode != content_moderation_setting.KeywordModeAPIOnly
+	useKeywords := keywordMode != content_moderation_setting.KeywordModeAPIOnly
 	contentType := c.Request.Header.Get("Content-Type")
 	if protocol == ProtocolImages && isMultipartForm(contentType) {
 		// Image edits send their prompt as multipart form fields. The form is
@@ -259,26 +316,26 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 		reader, err := storage.NewReader()
 		if err != nil {
 			s.metrics.skipped.Add(1)
-			return nil
+			return OutcomeContinue
 		}
 		prompts, tooLarge := MultipartPrompts(contentType, reader)
 		_ = reader.Close()
 		if tooLarge {
 			// Like a JSON body over maxBodyBytes: counted and not checked.
 			s.metrics.tooLarge.Add(1)
-			return nil
+			return OutcomeContinue
 		}
 		keywordText = joinParts(prompts)
 		input.Text = prefixRunes(keywordText, maxInputRunes)
 	} else {
 		if storage.Size() > maxBodyBytes {
 			s.metrics.tooLarge.Add(1)
-			return nil
+			return OutcomeContinue
 		}
 		body, err := storage.Bytes()
 		if err != nil {
 			s.metrics.skipped.Add(1)
-			return nil
+			return OutcomeContinue
 		}
 		input = ExtractInput(protocol, body)
 		if useKeywords {
@@ -287,7 +344,7 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 	}
 	if input.Empty() && keywordText == "" {
 		s.metrics.empty.Add(1)
-		return nil
+		return OutcomeContinue
 	}
 	s.metrics.checked.Add(1)
 	endpoint, _, _ := strings.Cut(info.RequestURLPath, "?")
@@ -314,13 +371,21 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 			InputLength:   len([]rune(input.Text)),
 			ImageCount:    len(input.Images),
 			ConfigVersion: config.ConfigVersion,
-			Allowlisted:   decision.Action == ActionRecordOnly,
+			// Inputs that are not disposed are marked allowlisted so they
+			// never count as violations later.
+			Allowlisted: !decision.Dispose,
+			RuleId:      decision.RuleID,
 		},
 	}
 	for _, image := range input.Images {
 		item.size += int64(len(image))
 	}
-	blocking := decision.Action == ActionBlock
+	synchronous := decision.synchronous()
+	// flaggedOutcome is what a flagged synchronous check returns.
+	flaggedOutcome, flaggedAction := OutcomeBlock, ""
+	if decision.Action == ActionReroute {
+		flaggedOutcome, flaggedAction = OutcomeReroute, model.ContentModerationActionReroute
+	}
 
 	// Keyword stage, matched against the reminder-preserving text. In
 	// keyword_only and keyword_and_api a hit is decided here without an
@@ -331,14 +396,14 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 	// effect for inputs it matched before.
 	keywordGated := false
 	if useKeywords {
-		list, hit := s.matchKeyword(keywordText, config.KeywordLists)
+		list, hit := s.matchKeyword(keywordText, keywordLists)
 		if hit {
 			s.metrics.keywordHits.Add(1)
 			item.event.KeywordList = list
 		}
-		gated := config.KeywordMode == content_moderation_setting.KeywordModeKeywordGated
-		if !hit && (gated || config.KeywordMode == content_moderation_setting.KeywordModeKeywordOnly) {
-			return nil
+		gated := keywordMode == content_moderation_setting.KeywordModeKeywordGated
+		if !hit && (gated || keywordMode == content_moderation_setting.KeywordModeKeywordOnly) {
+			return OutcomeContinue
 		}
 		keywordGated = gated
 		if hit && !gated {
@@ -347,19 +412,19 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 			event.CreatedAt = s.now().Unix()
 			event.Action, event.Flagged, event.HighestCategory, event.HighestScore = model.ContentModerationActionAllow, true, model.ContentModerationKeywordCategory, 1
 			event.InputExcerpt = Excerpt(keywordExcerptSource(input.Text, keywordText))
-			if blocking {
-				event.Action = model.ContentModerationActionKeywordBlock
+			if synchronous {
+				event.Action = cmp.Or(flaggedAction, model.ContentModerationActionKeywordBlock)
 			}
-			s.enqueueRecord(&record{event: &event, email: info.UserEmail, dispose: decision.Action != ActionRecordOnly, config: config.Clone()})
-			if blocking {
-				return s.blockError(c)
+			s.enqueueRecord(&record{event: &event, email: info.UserEmail, dispose: decision.Dispose, config: config.Clone()})
+			if synchronous {
+				return s.flagged(flaggedOutcome)
 			}
-			return nil
+			return OutcomeContinue
 		}
 	}
 	if input.Empty() {
 		s.metrics.empty.Add(1)
-		return nil
+		return OutcomeContinue
 	}
 
 	if config.HashBlocklistEnabled && s.hashListed(item.hash) {
@@ -368,47 +433,82 @@ func (s *Service) checkRelay(c *gin.Context, info *relaycommon.RelayInfo) *types
 		event.CreatedAt = s.now().Unix()
 		event.Action, event.Flagged, event.HighestCategory, event.HighestScore = model.ContentModerationActionAllow, true, model.ContentModerationHashCategory, 1
 		event.InputExcerpt = Excerpt(input.Text)
-		if blocking {
-			event.Action = model.ContentModerationActionHashBlock
+		if synchronous {
+			event.Action = cmp.Or(flaggedAction, model.ContentModerationActionHashBlock)
 		}
 		s.enqueueRecord(&record{event: &event})
-		if blocking {
-			return s.blockError(c)
+		if synchronous {
+			return s.flagged(flaggedOutcome)
 		}
-		return nil
+		return OutcomeContinue
 	}
 	if !keywordGated && !sampled(item.hash, decision.SampleRate) {
 		s.metrics.sampledOut.Add(1)
-		return nil
+		return OutcomeContinue
 	}
 	if len(snapshot.Keys) == 0 {
 		s.metrics.noKeys.Add(1)
-		return nil
+		if synchronous && decision.FailClosed {
+			return s.unavailable(item)
+		}
+		return OutcomeContinue
 	}
-	if !blocking {
+	if !synchronous {
 		s.enqueue(item, config)
-		return nil
+		return OutcomeContinue
 	}
 
 	started := s.now()
-	flagged := s.check(c.Request.Context(), snapshot, item, info.UserEmail, 0, true)
+	flagged, failed := s.moderate(c.Request.Context(), snapshot, item, info.UserEmail, 0, true)
 	s.metrics.syncChecks.Add(1)
 	s.metrics.syncTotalMS.Add(s.now().Sub(started).Milliseconds())
-	if !flagged {
-		return nil
+	switch {
+	case flagged:
+		return s.flagged(flaggedOutcome)
+	case failed && decision.FailClosed:
+		return s.unavailable(item)
 	}
-	return s.blockError(c)
+	return OutcomeContinue
 }
 
-// blockError is the 403 answer for a blocked request. It names no category
+func (s *Service) flagged(outcome Outcome) Outcome {
+	if outcome == OutcomeBlock {
+		s.metrics.blocked.Add(1)
+	} else {
+		s.metrics.rerouted.Add(1)
+	}
+	return outcome
+}
+
+// unavailable records a request rejected because the engine could not
+// answer and the decision fails closed.
+func (s *Service) unavailable(item *request) Outcome {
+	s.metrics.unavailableBlocked.Add(1)
+	event := item.event
+	event.CreatedAt = s.now().Unix()
+	event.Action = model.ContentModerationActionUnavailable
+	s.enqueueRecord(&record{event: &event})
+	return OutcomeUnavailable
+}
+
+// BlockError is the 403 answer for a blocked request. It names no category
 // so the reply does not help tune a prompt around the engine.
-func (s *Service) blockError(c *gin.Context) *types.NewAPIError {
-	s.metrics.blocked.Add(1)
+func BlockError(c *gin.Context) *types.NewAPIError {
 	service.RequestPolicy(c).AddEvent(service.PolicyEvent{ErrorCode: string(ErrorCodeBlocked), ErrorSource: "local",
 		Decision: service.PolicyDecision{Action: "stop", Reason: "local_rejection", Source: "global"}, Health: "unchanged"})
 	logger.LogWarn(c, "content moderation blocked the request")
 	return types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgContentModerationBlocked)), ErrorCodeBlocked,
 		http.StatusForbidden, types.ErrOptionWithSkipRetry())
+}
+
+// UnavailableError is the 503 answer when the engine failed and the rule
+// fails closed.
+func UnavailableError(c *gin.Context) *types.NewAPIError {
+	service.RequestPolicy(c).AddEvent(service.PolicyEvent{ErrorCode: string(ErrorCodeUnavailable), ErrorSource: "local",
+		Decision: service.PolicyDecision{Action: "stop", Reason: "local_rejection", Source: "global"}, Health: "unchanged"})
+	logger.LogWarn(c, "content moderation was unavailable and the rule fails closed")
+	return types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgAuditUnavailable)), ErrorCodeUnavailable,
+		http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
 }
 
 // sampled keeps SampleRate percent of inputs, chosen by the input hash.
@@ -481,7 +581,7 @@ func (s *Service) worker(ctx context.Context) {
 			// even if the settings changed while they waited.
 			if len(snapshot.Keys) > 0 {
 				delay := int(s.now().Sub(item.enqueuedAt).Milliseconds())
-				s.check(ctx, snapshot, item, "", delay, false)
+				s.moderate(ctx, snapshot, item, "", delay, false)
 			}
 			s.release(item)
 			s.active.Add(-1)
@@ -490,10 +590,9 @@ func (s *Service) worker(ctx context.Context) {
 	}
 }
 
-// check calls the engine for one input and queues its event. It reports
-// whether the request must be blocked: only a synchronous check whose policy
-// action is block can block, and a failed call never does (fail-open).
-func (s *Service) check(ctx context.Context, snapshot *content_moderation_setting.Snapshot, item *request, email string, queueDelayMS int, synchronous bool) bool {
+// moderate calls the engine for one input and queues its event. It reports
+// whether a synchronous check flagged the input, and whether the call failed.
+func (s *Service) moderate(ctx context.Context, snapshot *content_moderation_setting.Snapshot, item *request, email string, queueDelayMS int, synchronous bool) (flagged bool, failed bool) {
 	config := &snapshot.Config
 	started := s.now()
 	result, attempts, err := s.engine.moderate(ctx, snapshot, item.input)
@@ -514,37 +613,57 @@ func (s *Service) check(ctx context.Context, snapshot *content_moderation_settin
 			event.Action, event.Error = model.ContentModerationActionError, err.Error()
 			s.enqueueRecord(&record{event: &event})
 		}
-		return false
+		return false, true
 	}
 	s.metrics.latencyTotalMS.Add(int64(latency))
 	for current := s.metrics.latencyMaxMS.Load(); int64(latency) > current &&
 		!s.metrics.latencyMaxMS.CompareAndSwap(current, int64(latency)); current = s.metrics.latencyMaxMS.Load() {
 	}
-	flagged, highest, highestScore := evaluate(result.Scores, config.Thresholds)
+	thresholds := config.Thresholds
+	if len(item.decision.Thresholds) > 0 {
+		thresholds = maps.Clone(config.Thresholds)
+		maps.Copy(thresholds, item.decision.Thresholds)
+	}
+	flagged, highest, highestScore := evaluate(result.Scores, thresholds)
 	event.Flagged, event.HighestCategory, event.HighestScore = flagged, highest, highestScore
 	event.EngineModel = result.Model
 	event.CategoryScores = encodeJSON(result.Scores)
-	event.Thresholds = encodeJSON(config.Thresholds)
+	event.Thresholds = encodeJSON(thresholds)
 	event.Action = model.ContentModerationActionAllow
 	if !flagged {
 		s.metrics.passed.Add(1)
 		if config.RecordNonHits {
 			s.enqueueRecord(&record{event: &event})
 		}
-		return false
+		return false, false
 	}
 	s.metrics.flagged.Add(1)
 	event.InputExcerpt = Excerpt(item.input.Text)
-	blocking := synchronous && item.decision.Action == ActionBlock
-	dispose := item.decision.Action != ActionRecordOnly
-	if blocking {
-		event.Action = model.ContentModerationActionBlock
+	dispose := item.decision.Dispose
+	if synchronous {
+		switch item.decision.Action {
+		case ActionBlock:
+			event.Action = model.ContentModerationActionBlock
+		case ActionReroute:
+			event.Action = model.ContentModerationActionReroute
+		}
 	}
 	if config.HashBlocklistEnabled && dispose {
 		s.addHash(item.hash)
 	}
 	s.enqueueRecord(&record{event: &event, email: email, dispose: dispose, rememberHash: dispose, config: config.Clone()})
-	return blocking
+	return synchronous, false
+}
+
+// RecordViolation counts a finding of another engine as a violation of the
+// user: it goes through disposal (violation count, automatic disabling,
+// mail) with the current content moderation settings and is stored as a
+// content moderation event.
+func RecordViolation(event model.ContentModerationEvent, email string) {
+	config := content_moderation_setting.Current().Config
+	event.Flagged = true
+	event.ConfigVersion = config.ConfigVersion
+	defaultService.enqueueRecord(&record{event: &event, email: email, dispose: true, config: config.Clone()})
 }
 
 func encodeJSON(value any) string {
@@ -811,7 +930,7 @@ func hashBlocklistInUse(config *content_moderation_setting.Config) bool {
 	if !config.HashBlocklistEnabled {
 		return false
 	}
-	_, defaultPolicy := currentScopePolicy().(ConfigScopePolicy)
+	_, defaultPolicy := CurrentScopePolicy().(ConfigScopePolicy)
 	return config.Mode != content_moderation_setting.ModeOff || !defaultPolicy
 }
 
@@ -841,7 +960,11 @@ func (s *Service) maintenanceLoop(ctx context.Context) {
 		// independent of the global mode, because a replaced ScopePolicy may
 		// moderate requests while the global mode is off.
 		snapshot := content_moderation_setting.Current()
-		if snapshot.Config.KeywordMode != content_moderation_setting.KeywordModeAPIOnly || len(snapshot.Config.KeywordLists) > 0 {
+		// A replaced ScopePolicy (the audit policy rules) may use keyword
+		// lists of its own.
+		keywordPolicy, ok := CurrentScopePolicy().(KeywordListUser)
+		if snapshot.Config.KeywordMode != content_moderation_setting.KeywordModeAPIOnly || len(snapshot.Config.KeywordLists) > 0 ||
+			ok && keywordPolicy.UsesKeywordLists() {
 			if err := s.reloadKeywords(false); err != nil {
 				common.SysError(common.LogText("failed to load content moderation keyword lists: %s", err.Error()))
 			}
@@ -927,6 +1050,8 @@ type RuntimeStatus struct {
 	LatencyAvgMS     int64       `json:"latency_avg_ms"`
 	LatencyMaxMS     int64       `json:"latency_max_ms"`
 	SyncAvgMS        int64       `json:"sync_avg_ms"`
+	Rerouted         int64       `json:"rerouted"`
+	UnavailableBlock int64       `json:"unavailable_blocked"`
 	Keys             []KeyStatus `json:"keys"`
 }
 
@@ -950,6 +1075,7 @@ func (s *Service) runtime() RuntimeStatus {
 		Calls: m.calls.Load(), AutoDisabled: m.autoDisabled.Load(), EmailsSent: m.emailsSent.Load(),
 		EmailsFailed: m.emailsFailed.Load(), Recorded: m.recorded.Load(), RecordFailed: m.recordFailed.Load(), DisposalDropped: m.disposalDropped.Load(),
 		LatencyMaxMS: m.latencyMaxMS.Load(), Keys: s.engine.keyStatuses(snapshot.Keys),
+		Rerouted: m.rerouted.Load(), UnavailableBlock: m.unavailableBlocked.Load(),
 	}
 	if completed := status.Passed + status.Flagged; completed > 0 {
 		status.LatencyAvgMS = m.latencyTotalMS.Load() / completed

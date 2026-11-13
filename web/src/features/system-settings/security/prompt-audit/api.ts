@@ -32,9 +32,14 @@ export type PromptAuditEndpoint = {
   enabled: boolean
 }
 
+export type PromptAuditMode = 'async_audit' | 'blocking'
+
 export type PromptAuditConfig = {
   enabled: boolean
-  mode: string
+  mode: PromptAuditMode
+  /** Used by the rules derived from these settings while no audit policy is saved. */
+  fail_policy: 'open' | 'closed'
+  store_pass_events: boolean
   all_groups: boolean
   groups: string[]
   scanners: string[]
@@ -96,6 +101,19 @@ export type PromptAuditRuntime = {
   chunks_over_budget: number
   latency_avg_ms: number
   latency_max_ms: number
+  degraded: boolean
+  fail_policy: string
+  bulkhead_full: number
+  latency_p50_ms: number
+  latency_p95_ms: number
+  latency_p99_ms: number
+  sync_checks: number
+  sync_unavailable: number
+  sync_in_flight: number
+  sync_concurrency: number
+  sync_p50_ms: number
+  sync_p95_ms: number
+  sync_p99_ms: number
 }
 
 export type PromptAuditProbeResult = {

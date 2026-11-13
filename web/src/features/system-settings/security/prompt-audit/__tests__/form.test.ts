@@ -30,6 +30,8 @@ const response: PromptAuditConfigResponse = {
   config: {
     enabled: false,
     mode: 'async_audit',
+    fail_policy: 'open',
+    store_pass_events: false,
     all_groups: true,
     groups: [],
     scanners: ['jailbreak'],
@@ -121,6 +123,9 @@ describe('prompt audit settings form', () => {
       ...response,
       config: {
         ...response.config,
+        mode: undefined,
+        fail_policy: undefined,
+        store_pass_events: undefined,
         scan_scope: undefined,
         strict_jailbreak_mapping: undefined,
       },
@@ -130,6 +135,9 @@ describe('prompt audit settings form', () => {
 
     expect(values.scan_scope).toBe('latest_user')
     expect(values.strict_jailbreak_mapping).toBe(false)
+    expect(values.mode).toBe('async_audit')
+    expect(values.fail_policy).toBe('open')
+    expect(values.store_pass_events).toBe(false)
   })
 
   it('accepts a group prefix pattern', () => {

@@ -26,7 +26,9 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/audit_policy_setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/prompt_audit_setting"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -1426,5 +1428,89 @@ func TestResponsesWebSocketPreRoutingRejectionsFollowHealthClassification(t *tes
 			assert.Equal(t, int64(1), requests)
 			assert.Zero(t, successes)
 		})
+	}
+}
+
+// TestResponsesWebSocketAuditsEachTurnInItsConcreteGroup gives an "auto"
+// token a WebSocket session and a blocking rule for the group the
+// distributor picks: a clean turn reaches upstream, and a flagged turn is
+// refused before billing without reaching upstream.
+func TestResponsesWebSocketAuditsEachTurnInItsConcreteGroup(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	received := make(chan string, 4)
+	fixture := newResponsesWSBillingTest(t, `tier("base", p * 2)`, func(ws *websocket.Conn, r *http.Request) {
+		for index := 1; ; index++ {
+			_, data, err := ws.ReadMessage()
+			if err != nil {
+				return
+			}
+			received <- string(data)
+			terminal := fmt.Sprintf(`{"type":"response.completed","response":{"id":"resp_%d","status":"completed","model":"ws-billing","output":[],"usage":{"input_tokens":10,"output_tokens":1,"total_tokens":11}}}`, index)
+			if !assert.NoError(t, ws.WriteMessage(websocket.TextMessage, []byte(terminal))) {
+				return
+			}
+		}
+	}, `{"type":"response.completed","response":{"id":"http","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
+	previousGroups := setting.UserUsableGroups2JSONString()
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","auto":"Auto"}`))
+	t.Cleanup(func() { require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(previousGroups)) })
+	require.NoError(t, fixture.token.SetAutoGroups([]string{"default"}))
+	require.NoError(t, model.DB.Model(fixture.token).Updates(map[string]any{"group": "auto", "auto_groups": fixture.token.AutoGroups}).Error)
+	// The fixture caches tokens in Redis; drop the cached copy so the next
+	// turn authenticates the token as an "auto" token.
+	require.NoError(t, model.InvalidateUserTokensCache(fixture.user.Id))
+
+	guard := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		answer := "Safety: Safe\nCategories: None"
+		if strings.Contains(string(body), "forbidden") {
+			answer = "Safety: Unsafe\nCategories: Violent"
+		}
+		encoded, _ := common.Marshal(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": answer}}}})
+		_, _ = w.Write(encoded)
+	}))
+	t.Cleanup(guard.Close)
+	pa := prompt_audit_setting.DefaultConfig()
+	pa.Enabled, pa.Mode = true, prompt_audit_setting.ModeBlocking
+	pa.Endpoints = []prompt_audit_setting.Endpoint{{ID: "g1", BaseURL: guard.URL, Model: "guard", TimeoutMS: 2000, Enabled: true}}
+	require.NoError(t, pa.Normalize())
+	previousPA := prompt_audit_setting.Current().Config
+	encoded, err := common.Marshal(pa)
+	require.NoError(t, err)
+	prompt_audit_setting.ApplyOption(prompt_audit_setting.OptionKey, string(encoded))
+	policy := audit_policy_setting.Config{Rules: []audit_policy_setting.Rule{{
+		ID: "default-group", Enabled: true,
+		Match:       audit_policy_setting.Match{Groups: []string{"default"}, Formats: []string{audit_policy_setting.FormatResponsesWebSocket}},
+		PromptAudit: audit_policy_setting.PromptAudit{Enabled: true, Action: audit_policy_setting.ActionBlock},
+	}}}
+	require.NoError(t, policy.Normalize())
+	encoded, err = common.Marshal(policy)
+	require.NoError(t, err)
+	audit_policy_setting.ApplyOption(audit_policy_setting.OptionKey, string(encoded))
+	t.Cleanup(func() {
+		previousJSON, _ := common.Marshal(previousPA)
+		prompt_audit_setting.ApplyOption(prompt_audit_setting.OptionKey, string(previousJSON))
+		audit_policy_setting.ApplyOption(audit_policy_setting.OptionKey, "")
+	})
+
+	// Every turn runs token authentication again, so the token's new group
+	// applies from the first turn on.
+	client := fixture.client
+
+	require.NoError(t, client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"ws-billing","input":"hello"}`)))
+	event := readResponsesWSTestEvent(t, client)
+	require.Equal(t, "response.completed", event["type"], "a clean turn completes: %v", event)
+	<-received
+
+	require.NoError(t, client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"ws-billing","input":"something forbidden"}`)))
+	event = readResponsesWSTestEvent(t, client)
+	require.Equal(t, "error", event["type"], "a flagged turn is refused: %v", event)
+	encodedEvent, err := common.Marshal(event)
+	require.NoError(t, err)
+	assert.Contains(t, string(encodedEvent), "prompt_audit_blocked")
+	select {
+	case data := <-received:
+		t.Fatalf("a refused turn reached upstream: %s", data)
+	case <-time.After(200 * time.Millisecond):
 	}
 }

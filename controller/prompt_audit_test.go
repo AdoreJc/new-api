@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,10 +11,19 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/auditpolicy"
+	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/audit_policy_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/prompt_audit_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -131,6 +141,11 @@ func TestPromptAuditRoutesRequireRoot(t *testing.T) {
 	group.POST("/events/batch-delete", BatchDeletePromptAuditEvents)
 	group.POST("/events/delete-preview", PreviewPromptAuditEventDeletion)
 	group.POST("/events/delete-by-filter", DeletePromptAuditEventsByFilter)
+	policy := router.Group("/api/audit_policy", middleware.RootAuth())
+	policy.GET("/", GetAuditPolicy)
+	policy.PUT("/", UpdateAuditPolicy)
+	policy.POST("/reset", ResetAuditPolicy)
+	policy.POST("/test", TestAuditPolicy)
 	send := func(method, path, bearer string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(method, path, strings.NewReader(`{}`))
 		if bearer != "" {
@@ -277,9 +292,13 @@ func TestPromptAuditRegexSearch(t *testing.T) {
 		require.NoError(t, err)
 		assert.JSONEq(t, value, string(encoded), key)
 	}
-	encoded, err := common.Marshal(logs)
-	require.NoError(t, err)
-	assert.NotContains(t, string(encoded), "9876", "matched prompt text is never logged")
+	// Only what the handler wrote is checked; generated ids are random and
+	// may contain the same digits.
+	for _, entry := range logs {
+		encoded, err := common.Marshal([]any{entry.Content, entry.Other})
+		require.NoError(t, err)
+		assert.NotContains(t, string(encoded), "9876", "matched prompt text is never logged")
+	}
 
 	_, body = searchPromptAudit(t, identity, url.Values{"keyword": {"SECRET"}, "keyword_fields": {"full_prompt,username"}})
 	assert.Equal(t, []string{"erin", "carol", "bob"}, promptAuditSearchUsers(body), "plain full_prompt search scans as a literal")
@@ -477,4 +496,172 @@ func TestPromptAuditFilteredDeletionDeletesInBatches(t *testing.T) {
 	response := confirmPromptAuditDeletion(t, identity, filter, preview)
 	assert.Contains(t, response.Body.String(), `"deleted":1100`, "more rows than one 500-row batch are all deleted")
 	assert.Equal(t, int64(5), promptAuditEventCount(t))
+}
+
+// TestAuditPolicySaveConflictAndReset saves a rule table over the derived
+// rules, rejects a save from a stale version, and returns to derived rules
+// on reset; each change is in the audit log.
+func TestAuditPolicySaveConflictAndReset(t *testing.T) {
+	identity := setupPromptAuditTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Option{}))
+	t.Cleanup(func() { audit_policy_setting.ApplyOption(audit_policy_setting.OptionKey, "") })
+	save := func(version int64) *httptest.ResponseRecorder {
+		body := `{"expected_config_version":` + strconv.FormatInt(version, 10) + `,"config":{"rules":[{"id":"oauth","enabled":true,
+			"match":{"groups":["claude-ch*"]},"prompt_audit":{"enabled":true,"action":"block","fail_policy":"closed"}}]}}`
+		return securityEnrollmentRequest(http.MethodPut, "/api/audit_policy/", body, "", identity, UpdateAuditPolicy)
+	}
+
+	derived := securityEnrollmentRequest(http.MethodGet, "/api/audit_policy/", "", "", identity, GetAuditPolicy)
+	assert.Contains(t, derived.Body.String(), `"saved":false`)
+
+	placeholder := securityEnrollmentRequest(http.MethodPut, "/api/audit_policy/", `{"expected_config_version":0,"config":{"rules":[
+		{"id":"unreadable","enabled":true,"degraded":true,"prompt_audit":{"enabled":true,"action":"block"}}]}}`, "", identity, UpdateAuditPolicy)
+	assert.Equal(t, http.StatusBadRequest, placeholder.Code, "a stand-in for an unreadable rule is never saved")
+	assert.False(t, audit_policy_setting.Current().Saved)
+
+	saved := save(0)
+	require.Contains(t, saved.Body.String(), `"success":true`, saved.Body.String())
+	assert.True(t, audit_policy_setting.Current().Saved)
+	assert.Equal(t, int64(1), audit_policy_setting.Current().Config.ConfigVersion)
+	assert.Equal(t, "oauth", audit_policy_setting.Current().Config.Rules[0].ID)
+
+	stale := save(0)
+	assert.Equal(t, http.StatusConflict, stale.Code, "a save from a stale version is rejected")
+
+	tested := securityEnrollmentRequest(http.MethodPost, "/api/audit_policy/test", `{"user_id":1,"group":"claude-ch2","model":"m"}`, "", identity, TestAuditPolicy)
+	assert.Contains(t, tested.Body.String(), `"rule_id":"oauth"`)
+
+	draft := securityEnrollmentRequest(http.MethodPost, "/api/audit_policy/test", `{"user_id":1,"group":"default","requested_group":"auto",
+		"config":{"rules":[{"id":"draft-auto","enabled":true,"match":{"requested_groups":["auto"]}}]}}`, "", identity, TestAuditPolicy)
+	assert.Contains(t, draft.Body.String(), `"rule_id":"draft-auto"`, "a draft is tested without saving it")
+	assert.Equal(t, "oauth", audit_policy_setting.Current().Config.Rules[0].ID)
+
+	reset := securityEnrollmentRequest(http.MethodPost, "/api/audit_policy/reset", `{"expected_config_version":1}`, "", identity, ResetAuditPolicy)
+	require.Contains(t, reset.Body.String(), `"success":true`, reset.Body.String())
+	assert.Contains(t, reset.Body.String(), `"config_version":2`, "the version keeps counting after a reset")
+	assert.False(t, audit_policy_setting.Current().Saved, "reset returns to the derived rules")
+	assert.Equal(t, http.StatusConflict, save(1).Code, "an editor holding the version before the reset cannot overwrite")
+	assert.Equal(t, http.StatusConflict, save(0).Code)
+	require.Contains(t, save(2).Body.String(), `"config_version":3`)
+
+	// Another node saved a prompt audit scope this node has not synced yet:
+	// the derived rules shown come from the database.
+	reset = securityEnrollmentRequest(http.MethodPost, "/api/audit_policy/reset", `{"expected_config_version":3}`, "", identity, ResetAuditPolicy)
+	require.Contains(t, reset.Body.String(), `"config_version":4`, reset.Body.String())
+	stored := `{"enabled":true,"all_groups":false,"groups":["other-node*"],"worker_count":1,"queue_capacity":1,"retention_days":1,
+		"endpoints":[{"id":"g1","base_url":"http://127.0.0.1:1","model":"guard","enabled":true}]}`
+	require.NoError(t, model.DB.Where(model.Option{Key: prompt_audit_setting.OptionKey}).Assign(map[string]any{"value": stored}).FirstOrCreate(&model.Option{}).Error)
+	shown := securityEnrollmentRequest(http.MethodGet, "/api/audit_policy/", "", "", identity, GetAuditPolicy)
+	assert.Contains(t, shown.Body.String(), `"other-node*"`, "derived rules come from the stored settings, not this node's copy")
+	assert.Contains(t, shown.Body.String(), `"config_version":4`)
+
+	var audits int64
+	require.NoError(t, model.LOG_DB.Model(&model.AuditLog{}).Where("action IN ?", []string{"audit_policy.update", "audit_policy.reset"}).Count(&audits).Error)
+	assert.Equal(t, int64(4), audits, "every change is in the audit log")
+}
+
+// TestAuditPolicyLimits counts names and notes in characters and refuses a
+// table that would be stored larger than the limit.
+func TestAuditPolicyLimits(t *testing.T) {
+	setupPromptAuditTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Option{}))
+	t.Cleanup(func() { audit_policy_setting.ApplyOption(audit_policy_setting.OptionKey, "") })
+	named := audit_policy_setting.Config{
+		Rules:     []audit_policy_setting.Rule{{ID: "named", Name: strings.Repeat("规", 128)}},
+		Allowlist: []audit_policy_setting.ListEntry{{UserID: 1, Note: strings.Repeat("注", 255)}},
+	}
+	require.NoError(t, named.Normalize(), "128 and 255 characters fit whatever their byte length")
+	named.Rules[0].Name += "则"
+	assert.ErrorIs(t, named.Normalize(), audit_policy_setting.ErrRuleNameTooLong)
+
+	large := audit_policy_setting.Config{}
+	patterns := make([]string, audit_policy_setting.MaxPatterns)
+	for index := range patterns {
+		patterns[index] = fmt.Sprintf("%0250d", index)
+	}
+	for index := range 30 {
+		large.Rules = append(large.Rules, audit_policy_setting.Rule{ID: fmt.Sprintf("r%d", index), Match: audit_policy_setting.Match{Groups: patterns}})
+	}
+	_, err := model.SaveAuditPolicy(&large, 0)
+	assert.ErrorIs(t, err, audit_policy_setting.ErrPolicyTooLarge)
+}
+
+// TestAuditRerouteMovesAnAutoTokenToTheTargetGroup reroutes an "auto"
+// token's request to a concrete group: the channel, the price group and
+// every retry use the target group. A request bound to a subscription
+// account is refused instead.
+func TestAuditRerouteMovesAnAutoTokenToTheTargetGroup(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	db := modelManagementDB(t, "sqlite", "")
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":2}`))
+	for _, spec := range []struct {
+		id     int
+		group  string
+		models string
+	}{{41, "default", "reroute-model"}, {42, "vip", "reroute-model"}, {43, "default", "safe-model"}} {
+		channel := model.Channel{Id: spec.id, Name: fmt.Sprintf("reroute-%d", spec.id), Type: constant.ChannelTypeOpenAI,
+			Key: "test-only", Status: common.ChannelStatusEnabled, Models: spec.models, Group: spec.group,
+			Priority: common.GetPointer(int64(0)), Weight: common.GetPointer(uint(1))}
+		require.NoError(t, db.Create(&channel).Error)
+		require.NoError(t, channel.AddAbilities(db))
+	}
+	model.InitChannelCache()
+	newAutoTokenRequest := func() (*gin.Context, *relaycommon.RelayInfo) {
+		ctx := newPinRetryContext()
+		common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+		common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "auto")
+		common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "auto")
+		common.SetContextKey(ctx, constant.ContextKeyTokenAutoGroups, []string{"default"})
+		common.SetContextKey(ctx, constant.ContextKeyAutoGroup, "default")
+		return ctx, &relaycommon.RelayInfo{OriginModelName: "reroute-model", UsingGroup: "auto", TokenGroup: "auto", UserGroup: "default"}
+	}
+
+	ctx, info := newAutoTokenRequest()
+	require.Nil(t, applyAuditReroute(ctx, info, &auditpolicy.Reroute{RuleID: "r", Group: "vip"}))
+	assert.Equal(t, 42, common.GetContextKeyInt(ctx, constant.ContextKeyChannelId))
+	assert.Equal(t, "vip", service.RelayRetryGroup(info), "retries select in the target group")
+	ratio := helper.HandleGroupRatio(ctx, info)
+	assert.Equal(t, "vip", info.UsingGroup, "the price uses the target group, not the auto group chosen before")
+	assert.Equal(t, 2.0, ratio.GroupRatio)
+
+	ctx, info = newAutoTokenRequest()
+	info.SubscriptionRoute = &relaycommon.SubscriptionRoute{SubscriptionId: 1, ChannelId: 41, Group: "default"}
+	apiErr := applyAuditReroute(ctx, info, &auditpolicy.Reroute{RuleID: "r", Group: "vip"})
+	require.NotNil(t, apiErr, "a request bound to a subscription account is not rerouted")
+	assert.Equal(t, auditpolicy.ErrorCodeRerouteFailed, apiErr.GetErrorCode())
+	assert.Equal(t, "reroute-model", info.OriginModelName)
+
+	// The distributor had moved past "default" to "vip"; the target model is
+	// only served in "default", so the auto search starts over.
+	previousGroups := setting.UserUsableGroups2JSONString()
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP"}`))
+	t.Cleanup(func() { require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(previousGroups)) })
+	ctx, info = newAutoTokenRequest()
+	common.SetContextKey(ctx, constant.ContextKeyTokenAutoGroups, []string{"default", "vip"})
+	common.SetContextKey(ctx, constant.ContextKeyAutoGroupIndex, 1)
+	common.SetContextKey(ctx, constant.ContextKeyAutoGroup, "vip")
+	require.Nil(t, applyAuditReroute(ctx, info, &auditpolicy.Reroute{RuleID: "r", Model: "safe-model"}))
+	assert.Equal(t, 43, common.GetContextKeyInt(ctx, constant.ContextKeyChannelId))
+	assert.Equal(t, "default", common.GetContextKeyString(ctx, constant.ContextKeyAutoGroup))
+
+	// A rerouted request never becomes the channel affinity of the session.
+	affinity := operation_setting.GetChannelAffinitySetting()
+	previousAffinity := *affinity
+	t.Cleanup(func() { *affinity = previousAffinity })
+	*affinity = operation_setting.ChannelAffinitySetting{Enabled: true, DefaultTTLSeconds: 60, MaxEntries: 100,
+		Rules: []operation_setting.ChannelAffinityRule{{Name: t.Name(), ModelRegex: []string{"^reroute-model$"},
+			KeySources: []operation_setting.ChannelAffinityKeySource{{Type: "request_header", Key: "X-Session"}}}}}
+	for _, rerouted := range []bool{true, false} {
+		ctx, _ = newAutoTokenRequest()
+		ctx.Request.Header.Set("X-Session", fmt.Sprintf("%s-%v", t.Name(), rerouted))
+		_, found := service.GetPreferredChannelByAffinity(ctx, "reroute-model", "default")
+		require.False(t, found)
+		if rerouted {
+			ctx.Set(service.AuditRerouteContextKey, service.AuditReroute{RuleID: "r"})
+		}
+		service.RecordChannelAffinity(ctx, 41)
+		_, found = service.GetPreferredChannelByAffinity(ctx, "reroute-model", "default")
+		assert.Equal(t, !rerouted, found, "affinity recorded: rerouted=%v", rerouted)
+		t.Cleanup(func() { service.ClearCurrentChannelAffinityCache(ctx) })
+	}
 }

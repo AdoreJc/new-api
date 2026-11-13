@@ -112,6 +112,7 @@ func UpdatePromptAuditConfig(c *gin.Context) {
 		"groups": strings.Join(saved.Groups, ","), "endpoints": len(saved.Endpoints),
 		"store_full_prompt": saved.StoreFullPrompt, "retention_days": saved.RetentionDays,
 		"scan_scope": saved.ScanScope, "strict_jailbreak_mapping": saved.StrictJailbreakMapping,
+		"mode": saved.Mode, "fail_policy": saved.FailPolicy, "store_pass_events": saved.StorePassEvents,
 		"config_version": saved.ConfigVersion, "token_changes": strings.Join(tokenChanges, ","),
 	})
 	common.ApiSuccess(c, buildPromptAuditConfigResponse(saved, tokens))
@@ -256,7 +257,10 @@ func GetPromptAuditEvent(c *gin.Context) {
 		return
 	}
 	recordManageAudit(c, "prompt_audit.event_view", map[string]any{"id": id, "has_full_prompt": event.FullPrompt != ""})
-	common.ApiSuccess(c, event)
+	common.ApiSuccess(c, struct {
+		*model.PromptAuditEvent
+		Issues []promptaudit.Issue `json:"issues"`
+	}{event, promptaudit.SummarizeIssues(event)})
 }
 
 func DeletePromptAuditEvent(c *gin.Context) {

@@ -3,6 +3,8 @@ package relay
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +29,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/auditpolicy"
 
 	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
@@ -280,6 +283,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 		info.IsStream = true
 		common.SetContextKey(c, appconstant.ContextKeyIsStream, true)
+		if apiErr = auditResponsesWSTurn(c, info, create.Body); apiErr != nil {
+			return apiErr
+		}
 		if apiErr = PrepareRequestBilling(c, info); apiErr != nil {
 			return apiErr
 		}
@@ -306,6 +312,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 				info.IsStream = true
 				common.SetContextKey(c, appconstant.ContextKeyIsStream, true)
+				if apiErr = auditResponsesWSTurn(c, info, create.Body); apiErr != nil {
+					return apiErr
+				}
 				if apiErr = PrepareRequestBilling(c, info); apiErr != nil {
 					return apiErr
 				}
@@ -546,6 +555,23 @@ func responsesWSErrorEndsRequest(event responsesWSErrorEvent, streamID, response
 		return false, false, false
 	}
 	return true, len(control) > 0 && event.ResponseID == "", false
+}
+
+// auditResponsesWSTurn audits one turn after its group and channel are
+// known (so group rules see the concrete group of an "auto" token) and
+// before billing, keyed by the turn body so the same turn is never checked
+// twice. The connection is pinned to one model and channel, so a reroute
+// cannot apply and the turn is refused instead.
+func auditResponsesWSTurn(c *gin.Context, info *relaycommon.RelayInfo, body []byte) *types.NewAPIError {
+	digest := sha256.Sum256(body)
+	audit := auditpolicy.Evaluate(c, info, auditpolicy.FormatResponsesWebSocket, hex.EncodeToString(digest[:]))
+	if audit.Err != nil {
+		return audit.Err
+	}
+	if audit.Reroute != nil {
+		return auditpolicy.RerouteUnsupportedError(c, audit.Reroute)
+	}
+	return nil
 }
 
 func (s *responsesWSSession) restoreConnectionContext(c *gin.Context, model string) *types.NewAPIError {

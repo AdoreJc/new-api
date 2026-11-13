@@ -615,3 +615,31 @@ func TestApplyWebSocketSubprotocolAuthorizationReadsRepeatedHeaders(t *testing.T
 	assert.True(t, applyWebSocketSubprotocolAuthorization(header))
 	assert.Equal(t, "Bearer sk-later-field", header.Get("Authorization"))
 }
+
+// TestAuditAdminRoutesRefuseRootAccessTokens gives a root user an access
+// token with every option scope: the audit policy and prompt audit admin
+// routes still require a browser session.
+func TestAuditAdminRoutesRefuseRootAccessTokens(t *testing.T) {
+	setupDashboardAuthMiddlewareTest(t)
+	gin.SetMode(gin.TestMode)
+	wasMaster := common.IsMasterNode
+	common.IsMasterNode = true
+	t.Cleanup(func() { common.IsMasterNode = wasMaster })
+	root := createMiddlewarePATUser(t, "audit-route-root", "middleware-audit-legacy-token")
+	require.NoError(t, model.DB.Model(root).Update("role", common.RoleRootUser).Error)
+	token, _ := createMiddlewareScopedToken(t, root.Id, 0, "option:read", "option:write")
+
+	ok := func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{}) }
+	router := gin.New()
+	for _, path := range []string{"/api/audit_policy/", "/api/prompt_audit/config", "/api/prompt_audit/runtime"} {
+		router.GET(path, RootAuth(), ok)
+		response := middlewareBearerRequest(router, path, token)
+		assert.Equal(t, http.StatusForbidden, response.Code, path)
+		assert.Contains(t, response.Body.String(), `"code":"AUTH_SESSION_REQUIRED"`, path)
+	}
+	for _, key := range []string{"PUT /api/audit_policy/", "POST /api/audit_policy/reset", "POST /api/audit_policy/test", "PUT /api/prompt_audit/config"} {
+		rule, declared := AccessTokenRouteRule(key)
+		require.True(t, declared, key)
+		assert.Equal(t, accessTokenRuleSession, rule.kind, key)
+	}
+}

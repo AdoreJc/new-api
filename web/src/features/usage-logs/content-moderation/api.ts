@@ -59,6 +59,8 @@ export type ContentModerationEvent = {
   auto_disabled: boolean
   email_sent: boolean
   config_version: number
+  /** Audit policy rule that applied; empty for older events. */
+  rule_id?: string
 }
 
 /** Filters shared by listing and filtered deletion. */
@@ -163,6 +165,8 @@ export const CONTENT_MODERATION_ACTION_LABELS: Record<string, string> = {
   block: 'Blocked',
   hash_block: 'Blocked (remembered input)',
   keyword_block: 'Blocked (keyword)',
+  reroute: 'Rerouted',
+  fail_block: 'Blocked (engine unavailable)',
   error: 'API failed',
 }
 
