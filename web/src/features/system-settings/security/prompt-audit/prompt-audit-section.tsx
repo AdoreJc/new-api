@@ -58,6 +58,7 @@ import {
 } from '../../components/settings-form-layout'
 import { SettingsPageFormActions } from '../../components/settings-page-context'
 import { SettingsSection } from '../../components/settings-section'
+import { FAIL_POLICY_OPTIONS } from '../audit-policy/lib/constants'
 import {
   getPromptAuditConfig,
   updatePromptAuditConfig,
@@ -65,6 +66,7 @@ import {
 } from './api'
 import { PromptAuditEndpointFields } from './endpoint-fields'
 import {
+  PROMPT_AUDIT_MODES,
   PROMPT_AUDIT_SCAN_SCOPES,
   PROMPT_AUDIT_SCANNER_LABELS,
   promptAuditFormSchema,
@@ -82,13 +84,14 @@ const SWITCHES = [
     name: 'enabled',
     label: 'Enable prompt audit',
     description:
-      'Scan prompts in the background with the Guard model and record flagged requests. Requests are never blocked or delayed.',
+      'Scan prompts with the Guard model and record flagged requests. Requests are only blocked or delayed by audit policy rules while the mode allows blocking.',
   },
   {
     name: 'all_groups',
     label: 'Audit all groups',
     description:
       'Covers API key requests and subscription OAuth channel groups alike. Turn off to choose groups.',
+    policyScoped: true,
   },
   {
     name: 'store_full_prompt',
@@ -101,8 +104,17 @@ const SWITCHES = [
     label: 'Treat controversial jailbreak results as critical',
     description:
       'Off by default: a controversial jailbreak verdict is recorded as flagged, because coding agent prompts often get it. Unsafe results are not affected.',
+    policyScoped: true,
+  },
+  {
+    name: 'store_pass_events',
+    label: 'Record passed requests',
+    description:
+      'Also record an event when a scan finds nothing. This can create many events.',
   },
 ] as const
+
+const POLICY_SCOPED_NOTE = 'Used only while no audit policy is saved.'
 
 const NUMBER_FIELDS = [
   { name: 'retention_days', label: 'Retention (days)', min: 1, max: 365 },
@@ -184,7 +196,7 @@ function PromptAuditForm(props: {
       <Alert>
         <AlertDescription>
           {t(
-            'Prompt audit only records findings in this version. The Guard endpoint address is not checked against the SSRF settings because Guard models usually run on a private network; only the root user can change it.'
+            'Which requests are scanned and what happens to findings is set by the audit policy. The Guard endpoint address is not checked against the SSRF settings because Guard models usually run on a private network; only the root user can change it.'
           )}
         </AlertDescription>
       </Alert>
@@ -204,7 +216,10 @@ function PromptAuditForm(props: {
                   <SettingsSwitchItem>
                     <SettingsSwitchContent>
                       <FormLabel>{t(item.label)}</FormLabel>
-                      <FormDescription>{t(item.description)}</FormDescription>
+                      <FormDescription>
+                        {t(item.description)}
+                        {'policyScoped' in item && ` ${t(POLICY_SCOPED_NOTE)}`}
+                      </FormDescription>
                     </SettingsSwitchContent>
                     <FormControl>
                       <Switch
@@ -245,6 +260,84 @@ function PromptAuditForm(props: {
               )}
             </Fragment>
           ))}
+          <FormField
+            control={form.control}
+            name='mode'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Mode')}</FormLabel>
+                <Select
+                  items={PROMPT_AUDIT_MODES.map((mode) => ({
+                    value: mode.value,
+                    label: t(mode.label),
+                  }))}
+                  onValueChange={field.onChange}
+                  value={field.value}
+                >
+                  <FormControl>
+                    <SelectTrigger aria-label={t('Mode')}>
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {PROMPT_AUDIT_MODES.map((mode) => (
+                        <SelectItem key={mode.value} value={mode.value}>
+                          {t(mode.label)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FormDescription>
+                  {t(
+                    'Blocking only takes effect for audit policy rules whose action is block or reroute; those requests wait for the scan. The default rules never block.'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name='fail_policy'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('When the Guard is unavailable')}</FormLabel>
+                <Select
+                  items={FAIL_POLICY_OPTIONS.map((policy) => ({
+                    value: policy.value,
+                    label: t(policy.label),
+                  }))}
+                  onValueChange={field.onChange}
+                  value={field.value}
+                >
+                  <FormControl>
+                    <SelectTrigger
+                      aria-label={t('When the Guard is unavailable')}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {FAIL_POLICY_OPTIONS.map((policy) => (
+                        <SelectItem key={policy.value} value={policy.value}>
+                          {t(policy.label)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FormDescription>
+                  {t(
+                    'Used by rules derived from these settings while no audit policy is saved'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
           <FormField
             control={form.control}
             name='scan_scope'
@@ -292,7 +385,8 @@ function PromptAuditForm(props: {
                 <FormDescription>
                   {t(
                     'Unsafe results in a selected category are recorded as critical; other unsafe or controversial results are recorded as flagged.'
-                  )}
+                  )}{' '}
+                  {t(POLICY_SCOPED_NOTE)}
                 </FormDescription>
                 <div className='grid gap-2 sm:grid-cols-2'>
                   {props.data.scanners.map((scanner) => {

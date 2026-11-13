@@ -50,6 +50,8 @@ const RUNTIME_FIELDS: Array<{
   { key: 'passed', label: 'Passed' },
   { key: 'flagged', label: 'Flagged' },
   { key: 'blocked', label: 'Blocked' },
+  { key: 'rerouted', label: 'Rerouted' },
+  { key: 'unavailable_blocked', label: 'Blocked (engine unavailable)' },
   { key: 'hash_blocked', label: 'Hash blocklist matches' },
   { key: 'failed', label: 'Engine failures (allowed)' },
   { key: 'timeouts', label: 'Timeouts' },

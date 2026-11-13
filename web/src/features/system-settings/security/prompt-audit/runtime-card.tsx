@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
@@ -50,7 +51,19 @@ const RUNTIME_FIELDS: Array<{ key: keyof PromptAuditRuntime; label: string }> =
     { key: 'chunks_over_budget', label: 'Chunks over the per-request limit' },
     { key: 'latency_avg_ms', label: 'Average scan time (ms)' },
     { key: 'latency_max_ms', label: 'Longest scan time (ms)' },
+    { key: 'latency_p50_ms', label: 'Scan time p50 (ms)' },
+    { key: 'latency_p95_ms', label: 'Scan time p95 (ms)' },
+    { key: 'latency_p99_ms', label: 'Scan time p99 (ms)' },
   ]
+
+const SYNC_FIELDS: Array<{ key: keyof PromptAuditRuntime; label: string }> = [
+  { key: 'sync_checks', label: 'Synchronous checks run' },
+  { key: 'sync_unavailable', label: 'Synchronous checks unavailable' },
+  { key: 'bulkhead_full', label: 'Synchronous checks over the limit' },
+  { key: 'sync_p50_ms', label: 'Synchronous check p50 (ms)' },
+  { key: 'sync_p95_ms', label: 'Synchronous check p95 (ms)' },
+  { key: 'sync_p99_ms', label: 'Synchronous check p99 (ms)' },
+]
 
 export function PromptAuditRuntimeCard() {
   const { t, i18n } = useTranslation()
@@ -79,19 +92,53 @@ export function PromptAuditRuntimeCard() {
           'Counters reset when the server restarts. The queue is kept in memory: pending items are lost on restart and new items are dropped while it is full.'
         )}
       </p>
+      {runtime.data?.degraded && (
+        <Alert variant='destructive'>
+          <AlertDescription>
+            {t(
+              'Prompt audit is degraded: the stored settings could not be read. The engine stays off and blocking checks follow their failure policy.'
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
       {runtime.data && (
-        <dl className='grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3'>
-          {RUNTIME_FIELDS.map((field) => (
-            <div key={field.key} className='flex min-w-0 flex-col'>
+        <>
+          <dl className='grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3'>
+            {RUNTIME_FIELDS.map((field) => (
+              <div key={field.key} className='flex min-w-0 flex-col'>
+                <dt className='text-muted-foreground truncate text-xs'>
+                  {t(field.label)}
+                </dt>
+                <dd className='font-mono tabular-nums'>
+                  {formatNumber(Number(runtime.data[field.key]), locale)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          <h5 className='text-muted-foreground text-xs font-medium'>
+            {t('Synchronous checks')}
+          </h5>
+          <dl className='grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3'>
+            <div className='flex min-w-0 flex-col'>
               <dt className='text-muted-foreground truncate text-xs'>
-                {t(field.label)}
+                {t('Running / limit')}
               </dt>
               <dd className='font-mono tabular-nums'>
-                {formatNumber(Number(runtime.data[field.key]), locale)}
+                {`${formatNumber(runtime.data.sync_in_flight ?? 0, locale)} / ${formatNumber(runtime.data.sync_concurrency ?? 0, locale)}`}
               </dd>
             </div>
-          ))}
-        </dl>
+            {SYNC_FIELDS.map((field) => (
+              <div key={field.key} className='flex min-w-0 flex-col'>
+                <dt className='text-muted-foreground truncate text-xs'>
+                  {t(field.label)}
+                </dt>
+                <dd className='font-mono tabular-nums'>
+                  {formatNumber(Number(runtime.data[field.key] ?? 0), locale)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </>
       )}
     </div>
   )

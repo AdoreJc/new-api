@@ -118,6 +118,8 @@ export type ContentModerationRuntime = {
   passed: number
   flagged: number
   blocked: number
+  rerouted: number
+  unavailable_blocked: number
   hash_blocked: number
   failed: number
   timeouts: number
