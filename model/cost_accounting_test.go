@@ -197,7 +197,7 @@ func TestCostSummaryBreakdown(t *testing.T) {
 
 	summary, err := GetCostSummary(0, 10_000, "", CostDimensionGroup)
 	require.NoError(t, err)
-	assert.Equal(t, CostSummaryRow{Count: 4, Quota: 450, StandardQuota: 300, CostQuota: 180, PendingRows: 1}, summary.Total)
+	assert.Equal(t, CostSummaryRow{Count: 4, Quota: 450, StandardQuota: 300, CostQuota: 180, AccountedQuota: 400, PendingRows: 1}, summary.Total)
 	require.Len(t, summary.Rows, 2)
 	assert.Equal(t, "vip", summary.Rows[0].UseGroup)
 	assert.Equal(t, int64(400), summary.Rows[0].Quota)
@@ -413,7 +413,7 @@ func runCostAccountingMatrix(t *testing.T, kind common.DatabaseType, db, logDB *
 	}
 	summary, err := GetCostSummary(hour-7200, hour+7200, "erin", CostDimensionChannel)
 	require.NoError(t, err)
-	assert.Equal(t, CostSummaryRow{Count: 2, Quota: 60, StandardQuota: 40, CostQuota: 10}, summary.Total)
+	assert.Equal(t, CostSummaryRow{Count: 2, Quota: 60, StandardQuota: 40, CostQuota: 10, AccountedQuota: 60}, summary.Total)
 	require.Len(t, summary.Rows, 1)
 	assert.Equal(t, "fresh", summary.Rows[0].ChannelName)
 	for _, dimension := range []CostDimension{CostDimensionGroup, CostDimensionModel, CostDimensionUser} {

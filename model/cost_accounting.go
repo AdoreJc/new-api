@@ -113,8 +113,11 @@ type CostSummaryRow struct {
 	Quota         int64  `json:"quota"`
 	StandardQuota int64  `json:"standard_quota"`
 	CostQuota     int64  `json:"cost_quota"`
+	// AccountedQuota is the part of Quota whose rows carry list price and
+	// cost; profit and margin must be computed against it.
+	AccountedQuota int64 `json:"accounted_quota"`
 	// PendingRows counts quota_data rows not yet backfilled; their amounts
-	// are missing from StandardQuota and CostQuota.
+	// are missing from StandardQuota, CostQuota and AccountedQuota.
 	PendingRows int64 `json:"pending_rows"`
 }
 
@@ -127,6 +130,7 @@ type CostSummary struct {
 
 const costSummarySums = "COALESCE(sum(count), 0) as count, COALESCE(sum(quota), 0) as quota, " +
 	"COALESCE(sum(standard_quota), 0) as standard_quota, COALESCE(sum(cost_quota), 0) as cost_quota, " +
+	"COALESCE(sum(CASE WHEN standard_quota IS NULL THEN 0 ELSE quota END), 0) as accounted_quota, " +
 	"COALESCE(sum(CASE WHEN standard_quota IS NULL THEN 1 ELSE 0 END), 0) as pending_rows"
 
 // GetCostSummary aggregates list price, revenue and cost from quota_data for

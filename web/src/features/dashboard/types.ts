@@ -292,6 +292,7 @@ export interface CostSummaryRow {
   quota: number
   standard_quota: number
   cost_quota: number
+  accounted_quota: number
   pending_rows: number
 }
 

@@ -76,14 +76,16 @@ const DIMENSION_HEADER_KEYS: Record<CostDimension, string> = {
   user: 'User',
 }
 
+// Profit and margin only count rows that carry a cost; rows still waiting
+// for the backfill have revenue but no cost yet.
 function grossProfit(row: CostSummaryRow): number {
-  return row.quota - row.cost_quota
+  return row.accounted_quota - row.cost_quota
 }
 
 // Gross margin in percent of revenue; undefined when nothing was charged.
 function grossMargin(row: CostSummaryRow): number | undefined {
-  if (row.quota <= 0) return undefined
-  return (grossProfit(row) / row.quota) * 100
+  if (row.accounted_quota <= 0) return undefined
+  return (grossProfit(row) / row.accounted_quota) * 100
 }
 
 function dimensionLabel(row: CostSummaryRow, dimension: CostDimension): string {
@@ -197,7 +199,7 @@ export function CostAccounting(props: CostAccountingProps) {
     },
     {
       key: 'revenue',
-      title: t('Revenue'),
+      title: t('Charged revenue'),
       description: t('Quota actually charged'),
       icon: Coins,
       value: formatQuota(total?.quota ?? 0),
@@ -252,7 +254,7 @@ export function CostAccounting(props: CostAccountingProps) {
     },
     {
       id: 'revenue',
-      header: t('Revenue'),
+      header: t('Charged revenue'),
       className: 'text-right',
       cellClassName: 'text-right tabular-nums',
       cell: (row) => formatQuota(row.quota),
@@ -296,7 +298,7 @@ export function CostAccounting(props: CostAccountingProps) {
             {pendingRows > 0 && (
               <p>
                 {t(
-                  '{{count}} historical rows are not estimated yet and are missing from the totals.',
+                  '{{count}} historical rows are not estimated yet. Their list price and cost are missing, and profit and margin leave them out.',
                   { count: pendingRows }
                 )}
               </p>
