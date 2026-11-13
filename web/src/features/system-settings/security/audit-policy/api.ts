@@ -81,6 +81,11 @@ export type AuditPolicyRule = {
   content_moderation: AuditPolicyContentModeration
   reroute: { model: string; group: string }
   reroute_fallback: 'observe' | 'block'
+  /**
+   * Set by the server on a stored rule it could not read; the rule only
+   * stands in for it. Editing the rule rebuilds it and clears the mark.
+   */
+  degraded?: boolean
 }
 
 export type AuditPolicyListEntry = {

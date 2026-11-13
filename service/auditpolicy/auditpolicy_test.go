@@ -130,6 +130,10 @@ func TestRuleMatching(t *testing.T) {
 		{"nothing matches", audit_policy_setting.Subject{UserID: 1, Group: "default", Model: "gpt-5"}, audit_policy_setting.DefaultRuleID},
 	}
 	for _, test := range tests {
+		// Relay requests always carry a format.
+		if test.subject.Format == "" {
+			test.subject.Format = "openai"
+		}
 		assert.Equal(t, test.want, config.Resolve(test.subject).Rule.ID, test.name)
 	}
 	assert.True(t, audit_policy_setting.Glob("*", ""))
@@ -475,4 +479,19 @@ func TestStoredActionValuesFitTheirColumns(t *testing.T) {
 	for _, value := range values {
 		assert.LessOrEqual(t, len([]rune(value)), 16, value)
 	}
+}
+
+// TestExplainWithoutAFormatMatchesFormatRules tests a request with no format,
+// as the admin page's "any format" does: rules derived from the engine
+// settings, which list formats, still match it.
+func TestExplainWithoutAFormatMatchesFormatRules(t *testing.T) {
+	endpoint, _ := guardEndpoint(t, "Safety: Safe\nCategories: None", 0)
+	config := blockingConfig(endpoint)
+	config.Mode = prompt_audit_setting.ModeAsync
+	usePromptAudit(t, config)
+	plan := Explain(audit_policy_setting.Subject{UserID: 1, Group: "default", Model: "m"})
+	assert.Equal(t, "legacy-prompt-audit", plan.RuleID)
+	assert.Equal(t, engineAsync, plan.PromptAudit)
+	websocket := Explain(audit_policy_setting.Subject{UserID: 1, Group: "default", Model: "m", Format: FormatResponsesWebSocket})
+	assert.Equal(t, audit_policy_setting.DefaultRuleID, websocket.RuleID, "a named format still has to match")
 }

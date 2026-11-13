@@ -1452,10 +1452,13 @@ func TestResponsesWebSocketAuditsEachTurnInItsConcreteGroup(t *testing.T) {
 		}
 	}, `{"type":"response.completed","response":{"id":"http","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
 	previousGroups := setting.UserUsableGroups2JSONString()
-	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default"}`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","auto":"Auto"}`))
 	t.Cleanup(func() { require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(previousGroups)) })
 	require.NoError(t, fixture.token.SetAutoGroups([]string{"default"}))
 	require.NoError(t, model.DB.Model(fixture.token).Updates(map[string]any{"group": "auto", "auto_groups": fixture.token.AutoGroups}).Error)
+	// The fixture caches tokens in Redis; drop the cached copy so the next
+	// turn authenticates the token as an "auto" token.
+	require.NoError(t, model.InvalidateUserTokensCache(fixture.user.Id))
 
 	guard := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)

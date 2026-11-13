@@ -144,3 +144,26 @@ it('tests the rules being edited, with the requested group', async () => {
     'first',
   ])
 })
+
+it('marks unreadable rules and does not save them', async () => {
+  const degraded = policy()
+  degraded.config.rules[0] = { ...degraded.config.rules[0], degraded: true }
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        ...degraded,
+        degraded: true,
+        problems: ['rule first is degraded'],
+      },
+    },
+  })
+  const put = vi.spyOn(api, 'put')
+  const user = userEvent.setup()
+  renderSection()
+
+  expect(await screen.findByText('Unreadable')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Save audit policy' }))
+
+  expect(put).not.toHaveBeenCalled()
+})

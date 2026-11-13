@@ -8143,7 +8143,6 @@
   "Requested groups": "Запрошенные группы",
   "Group the token asked for, for example auto": "Группа, указанная в токене, например auto",
   "Requested groups: {{value}}": "Запрошенные группы: {{value}}",
-  "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.": "Сохранённую политику аудита не удалось прочитать полностью. Нечитаемые правила не выполняют проверок; там, где они требовали блокировки, решает их политика отказа. Проверьте правила и сохраните, чтобы исправить политику.",
   "this rule could not be read; no check runs and its failure policy decides where it asked to block": "это правило не удалось прочитать; проверки не выполняются, а там, где требовалась блокировка, решает его политика отказа",
   "Save the audit policy": "Сохранить политику аудита",
   "The rules are saved as they are now. After saving they no longer follow changes to the prompt audit and content moderation scope settings; change them here instead.": "Правила будут сохранены в текущем виде. После сохранения они больше не следуют за настройками области аудита промптов и модерации; меняйте их здесь.",
@@ -8156,5 +8155,8 @@
   "A reroute group is at most 64 characters": "Группа перенаправления — не более 64 символов",
   "Audit policy list notes are at most 255 characters": "Примечание в списке — не более 255 символов",
   "The audit policy is too large to save; it must stay under 1 MB": "Политика аудита слишком велика; она должна быть меньше 1 МБ",
-  "Select at least one keyword list for the keyword mode": "Выберите хотя бы один список ключевых слов для этого режима"
+  "Select at least one keyword list for the keyword mode": "Выберите хотя бы один список ключевых слов для этого режима",
+  "Unreadable": "Не читается",
+  "Edit or delete the rules that could not be read before saving the audit policy": "Перед сохранением политики аудита измените или удалите нечитаемые правила",
+  "The saved audit policy could not be read in full. Rules marked unreadable run no checks; where they asked to block, their failure policy decides. Edit or delete each of them, then save to repair the policy.": "Сохранённую политику аудита не удалось прочитать полностью. Правила, помеченные как нечитаемые, не выполняют проверок; там, где они требовали блокировки, решает их политика отказа. Измените или удалите каждое из них и сохраните, чтобы исправить политику."
 }

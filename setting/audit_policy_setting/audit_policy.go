@@ -396,24 +396,25 @@ func ParseConfig(value string) (Config, error) {
 }
 
 var (
-	ErrTooManyRules     = common.NewMessage("An audit policy holds at most 200 rules")
-	ErrInvalidRule      = common.NewMessage("Audit policy rule ids must be unique, non-empty and at most 64 characters")
-	ErrRuleNameTooLong  = common.NewMessage("Audit policy rule names are at most 128 characters")
-	ErrNoteTooLong      = common.NewMessage("Audit policy list notes are at most 255 characters")
-	ErrPolicyTooLarge   = common.NewMessage("The audit policy is too large to save; it must stay under 1 MB")
-	ErrInvalidPattern   = common.NewMessage("Audit policy group and model patterns are invalid")
-	ErrInvalidIDs       = common.NewMessage("Audit policy user and token IDs must be positive")
-	ErrInvalidList      = common.NewMessage("Audit policy list condition is invalid")
-	ErrInvalidFormat    = common.NewMessage("Audit policy relay format is invalid")
-	ErrInvalidAction    = common.NewMessage("Audit policy action is invalid")
-	ErrInvalidLevel     = common.NewMessage("Audit policy trigger level or category is invalid")
-	ErrInvalidScanScope = common.NewMessage("Prompt audit scan scope is invalid")
-	ErrInvalidFail      = common.NewMessage("Audit policy failure policy is invalid")
-	ErrInvalidReroute   = common.NewMessage("A reroute rule needs a target model or group, and its fallback must be observe or block")
-	ErrInvalidListEntry = common.NewMessage("Audit policy list entries need a positive user ID")
-	ErrInvalidSampling  = common.NewMessage("Content moderation sample rate must be between 0 and 100")
-	ErrInvalidThreshold = common.NewMessage("Content moderation thresholds must be between 0 and 1")
-	ErrInvalidKeywords  = common.NewMessage("Content moderation keyword mode or list names are invalid")
+	ErrTooManyRules        = common.NewMessage("An audit policy holds at most 200 rules")
+	ErrInvalidRule         = common.NewMessage("Audit policy rule ids must be unique, non-empty and at most 64 characters")
+	ErrRuleNameTooLong     = common.NewMessage("Audit policy rule names are at most 128 characters")
+	ErrNoteTooLong         = common.NewMessage("Audit policy list notes are at most 255 characters")
+	ErrPolicyTooLarge      = common.NewMessage("The audit policy is too large to save; it must stay under 1 MB")
+	ErrDegradedRulesRemain = common.NewMessage("Edit or delete the rules that could not be read before saving the audit policy")
+	ErrInvalidPattern      = common.NewMessage("Audit policy group and model patterns are invalid")
+	ErrInvalidIDs          = common.NewMessage("Audit policy user and token IDs must be positive")
+	ErrInvalidList         = common.NewMessage("Audit policy list condition is invalid")
+	ErrInvalidFormat       = common.NewMessage("Audit policy relay format is invalid")
+	ErrInvalidAction       = common.NewMessage("Audit policy action is invalid")
+	ErrInvalidLevel        = common.NewMessage("Audit policy trigger level or category is invalid")
+	ErrInvalidScanScope    = common.NewMessage("Prompt audit scan scope is invalid")
+	ErrInvalidFail         = common.NewMessage("Audit policy failure policy is invalid")
+	ErrInvalidReroute      = common.NewMessage("A reroute rule needs a target model or group, and its fallback must be observe or block")
+	ErrInvalidListEntry    = common.NewMessage("Audit policy list entries need a positive user ID")
+	ErrInvalidSampling     = common.NewMessage("Content moderation sample rate must be between 0 and 100")
+	ErrInvalidThreshold    = common.NewMessage("Content moderation thresholds must be between 0 and 1")
+	ErrInvalidKeywords     = common.NewMessage("Content moderation keyword mode or list names are invalid")
 )
 
 // Normalize trims, deduplicates and validates the table in place.
@@ -757,7 +758,9 @@ func (m *Match) matches(subject Subject, listing Listing) bool {
 	if len(m.TokenIDs) > 0 && !slices.Contains(m.TokenIDs, subject.TokenID) {
 		return false
 	}
-	if len(m.Formats) > 0 && !slices.Contains(m.Formats, subject.Format) {
+	// Relay requests always carry their format; an empty one comes from the
+	// test panel's "any format" and matches every format condition.
+	if len(m.Formats) > 0 && subject.Format != "" && !slices.Contains(m.Formats, subject.Format) {
 		return false
 	}
 	switch m.List {

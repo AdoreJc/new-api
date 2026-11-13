@@ -344,8 +344,13 @@ func applyAuditReroute(c *gin.Context, info *relaycommon.RelayInfo, reroute *aud
 		return auditpolicy.RerouteFailedError(c, reroute, "the request is bound to a subscription account")
 	}
 	service.GetChannelConstraints(c).AddFilter(taskdto.ChannelFilter{Kind: taskdto.FilterBodyRewritten, RequestPath: c.Request.URL.Path})
-	if toGroup != fromGroup {
+	// The distributor may have moved past auto groups that lack the original
+	// model; the target model starts its own search from the first one.
+	if toGroup != fromGroup || toGroup == "auto" {
 		common.SetContextKey(c, constant.ContextKeyAutoGroupIndex, 0)
+		common.SetContextKey(c, constant.ContextKeyAutoGroupRetryIndex, 0)
+	}
+	if toGroup != fromGroup {
 		if toGroup != "auto" {
 			// The price uses the auto group when one is set; a concrete
 			// target replaces the group the distributor chose.

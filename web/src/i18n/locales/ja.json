@@ -8143,7 +8143,6 @@
   "Requested groups": "リクエストグループ",
   "Group the token asked for, for example auto": "トークン自身のグループ（例：auto）",
   "Requested groups: {{value}}": "リクエストグループ：{{value}}",
-  "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.": "保存された監査ポリシーを完全には読み込めませんでした。読み込めないルールはチェックを行いません。ブロックを指定していたルールは障害時ポリシーに従います。ルールを確認し、保存してポリシーを修復してください。",
   "this rule could not be read; no check runs and its failure policy decides where it asked to block": "このルールは読み込めません。チェックは行われず、ブロックを指定していた場合は障害時ポリシーに従います",
   "Save the audit policy": "監査ポリシーを保存",
   "The rules are saved as they are now. After saving they no longer follow changes to the prompt audit and content moderation scope settings; change them here instead.": "ルールは現在の内容で保存されます。保存後はプロンプト監査とコンテンツモデレーションの範囲設定に追従しなくなるため、ここで変更してください。",
@@ -8156,5 +8155,8 @@
   "A reroute group is at most 64 characters": "転送先グループは 64 文字以内です",
   "Audit policy list notes are at most 255 characters": "リストのメモは 255 文字以内です",
   "The audit policy is too large to save; it must stay under 1 MB": "監査ポリシーが大きすぎて保存できません。1 MB 未満にしてください",
-  "Select at least one keyword list for the keyword mode": "キーワードモードには少なくとも 1 つのリストを選択してください"
+  "Select at least one keyword list for the keyword mode": "キーワードモードには少なくとも 1 つのリストを選択してください",
+  "Unreadable": "読み込み不可",
+  "Edit or delete the rules that could not be read before saving the audit policy": "監査ポリシーを保存する前に、読み込めないルールを編集または削除してください",
+  "The saved audit policy could not be read in full. Rules marked unreadable run no checks; where they asked to block, their failure policy decides. Edit or delete each of them, then save to repair the policy.": "保存された監査ポリシーを完全には読み込めませんでした。読み込み不可のルールはチェックを行わず、ブロックを指定していた場合は障害時ポリシーに従います。各ルールを編集または削除してから保存し、ポリシーを修復してください。"
 }

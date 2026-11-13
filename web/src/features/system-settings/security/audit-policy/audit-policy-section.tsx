@@ -152,6 +152,14 @@ function AuditPolicyEditor(props: {
       toast.error(t('Audit policy list entries need a positive user ID'))
       return
     }
+    if (defaultRule.degraded || rules.some((rule) => rule.degraded)) {
+      toast.error(
+        t(
+          'Edit or delete the rules that could not be read before saving the audit policy'
+        )
+      )
+      return
+    }
     const longNote = [...allowlist, ...blocklist].some(
       (entry) => charCount(entry.note) > MAX_NOTE_CHARS
     )
@@ -203,7 +211,7 @@ function AuditPolicyEditor(props: {
           <AlertDescription>
             <p>
               {t(
-                'The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.'
+                'The saved audit policy could not be read in full. Rules marked unreadable run no checks; where they asked to block, their failure policy decides. Edit or delete each of them, then save to repair the policy.'
               )}
             </p>
             <ul className='mt-2 list-disc ps-5'>

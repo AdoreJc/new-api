@@ -3,6 +3,7 @@ package controller
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -76,6 +77,12 @@ func UpdateAuditPolicy(c *gin.Context) {
 		return
 	}
 	config := request.Config
+	// A degraded rule only stands in for a rule that could not be read;
+	// saving it would replace the original settings with a placeholder.
+	if config.Default.Degraded || slices.ContainsFunc(config.Rules, func(rule audit_policy_setting.Rule) bool { return rule.Degraded }) {
+		common.ApiErrorStatus(c, http.StatusBadRequest, audit_policy_setting.ErrDegradedRulesRemain)
+		return
+	}
 	config.UpdatedAt = time.Now().Unix()
 	config.UpdatedBy = c.GetInt("id")
 	saved, err := model.SaveAuditPolicy(&config, request.ExpectedConfigVersion)

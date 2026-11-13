@@ -19,7 +19,9 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/auditpolicy"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/audit_policy_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/prompt_audit_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
@@ -512,6 +514,11 @@ func TestAuditPolicySaveConflictAndReset(t *testing.T) {
 	derived := securityEnrollmentRequest(http.MethodGet, "/api/audit_policy/", "", "", identity, GetAuditPolicy)
 	assert.Contains(t, derived.Body.String(), `"saved":false`)
 
+	placeholder := securityEnrollmentRequest(http.MethodPut, "/api/audit_policy/", `{"expected_config_version":0,"config":{"rules":[
+		{"id":"unreadable","enabled":true,"degraded":true,"prompt_audit":{"enabled":true,"action":"block"}}]}}`, "", identity, UpdateAuditPolicy)
+	assert.Equal(t, http.StatusBadRequest, placeholder.Code, "a stand-in for an unreadable rule is never saved")
+	assert.False(t, audit_policy_setting.Current().Saved)
+
 	saved := save(0)
 	require.Contains(t, saved.Body.String(), `"success":true`, saved.Body.String())
 	assert.True(t, audit_policy_setting.Current().Saved)
@@ -588,11 +595,12 @@ func TestAuditRerouteMovesAnAutoTokenToTheTargetGroup(t *testing.T) {
 	db := modelManagementDB(t, "sqlite", "")
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":2}`))
 	for _, spec := range []struct {
-		id    int
-		group string
-	}{{41, "default"}, {42, "vip"}} {
+		id     int
+		group  string
+		models string
+	}{{41, "default", "reroute-model"}, {42, "vip", "reroute-model"}, {43, "default", "safe-model"}} {
 		channel := model.Channel{Id: spec.id, Name: fmt.Sprintf("reroute-%d", spec.id), Type: constant.ChannelTypeOpenAI,
-			Key: "test-only", Status: common.ChannelStatusEnabled, Models: "reroute-model", Group: spec.group,
+			Key: "test-only", Status: common.ChannelStatusEnabled, Models: spec.models, Group: spec.group,
 			Priority: common.GetPointer(int64(0)), Weight: common.GetPointer(uint(1))}
 		require.NoError(t, db.Create(&channel).Error)
 		require.NoError(t, channel.AddAbilities(db))
@@ -622,4 +630,38 @@ func TestAuditRerouteMovesAnAutoTokenToTheTargetGroup(t *testing.T) {
 	require.NotNil(t, apiErr, "a request bound to a subscription account is not rerouted")
 	assert.Equal(t, auditpolicy.ErrorCodeRerouteFailed, apiErr.GetErrorCode())
 	assert.Equal(t, "reroute-model", info.OriginModelName)
+
+	// The distributor had moved past "default" to "vip"; the target model is
+	// only served in "default", so the auto search starts over.
+	previousGroups := setting.UserUsableGroups2JSONString()
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP"}`))
+	t.Cleanup(func() { require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(previousGroups)) })
+	ctx, info = newAutoTokenRequest()
+	common.SetContextKey(ctx, constant.ContextKeyTokenAutoGroups, []string{"default", "vip"})
+	common.SetContextKey(ctx, constant.ContextKeyAutoGroupIndex, 1)
+	common.SetContextKey(ctx, constant.ContextKeyAutoGroup, "vip")
+	require.Nil(t, applyAuditReroute(ctx, info, &auditpolicy.Reroute{RuleID: "r", Model: "safe-model"}))
+	assert.Equal(t, 43, common.GetContextKeyInt(ctx, constant.ContextKeyChannelId))
+	assert.Equal(t, "default", common.GetContextKeyString(ctx, constant.ContextKeyAutoGroup))
+
+	// A rerouted request never becomes the channel affinity of the session.
+	affinity := operation_setting.GetChannelAffinitySetting()
+	previousAffinity := *affinity
+	t.Cleanup(func() { *affinity = previousAffinity })
+	*affinity = operation_setting.ChannelAffinitySetting{Enabled: true, DefaultTTLSeconds: 60, MaxEntries: 100,
+		Rules: []operation_setting.ChannelAffinityRule{{Name: t.Name(), ModelRegex: []string{"^reroute-model$"},
+			KeySources: []operation_setting.ChannelAffinityKeySource{{Type: "request_header", Key: "X-Session"}}}}}
+	for _, rerouted := range []bool{true, false} {
+		ctx, _ = newAutoTokenRequest()
+		ctx.Request.Header.Set("X-Session", fmt.Sprintf("%s-%v", t.Name(), rerouted))
+		_, found := service.GetPreferredChannelByAffinity(ctx, "reroute-model", "default")
+		require.False(t, found)
+		if rerouted {
+			ctx.Set(service.AuditRerouteContextKey, service.AuditReroute{RuleID: "r"})
+		}
+		service.RecordChannelAffinity(ctx, 41)
+		_, found = service.GetPreferredChannelByAffinity(ctx, "reroute-model", "default")
+		assert.Equal(t, !rerouted, found, "affinity recorded: rerouted=%v", rerouted)
+		t.Cleanup(func() { service.ClearCurrentChannelAffinityCache(ctx) })
+	}
 }

@@ -467,9 +467,10 @@ func TestAuditRerouteRetriesNeverUsePassThroughChannels(t *testing.T) {
 	assert.Zero(t, fixture.upstreamCalls.Load(), "nothing reached the original model")
 }
 
-// TestAuditRerouteToAnotherGroupBillsThatGroup reroutes an "auto" token's
-// flagged request to a concrete group: the request runs and is logged in
-// that group, not the one the distributor chose.
+// TestAuditRerouteToAnotherGroupBillsThatGroup reroutes a flagged request
+// of a token in the user's own group to another group: the request runs and
+// is logged in the target group. The "auto" token case is covered by
+// TestAuditRerouteMovesAnAutoTokenToTheTargetGroup in the controller tests.
 func TestAuditRerouteToAnotherGroupBillsThatGroup(t *testing.T) {
 	fixture := newAuditRelayFixture(t, verifiedReroutePolicy(audit_policy_setting.RerouteTarget{Group: "vip"}), "gpt-4o-mini")
 	vip := addAuditChannel(t, "vip", "gpt-4o-mini", "vip", 0, http.StatusOK, "")

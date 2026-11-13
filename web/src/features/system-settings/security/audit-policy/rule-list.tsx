@@ -33,6 +33,7 @@ import {
   StaticDataTable,
   type StaticDataTableColumn,
 } from '@/components/data-table'
+import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenuItem,
@@ -235,8 +236,17 @@ export function RuleList(props: RuleListProps) {
         </TableCell>
         <TableCell className='max-w-48'>
           <div className='flex min-w-0 flex-col'>
-            <span className='truncate font-medium'>
-              {isDefault ? t('Default rule') : label}
+            <span className='flex min-w-0 items-center gap-1.5'>
+              <span className='truncate font-medium'>
+                {isDefault ? t('Default rule') : label}
+              </span>
+              {rule.degraded && (
+                <StatusBadge
+                  label={t('Unreadable')}
+                  variant='danger'
+                  copyable={false}
+                />
+              )}
             </span>
             <span className='text-muted-foreground truncate font-mono text-xs'>
               {rule.id}
