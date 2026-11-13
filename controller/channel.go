@@ -1668,6 +1668,16 @@ func CopyChannel(c *gin.Context) {
 		clone.Balance = 0
 		clone.UsedQuota = 0
 	}
+	// A copy usually points at the same subscription account; carrying the
+	// monthly cost over would amortize it twice. The cost mode and ratio stay,
+	// the monthly cost and its window must be entered again.
+	clone.MonthlyCostUSD = nil
+	clone.CostEffectiveFrom = nil
+	clone.CostEffectiveTo = nil
+	clone.SubscriptionPlanType = ""
+	clone.SubscriptionActiveStart = nil
+	clone.SubscriptionActiveUntil = nil
+	clone.SubscriptionSyncedAt = nil
 
 	if err := clone.ValidateSettings(); err != nil {
 		common.SysError(common.LogText("failed to validate cloned channel: %s", err.Error()))

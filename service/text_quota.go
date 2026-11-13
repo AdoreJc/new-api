@@ -450,7 +450,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 
 	adminRejectReason := common.GetContextKeyString(ctx, constant.ContextKeyAdminRejectReason)
 	// The list price runs the same settlement with the group ratio as 1.
-	standardQuota := settleTextQuota(ctx, standardPricingRelayInfo(relayInfo), billingUsage).summary.Quota
+	standardQuota := settleTextQuota(ctx, StandardPricingRelayInfo(relayInfo), billingUsage).summary.Quota
 	settlement := settleTextQuota(ctx, relayInfo, billingUsage)
 	summary := settlement.summary
 	billingUsage = settlement.billingUsage

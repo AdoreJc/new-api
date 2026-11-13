@@ -109,12 +109,13 @@ func TestCostBackfillIsResumableAndIdempotent(t *testing.T) {
 		}
 		afterId = lastId
 	}
-	for {
-		_, more, err := BackfillQuotaDataCostWindow(ctx)
+	for cursor := int64(0); ; {
+		_, next, more, err := BackfillQuotaDataCostWindow(ctx, cursor)
 		require.NoError(t, err)
 		if !more {
 			break
 		}
+		cursor = next
 	}
 
 	wantStandard := []int{200, 100, 90}
@@ -146,7 +147,7 @@ func TestCostBackfillIsResumableAndIdempotent(t *testing.T) {
 	_, updated, err = BackfillLogCostBatch(ctx, 0, 100)
 	require.NoError(t, err)
 	assert.Zero(t, updated)
-	_, more, err := BackfillQuotaDataCostWindow(ctx)
+	_, _, more, err := BackfillQuotaDataCostWindow(ctx, 0)
 	require.NoError(t, err)
 	assert.False(t, more)
 	pendingLogs, pendingData, err = CountCostBackfillPending(ctx)
@@ -366,6 +367,12 @@ func runCostAccountingMatrix(t *testing.T, kind common.DatabaseType, db, logDB *
 	}
 	require.NotNil(t, codexInfo)
 	assert.Positive(t, codexInfo.CostQuota)
+	for _, row := range withFixed.Rows {
+		if row.ChannelID == codex.Id {
+			assert.Equal(t, "codex-fixed", row.ChannelName, "rows of idle fixed-cost channels are named")
+			assert.Equal(t, codexInfo.CostQuota, row.FixedCostQuota)
+		}
+	}
 	assert.Equal(t, "plus", codexInfo.PlanType)
 	require.NoError(t, UpdateChannelCostSettings(&Channel{Id: codex.Id}, map[string]any{"monthly_cost_usd": nil}))
 	withFixed, err = GetCostSummary(hour-7200, hour+3600, "", CostDimensionChannel)
@@ -410,12 +417,13 @@ func runCostAccountingMatrix(t *testing.T, kind common.DatabaseType, db, logDB *
 				}
 				afterId = lastId
 			}
-			for {
-				_, more, err := BackfillQuotaDataCostWindow(ctx)
+			for cursor := int64(0); ; {
+				_, next, more, err := BackfillQuotaDataCostWindow(ctx, cursor)
 				require.NoError(t, err)
 				if !more {
 					break
 				}
+				cursor = next
 			}
 		}
 		for i, want := range []int{200, 100, 90} {
@@ -599,7 +607,8 @@ func TestFixedCostAllocation(t *testing.T) {
 	assert.Equal(t, near(3*quotaPerDay), channels["c:51"], "fixed cost stays on its channel, idle days included")
 	assert.Equal(t, near(3*common.QuotaPerUnit), channels["c:53"], "amortization stops when the subscription expires")
 	assert.Zero(t, channels["c:54"])
-	assert.InDelta(t, byChannel.Total.FixedCostQuota, byGroup.Total.FixedCostQuota, 2)
+	assert.Equal(t, byChannel.Total.FixedCostQuota, byGroup.Total.FixedCostQuota, "every breakdown adds up to the same total")
+	assert.Equal(t, byChannel.Total.FixedCostQuota, summarize("", CostDimensionUser).Total.FixedCostQuota)
 
 	infos := map[int]FixedCostChannel{}
 	for _, info := range byChannel.FixedChannels {
@@ -617,4 +626,13 @@ func TestFixedCostAllocation(t *testing.T) {
 	byUser := summarize("b", CostDimensionUser)
 	assert.Equal(t, near(quotaPerDay*0.25), byKey(byUser, CostDimensionUser)["u:2"])
 	assert.Equal(t, near(quotaPerDay*0.25), byUser.Total.FixedCostQuota)
+}
+
+func TestLargestRemainderKeepsTheTotal(t *testing.T) {
+	parts := largestRemainder(map[string]float64{"a": 1, "b": 1, "c": 1}, 100)
+	assert.Equal(t, map[string]int64{"a": 34, "b": 33, "c": 33}, parts)
+	parts = largestRemainder(map[string]float64{"x": 0.2, "y": 0.7, "z": 0.1}, 7)
+	assert.Equal(t, int64(7), parts["x"]+parts["y"]+parts["z"])
+	assert.Equal(t, int64(5), parts["y"])
+	assert.Empty(t, largestRemainder(map[string]float64{}, 5))
 }

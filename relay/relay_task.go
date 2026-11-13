@@ -395,10 +395,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	} else {
 		if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, parsed.TaskData); len(adjustedRatios) > 0 {
-			if adjustedQuota, ok := recalcQuotaFromRatios(info, info.PriceData.Quota, adjustedRatios); ok {
+			if adjustedQuota, clamp, ok := recalcQuotaFromRatios(info, info.PriceData.Quota, adjustedRatios); ok {
 				// 基于调整后的 ratios 重新计算 quota
 				finalQuota = adjustedQuota
-				info.PriceData.StandardQuota, _ = recalcQuotaFromRatios(info, info.PriceData.StandardQuota, adjustedRatios)
+				noteTaskQuotaClamp(info, clamp)
+				// The list price is bookkeeping only; its saturation is not
+				// a saturation of what this request was charged.
+				info.PriceData.StandardQuota, _, _ = recalcQuotaFromRatios(info, info.PriceData.StandardQuota, adjustedRatios)
 				info.PriceData.ReplaceOtherRatios(adjustedRatios)
 				info.PriceData.Quota = finalQuota
 			}
@@ -420,18 +423,17 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。
 // 公式: baseQuota × ∏(ratio) — 其中 baseQuota 是不含 OtherRatios 的基础额度。
-func recalcQuotaFromRatios(info *relaycommon.RelayInfo, quota int, ratios map[string]float64) (int, bool) {
+func recalcQuotaFromRatios(info *relaycommon.RelayInfo, quota int, ratios map[string]float64) (int, *common.QuotaClamp, bool) {
 	// 从 PriceData 获取不含 OtherRatios 的基础价格
 	baseQuota := info.PriceData.RemoveOtherRatiosFromFloat(float64(quota))
 	priceData := info.PriceData
 	if !priceData.ReplaceOtherRatios(ratios) {
-		return 0, false
+		return 0, nil, false
 	}
 	// 应用新的 ratios
 	result := priceData.ApplyOtherRatiosToFloat(baseQuota)
 	quota, clamp := common.QuotaFromFloatChecked(result)
-	noteTaskQuotaClamp(info, clamp)
-	return quota, true
+	return quota, clamp, true
 }
 
 // noteTaskQuotaClamp records the first quota saturation event onto the task's

@@ -207,7 +207,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	standardQuota, _ := calculateAudioQuota(standardQuotaInfo)
 	if tieredOk {
 		quota = tieredQuota
-		_, standardQuota, _ = TryTieredSettle(standardPricingRelayInfo(relayInfo), tieredParams)
+		_, standardQuota, _ = TryTieredSettle(StandardPricingRelayInfo(relayInfo), tieredParams)
 	}
 
 	totalTokens := usage.TotalTokens
@@ -353,7 +353,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	standardQuota, _ := calculateAudioQuota(standardQuotaInfo)
 	if tieredOk {
 		quota = tieredQuota
-		_, standardQuota, _ = TryTieredSettle(standardPricingRelayInfo(relayInfo), tieredParams)
+		_, standardQuota, _ = TryTieredSettle(StandardPricingRelayInfo(relayInfo), tieredParams)
 	}
 
 	totalTokens := usage.TotalTokens

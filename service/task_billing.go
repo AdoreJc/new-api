@@ -380,11 +380,14 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 }
 
 // taskGroupRatio is the group ratio frozen into the task's billing context.
+// Tasks submitted before the context existed have no ratio on record; their
+// list price is taken as the charged delta (ratio 1), the same assumption the
+// historical backfill makes.
 func taskGroupRatio(task *model.Task) float64 {
 	if bc := task.PrivateData.BillingContext; bc != nil {
 		return bc.GroupRatio
 	}
-	return 0
+	return 1
 }
 
 // RecalculateTaskQuotaByTokens 根据实际 token 消耗重新计费（异步差额结算）。

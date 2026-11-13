@@ -14,11 +14,11 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
 
-// standardPricingRelayInfo returns a shallow copy of info priced as if the
+// StandardPricingRelayInfo returns a shallow copy of info priced as if the
 // group ratio were 1. Settlement code run on the copy yields the list price
 // (standard_quota) through the exact path that produced the real charge. The
 // copy never touches the original's billing session, clamp or snapshot.
-func standardPricingRelayInfo(info *relaycommon.RelayInfo) *relaycommon.RelayInfo {
+func StandardPricingRelayInfo(info *relaycommon.RelayInfo) *relaycommon.RelayInfo {
 	standard := *info
 	standard.PriceData.GroupRatioInfo.GroupRatio = 1
 	standard.QuotaClamp = nil
@@ -98,17 +98,18 @@ func runCostBackfill(ctx context.Context, report func(processed, total int)) err
 		report(min(processed, total), total)
 	}
 
-	for {
+	for cursor := int64(0); ; {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		updated, more, err := model.BackfillQuotaDataCostWindow(ctx)
+		updated, next, more, err := model.BackfillQuotaDataCostWindow(ctx, cursor)
 		if err != nil {
 			return err
 		}
 		if !more {
 			break
 		}
+		cursor = next
 		if updated == 0 {
 			return errors.New("cost backfill made no progress on quota_data")
 		}

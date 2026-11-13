@@ -1740,7 +1740,12 @@ func settleCostCase(t *testing.T, tc costSettlementCase, groupRatio float64, pre
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
 	priceData := tc.priceData
-	priceData.GroupRatioInfo = hosttypes.GroupRatioInfo{GroupRatio: groupRatio}
+	special := tc.priceData.GroupRatioInfo.HasSpecialRatio
+	priceData.GroupRatioInfo = hosttypes.GroupRatioInfo{GroupRatio: groupRatio, GroupSpecialRatio: -1}
+	if special && groupRatio != 1 {
+		// A user's exclusive group ratio is the effective GroupRatio.
+		priceData.GroupRatioInfo = hosttypes.GroupRatioInfo{GroupRatio: groupRatio, GroupSpecialRatio: groupRatio, HasSpecialRatio: true}
+	}
 	format := tc.format
 	if format == "" {
 		format = types.RelayFormatOpenAI
@@ -1793,6 +1798,7 @@ func TestStandardQuotaMatchesGroupRatioOneCharge(t *testing.T) {
 	tokens := &dto.Usage{PromptTokens: 1234, CompletionTokens: 567, TotalTokens: 1801}
 	cases := []costSettlementCase{
 		{name: "token billing with completion ratio", priceData: hosttypes.PriceData{ModelRatio: 1.5, CompletionRatio: 4}, usage: tokens},
+		{name: "user exclusive group ratio", priceData: hosttypes.PriceData{ModelRatio: 1.5, CompletionRatio: 4, GroupRatioInfo: hosttypes.GroupRatioInfo{HasSpecialRatio: true}}, usage: tokens},
 		{name: "cache read and split cache writes", format: types.RelayFormatClaude, priceData: hosttypes.PriceData{
 			ModelRatio: 1.5, CompletionRatio: 5, CacheRatio: 0.1, CacheCreationRatio: 1.25, CacheCreation5mRatio: 1.25, CacheCreation1hRatio: 2,
 		}, usage: &dto.Usage{PromptTokens: 800, CompletionTokens: 300, TotalTokens: 1100, ClaudeCacheCreation5mTokens: 200, ClaudeCacheCreation1hTokens: 100,

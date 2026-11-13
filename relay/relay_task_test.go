@@ -769,3 +769,78 @@ export function extractUsage() { return {seconds:2}; }
 		})
 	}
 }
+
+// The list price of a task submission is the same charge with the group ratio
+// as 1, through every submit-time adjustment: estimated OtherRatios, ratios
+// the plugin adjusts after submission, an immediate failure, and tiered
+// expressions settled at estimate or on an immediate result.
+func TestRelayTaskSubmitStandardQuotaIgnoresGroupRatio(t *testing.T) {
+	service.InitHttpClient()
+	const source = `
+export const meta = {apiVersion:1,key:"cost-std",name:"Cost Std",version:"1.0.0",author:{name:"Test"},models:["declared-model"],fetchMode:"per_task",usageSchema:{seconds:{type:"number",unit:"second",description:"Video generation unit price"}}};
+export function buildSubmitRequest(ctx) { return {url: ctx.baseUrl+"/submit", method:"POST", body:{model: ctx.model}, action:"text_to_video"}; }
+export function parseSubmitResponse(ctx, response) {
+  if (response.body.mode === "fail") return {taskId: "job", immediate: {status: "FAILURE"}};
+  if (response.body.mode === "done") return {taskId: "job", immediate: {status: "SUCCESS"}};
+  return {taskId: "job", taskData: response.body};
+}
+export function buildQueryRequest(ctx) { return {url: ctx.baseUrl+"/query"}; }
+export function parseTaskResult() { return {status:"SUCCESS"}; }
+export function extractUsage() { return {seconds:2}; }
+export function extractUsageOnSubmit(ctx, data) { return data && data.adjusted ? {seconds: data.adjusted} : null; }
+export function extractUsageOnComplete() { return {seconds:5}; }
+`
+	const perCall = `{"declared-model":0.04}`
+	const expression = `{"cost-std::declared-model":"tier(\"t\", u(\"seconds\") * 0.05)"}`
+	for _, tc := range []struct {
+		name, body, prices, expressions string
+		wantQuota, wantStandard         int
+	}{
+		{name: "per-call price with estimated ratios", body: `{"mode":"queued"}`, prices: perCall, expressions: `{}`, wantQuota: 100000, wantStandard: 40000},
+		{name: "ratios adjusted on submit", body: `{"mode":"queued","adjusted":3}`, prices: perCall, expressions: `{}`, wantQuota: 150000, wantStandard: 60000},
+		{name: "immediate failure", body: `{"mode":"fail"}`, prices: perCall, expressions: `{}`, wantQuota: 0, wantStandard: 0},
+		{name: "tiered expression at estimate", body: `{"mode":"queued"}`, prices: `{}`, expressions: expression, wantQuota: 125000, wantStandard: 50000},
+		{name: "tiered expression settled immediately", body: `{"mode":"done"}`, prices: `{}`, expressions: expression, wantQuota: 312500, wantStandard: 125000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			saveBillingConfig(t)
+			savedPrices := ratio_setting.ModelPrice2JSONString()
+			t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices)) })
+			savedGroups, err := common.Marshal(ratio_setting.GetGroupRatioCopy())
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(string(savedGroups))) })
+			require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(tc.prices))
+			require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":2.5}`))
+			require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+				billing_setting.PluginBillingExprOption: tc.expressions,
+				"billing_setting.billing_mode":          `{}`,
+				"billing_setting.billing_expr":          `{}`,
+			}))
+			registry := pluginruntime.NewRegistry()
+			_, err = registry.Register(source, pluginruntime.Options{})
+			require.NoError(t, err)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			c, info := newTaskSubmitContext(t, "declared-model", "")
+			c.Set("group", "vip")
+			info.UserGroup, info.UsingGroup, info.OriginModelName = "vip", "vip", "declared-model"
+			info.Billing = &imageReservation{limit: 1 << 30}
+			plugin, ok := registry.Generation().Get("cost-std")
+			require.True(t, ok)
+			c.Set(pluginruntime.ContextKeyPinnedPlugin, pluginruntime.PinnedPlugin{Generation: registry.Generation(), Plugin: plugin})
+			c.Set("task_plugin_key", plugin.Meta.Key)
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, server.URL)
+
+			result, taskErr := RelayTaskSubmit(c, info)
+			require.Nil(t, taskErr, "submission error: %+v", taskErr)
+			assert.Equal(t, tc.wantQuota, result.Quota)
+			assert.Equal(t, tc.wantQuota, info.PriceData.Quota)
+			assert.Equal(t, tc.wantStandard, info.PriceData.StandardQuota)
+			assert.Nil(t, info.QuotaClamp)
+		})
+	}
+}

@@ -503,12 +503,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	milliseconds := tok.Sub(tik).Milliseconds()
 	consumedTime := float64(milliseconds) / 1000.0
 	other := buildTestLogOther(c, info, priceData, usage, tieredResult)
-	// Ratio and per-call test prices never apply a group ratio; tiered
-	// settlement does, so its list price is the amount before the group.
-	standardQuota := quota
-	if tieredResult != nil {
-		standardQuota = common.QuotaRound(tieredResult.ActualQuotaBeforeGroup)
-	}
+	// The list price re-runs the same settlement with the group ratio as 1,
+	// including the reservation fallback of a failed tiered evaluation.
+	standardQuota, _ := settleTestQuota(service.StandardPricingRelayInfo(info), priceData, usage)
 	model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
 		ChannelId:        channel.Id,
 		PromptTokens:     usage.PromptTokens,

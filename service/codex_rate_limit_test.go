@@ -418,8 +418,21 @@ func TestCodexSubscriptionWindowFollowsRefresh(t *testing.T) {
 	key, err := common.Marshal(CodexOAuthKey{AccessToken: "a", RefreshToken: "refresh-sub", IDToken: idToken, Expired: time.Now().Add(-time.Minute).Format(time.RFC3339)})
 	require.NoError(t, err)
 	manualFrom := int64(1700000000)
+	require.NoError(t, model.DB.AutoMigrate(&model.QuotaData{}))
 	require.NoError(t, model.DB.Create(&model.Channel{Id: 9320, Type: constant.ChannelTypeCodex, Name: "codex-sub", Key: string(key), Status: common.ChannelStatusEnabled, CostEffectiveFrom: &manualFrom}).Error)
 	t.Cleanup(func() { model.DB.Delete(&model.Channel{}, 9320) })
+	// October's amortized fixed cost, read from the automatic start date.
+	octoberCost := func() int64 {
+		t.Helper()
+		summary, err := model.GetCostSummary(time.Date(2026, 10, 1, 0, 0, 0, 0, time.Local).Unix(), time.Date(2026, 11, 1, 0, 0, 0, 0, time.Local).Unix()-1, "", model.CostDimensionChannel)
+		require.NoError(t, err)
+		for _, info := range summary.FixedChannels {
+			if info.ChannelID == 9320 {
+				return info.CostQuota
+			}
+		}
+		return 0
+	}
 
 	SyncCodexChannelSubscription(9320)
 	var ch model.Channel
@@ -432,8 +445,12 @@ func TestCodexSubscriptionWindowFollowsRefresh(t *testing.T) {
 	assert.False(t, fromAuto)
 	assert.Equal(t, until1.Unix(), *to)
 	assert.True(t, toAuto)
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", 9320).Updates(map[string]any{"cost_effective_from": nil, "monthly_cost_usd": 310}).Error)
+	before := octoberCost()
+	require.Positive(t, before, "October is inside the subscription that started 10-05")
 
-	renewed := fakeCodexSubscriptionJWT(t, map[string]any{"chatgpt_plan_type": "plus", "chatgpt_subscription_active_until": until2.Format(time.RFC3339)})
+	// The renewed token reports the start of the new billing period.
+	renewed := fakeCodexSubscriptionJWT(t, map[string]any{"chatgpt_plan_type": "plus", "chatgpt_subscription_active_start": until1.Format(time.RFC3339), "chatgpt_subscription_active_until": until2.Format(time.RFC3339)})
 	respond := `{"access_token":"new-access","id_token":"` + renewed + `","expires_in":3600}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(respond))
@@ -447,7 +464,8 @@ func TestCodexSubscriptionWindowFollowsRefresh(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, model.DB.First(&ch, 9320).Error)
 	assert.Equal(t, until2.Unix(), *ch.SubscriptionActiveUntil, "renewal extends the window")
-	assert.Equal(t, manualFrom, *ch.CostEffectiveFrom)
+	assert.Equal(t, time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC).Unix(), *ch.SubscriptionActiveStart, "the automatic start never moves later")
+	assert.Equal(t, before, octoberCost(), "a refresh does not change past months")
 
 	respond = `{"access_token":"newer-access","id_token":"` + fakeCodexSubscriptionJWT(t, map[string]any{"chatgpt_account_id": "acct"}) + `","expires_in":3600}`
 	_, _, err = RefreshCodexChannelCredential(context.Background(), 9320, CodexCredentialRefreshOptions{})

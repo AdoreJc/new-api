@@ -2,6 +2,7 @@ package model
 
 import (
 	"math"
+	"sort"
 	"strconv"
 	"time"
 
@@ -119,6 +120,7 @@ func applyFixedCosts(summary *CostSummary, startTime, endTime int64, username st
 	}
 	end := min(endTime+1, now)
 	amounts := map[int]map[int64]float64{}
+	channelTotals := map[int]int64{}
 	var fixedIDs []int
 	for i := range channels {
 		channel := &channels[i]
@@ -143,6 +145,7 @@ func applyFixedCosts(summary *CostSummary, startTime, endTime int64, username st
 				total += usd
 			}
 			info.CostQuota = int64(math.Round(total * common.QuotaPerUnit))
+			channelTotals[channel.Id] = info.CostQuota
 			if len(perDay) > 0 {
 				amounts[channel.Id] = perDay
 				fixedIDs = append(fixedIDs, channel.Id)
@@ -179,7 +182,6 @@ func applyFixedCosts(summary *CostSummary, startTime, endTime int64, username st
 	for _, row := range summary.Rows {
 		rows[costRowKey(dimension, row.UseGroup, row.ChannelID, row.ModelName, row.UserID)] = row
 	}
-	allocated := map[string]float64{}
 	rowFor := func(key string, template CostSummaryRow) {
 		if rows[key] == nil {
 			row := template
@@ -187,8 +189,9 @@ func applyFixedCosts(summary *CostSummary, startTime, endTime int64, username st
 			summary.Rows = append(summary.Rows, &row)
 		}
 	}
-	unallocated := 0.0
+	const unallocatedKey = "unallocated"
 	for channelID, perDay := range amounts {
+		shares := map[string]float64{}
 		for day, usd := range perDay {
 			amount := usd * common.QuotaPerUnit
 			key := dayKey{channelID, day}
@@ -200,9 +203,9 @@ func applyFixedCosts(summary *CostSummary, startTime, endTime int64, username st
 				if dimension == CostDimensionChannel {
 					rowKey := costRowKey(dimension, "", channelID, "", 0)
 					rowFor(rowKey, CostSummaryRow{ChannelID: channelID})
-					allocated[rowKey] += amount
+					shares[rowKey] += amount
 				} else {
-					unallocated += amount
+					shares[unallocatedKey] += amount
 				}
 				continue
 			}
@@ -223,19 +226,61 @@ func applyFixedCosts(summary *CostSummary, startTime, endTime int64, username st
 					template.UserID, template.Username = w.UserID, w.Username
 				}
 				rowFor(rowKey, template)
-				allocated[rowKey] += amount * w.Weight / total
+				shares[rowKey] += amount * w.Weight / total
 			}
 		}
-	}
-	for rowKey, amount := range allocated {
-		quota := int64(math.Round(amount))
-		rows[rowKey].FixedCostQuota += quota
-		summary.Total.FixedCostQuota += quota
-	}
-	if unallocated > 0 {
-		row := &CostSummaryRow{Unallocated: true, FixedCostQuota: int64(math.Round(unallocated))}
-		summary.Rows = append(summary.Rows, row)
-		summary.Total.FixedCostQuota += row.FixedCostQuota
+		// Every breakdown hands out exactly the channel's rounded total, so
+		// the channel, group, model and user views add up to the same sum.
+		target := channelTotals[channelID]
+		if username != "" {
+			sum := 0.0
+			for _, share := range shares {
+				sum += share
+			}
+			target = int64(math.Round(sum))
+		}
+		for rowKey, quota := range largestRemainder(shares, target) {
+			if rowKey == unallocatedKey {
+				rowFor(unallocatedKey, CostSummaryRow{Unallocated: true})
+			}
+			rows[rowKey].FixedCostQuota += quota
+			summary.Total.FixedCostQuota += quota
+		}
 	}
 	return nil
+}
+
+// largestRemainder splits target into integers proportional to shares: each
+// key gets the floor of its share, and the units left go to the largest
+// fractional parts (ties by key), so the parts always sum to target.
+func largestRemainder(shares map[string]float64, target int64) map[string]int64 {
+	result := make(map[string]int64, len(shares))
+	keys := make([]string, 0, len(shares))
+	sum := 0.0
+	for key, share := range shares {
+		keys = append(keys, key)
+		sum += share
+	}
+	if len(keys) == 0 || sum <= 0 {
+		return result
+	}
+	scale := float64(target) / sum
+	var assigned int64
+	for _, key := range keys {
+		result[key] = int64(math.Floor(shares[key] * scale))
+		assigned += result[key]
+	}
+	sort.Slice(keys, func(a, b int) bool {
+		fa := shares[keys[a]]*scale - float64(result[keys[a]])
+		fb := shares[keys[b]]*scale - float64(result[keys[b]])
+		if fa != fb {
+			return fa > fb
+		}
+		return keys[a] < keys[b]
+	})
+	for i := 0; assigned < target && len(keys) > 0; i = (i + 1) % len(keys) {
+		result[keys[i]]++
+		assigned++
+	}
+	return result
 }

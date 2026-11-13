@@ -101,14 +101,19 @@ func UpdateChannelCostSettings(channel *Channel, provided map[string]any) error 
 }
 
 // UpdateChannelSubscriptionWindow stores the subscription plan and window
-// parsed from the account. Missing values keep what was stored before.
+// parsed from the account. Missing values keep what was stored before. The
+// start only ever moves earlier: after a renewal the token may report the
+// start of the current billing period, and moving the start later would erase
+// fixed costs already amortized for earlier months.
 func UpdateChannelSubscriptionWindow(channelId int, planType string, start, until *int64, syncedAt int64) error {
 	updates := map[string]any{"subscription_synced_at": syncedAt}
 	if planType != "" {
 		updates["subscription_plan_type"] = planType
 	}
 	if start != nil {
-		updates["subscription_active_start"] = *start
+		updates["subscription_active_start"] = gorm.Expr(
+			"CASE WHEN subscription_active_start IS NULL OR subscription_active_start > ? THEN ? ELSE subscription_active_start END",
+			*start, *start)
 	}
 	if until != nil {
 		updates["subscription_active_until"] = *until
@@ -230,14 +235,16 @@ func GetCostSummary(startTime int64, endTime int64, username string, dimension C
 	if err := base().Select(columns + ", " + costSummarySums).Group(columns).Order("quota desc").Scan(&summary.Rows).Error; err != nil {
 		return nil, err
 	}
+	summary.FixedChannels = []FixedCostChannel{}
+	if err := applyFixedCosts(summary, startTime, endTime, username, dimension, common.GetTimestamp(), time.Local); err != nil {
+		return nil, err
+	}
+	// After applyFixedCosts, so rows of fixed-cost channels that were idle in
+	// the range are named too.
 	if dimension == CostDimensionChannel {
 		if err := fillCostChannelNames(summary.Rows); err != nil {
 			return nil, err
 		}
-	}
-	summary.FixedChannels = []FixedCostChannel{}
-	if err := applyFixedCosts(summary, startTime, endTime, username, dimension, common.GetTimestamp(), time.Local); err != nil {
-		return nil, err
 	}
 	summary.AccountingStartTime = GetCostAccountingStartTime()
 	return summary, nil
@@ -371,14 +378,18 @@ type costBucketSum struct {
 // has none), or 1 when the logs are gone. The update multiplies the row's
 // current quota in SQL, so increments flushed concurrently stay consistent.
 // It returns the rows updated and false once nothing is left.
-func BackfillQuotaDataCostWindow(ctx context.Context) (updated int, more bool, err error) {
+//
+// after is a created_at cursor: pass 0 first, then the returned next value,
+// so each window seeks forward on the created_at index instead of rescanning
+// the rows already filled.
+func BackfillQuotaDataCostWindow(ctx context.Context, after int64) (updated int, next int64, more bool, err error) {
 	var start struct{ Min *int64 }
 	if err = DB.WithContext(ctx).Model(&QuotaData{}).Select("MIN(created_at) as min").
-		Where("standard_quota IS NULL").Scan(&start).Error; err != nil {
-		return 0, false, err
+		Where("created_at >= ? AND standard_quota IS NULL", after).Scan(&start).Error; err != nil {
+		return 0, after, false, err
 	}
 	if start.Min == nil {
-		return 0, false, nil
+		return 0, after, false, nil
 	}
 	windowStart := *start.Min
 	windowEnd := windowStart + costBackfillWindow
@@ -387,7 +398,7 @@ func BackfillQuotaDataCostWindow(ctx context.Context) (updated int, more bool, e
 	if err = DB.WithContext(ctx).Select("id, user_id, model_name, created_at, use_group, token_id, channel_id").
 		Where("standard_quota IS NULL AND created_at >= ? AND created_at < ?", windowStart, windowEnd).
 		Find(&dataRows).Error; err != nil {
-		return 0, false, err
+		return 0, after, false, err
 	}
 
 	var logs []struct {
@@ -406,11 +417,11 @@ func BackfillQuotaDataCostWindow(ctx context.Context) (updated int, more bool, e
 		Select([]string{"user_id", "model_name", "created_at", "group", "token_id", "channel_id", "quota", "standard_quota", "cost_quota", "other"}).
 		Where("type = ? AND created_at >= ? AND created_at < ?", LogTypeConsume, windowStart, windowEnd).
 		Find(&logs).Error; err != nil {
-		return 0, false, err
+		return 0, after, false, err
 	}
 	fixed, err := fixedCostChannelIDs(ctx)
 	if err != nil {
-		return 0, false, err
+		return 0, after, false, err
 	}
 	buckets := make(map[costBucketKey]*costBucketSum)
 	for _, log := range logs {
@@ -463,7 +474,7 @@ func BackfillQuotaDataCostWindow(ctx context.Context) (updated int, more bool, e
 		return nil
 	})
 	if err != nil {
-		return 0, false, err
+		return 0, after, false, err
 	}
-	return updated, true, nil
+	return updated, windowEnd, true, nil
 }

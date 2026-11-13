@@ -2,6 +2,8 @@ package controller
 
 import (
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -34,12 +36,12 @@ func GetCostSummary(c *gin.Context) {
 // dashboard rows still lack estimates. It deliberately does not count logs:
 // that needs a full scan of the log table, which only the backfill run does.
 func GetCostBackfillStatus(c *gin.Context) {
-	var pendingData int64
-	if err := model.DB.WithContext(c.Request.Context()).Model(&model.QuotaData{}).Where("standard_quota IS NULL").Count(&pendingData).Error; err != nil {
+	task, err := model.GetLatestSystemTask(model.SystemTaskTypeCostBackfill)
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	task, err := model.GetLatestSystemTask(model.SystemTaskTypeCostBackfill)
+	pendingData, err := pendingQuotaDataCount(c, task)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -70,4 +72,34 @@ func StartCostBackfill(c *gin.Context) {
 		"message": "",
 		"data":    task.ToResponse(),
 	})
+}
+
+// The pending count scans quota_data, so it is cached briefly: dashboard
+// loads and the progress poll during a run then cost one scan a minute. The
+// cache is dropped when the latest backfill task changes state.
+var costPendingCache struct {
+	sync.Mutex
+	value     int64
+	expiresAt time.Time
+	taskKey   string
+}
+
+func pendingQuotaDataCount(c *gin.Context, task *model.SystemTask) (int64, error) {
+	taskKey := ""
+	if task != nil {
+		taskKey = task.TaskID + ":" + string(task.Status)
+	}
+	costPendingCache.Lock()
+	defer costPendingCache.Unlock()
+	if time.Now().Before(costPendingCache.expiresAt) && costPendingCache.taskKey == taskKey {
+		return costPendingCache.value, nil
+	}
+	var pending int64
+	if err := model.DB.WithContext(c.Request.Context()).Model(&model.QuotaData{}).Where("standard_quota IS NULL").Count(&pending).Error; err != nil {
+		return 0, err
+	}
+	costPendingCache.value = pending
+	costPendingCache.expiresAt = time.Now().Add(time.Minute)
+	costPendingCache.taskKey = taskKey
+	return pending, nil
 }
