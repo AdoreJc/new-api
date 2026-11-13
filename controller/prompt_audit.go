@@ -1,8 +1,12 @@
 package controller
 
 import (
+	"cmp"
+	"crypto/hmac"
+	"encoding/base64"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -164,13 +168,24 @@ func GetPromptAuditRuntime(c *gin.Context) {
 	common.ApiSuccess(c, promptaudit.Runtime())
 }
 
+// GetPromptAuditEvents lists events. A plain keyword on the default fields
+// pages with offset and total; a regex or full prompt search scans rows in Go
+// and pages with a cursor instead (see searchPromptAuditEvents).
 func GetPromptAuditEvents(c *gin.Context) {
 	var filter model.PromptAuditEventFilter
 	if err := c.ShouldBindQuery(&filter); err != nil {
 		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
 		return
 	}
+	if err := filter.Validate(); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		return
+	}
 	pageInfo := common.GetPageQuery(c)
+	if scans, _ := filter.Scans(); scans {
+		searchPromptAuditEvents(c, filter, pageInfo.GetPageSize())
+		return
+	}
 	events, total, err := model.ListPromptAuditEvents(filter, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
@@ -179,6 +194,40 @@ func GetPromptAuditEvents(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(events)
 	common.ApiSuccess(c, pageInfo)
+}
+
+// searchPromptAuditEvents runs a scanned search below the cursor query
+// parameter. The scan limits come from PROMPT_AUDIT_SEARCH_MAX_SCAN_ROWS and
+// PROMPT_AUDIT_SEARCH_TIME_BUDGET_SECONDS. A search of full prompts is
+// recorded in the audit log with its pattern but never its matches.
+func searchPromptAuditEvents(c *gin.Context, filter model.PromptAuditEventFilter, pageSize int) {
+	cursor, err := strconv.ParseInt(c.DefaultQuery("cursor", "0"), 10, 64)
+	if err != nil || cursor < 0 {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
+	if _, err := filter.KeywordPattern(); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		return
+	}
+	fields, _ := filter.SearchFields()
+	if slices.Contains(fields, model.PromptAuditKeywordFieldFullPrompt) {
+		recordManageAudit(c, "prompt_audit.events_search", map[string]any{
+			"mode": cmp.Or(filter.KeywordMode, model.PromptAuditKeywordModePlain), "fields": strings.Join(fields, ","),
+			"keyword": strings.TrimSpace(filter.Keyword), "case_sensitive": filter.CaseSensitive,
+			"start_time": filter.StartTime, "end_time": filter.EndTime, "cursor": cursor,
+		})
+	}
+	limits := model.PromptAuditScanLimits{
+		MaxRows:  common.GetEnvOrDefault("PROMPT_AUDIT_SEARCH_MAX_SCAN_ROWS", model.PromptAuditScanDefaultMaxRows),
+		Deadline: time.Now().Add(time.Duration(common.GetEnvOrDefault("PROMPT_AUDIT_SEARCH_TIME_BUDGET_SECONDS", int(model.PromptAuditScanDefaultBudget/time.Second))) * time.Second),
+	}
+	page, err := model.ScanPromptAuditEvents(c.Request.Context(), filter, cursor, pageSize, limits)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, page)
 }
 
 func promptAuditEventID(c *gin.Context) (int64, bool) {
@@ -239,6 +288,53 @@ func deletePromptAuditEvents(c *gin.Context, ids []int64) {
 	common.ApiSuccess(c, gin.H{"deleted": deleted})
 }
 
+// promptAuditDeleteConfirmTTL is how long a deletion preview can be confirmed.
+const promptAuditDeleteConfirmTTL = 5 * time.Minute
+
+var (
+	errPromptAuditDeleteConfirmInvalid = common.NewMessage("Preview the deletion before confirming it")
+	errPromptAuditDeleteConfirmExpired = common.NewMessage("The deletion preview expired. Preview the deletion again")
+	errPromptAuditDeleteFilterChanged  = common.NewMessage("The filters changed after the preview. Preview the deletion again")
+)
+
+// promptAuditDeleteClaims bind a confirmation to the previewing root user,
+// the filter hash and the snapshot id; they hold no prompt text.
+type promptAuditDeleteClaims struct {
+	FilterHash    string `json:"filter_hash"`
+	SnapshotMaxId int64  `json:"snapshot_max_id"`
+	AdminId       int    `json:"admin_id"`
+	ExpiresAt     int64  `json:"expires_at"`
+}
+
+const promptAuditDeleteTokenPurpose = "prompt_audit.events_delete:"
+
+func signPromptAuditDeleteClaims(claims promptAuditDeleteClaims) (string, error) {
+	payload, err := common.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(payload)
+	return encoded + "." + common.GenerateHMAC(promptAuditDeleteTokenPurpose+encoded), nil
+}
+
+// verifyPromptAuditDeleteToken checks the signature and the issuing user;
+// expiry and the filter are checked by the caller.
+func verifyPromptAuditDeleteToken(token string, adminId int) (promptAuditDeleteClaims, bool) {
+	var claims promptAuditDeleteClaims
+	encoded, signature, ok := strings.Cut(strings.TrimSpace(token), ".")
+	if !ok || !hmac.Equal([]byte(signature), []byte(common.GenerateHMAC(promptAuditDeleteTokenPurpose+encoded))) {
+		return claims, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil || common.Unmarshal(payload, &claims) != nil {
+		return claims, false
+	}
+	return claims, claims.AdminId == adminId
+}
+
+// PreviewPromptAuditEventDeletion counts the events a filter would delete and
+// issues a short-lived confirmation token bound to that filter and to the
+// highest matching id, so events recorded later are never deleted.
 func PreviewPromptAuditEventDeletion(c *gin.Context) {
 	var filter model.PromptAuditEventFilter
 	if err := common.DecodeJson(c.Request.Body, &filter); err != nil {
@@ -246,29 +342,85 @@ func PreviewPromptAuditEventDeletion(c *gin.Context) {
 		return
 	}
 	total, maxId, err := model.PreviewPromptAuditEventDeletion(filter)
+	if promptAuditFilterRejected(err) {
+		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		return
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, gin.H{"total": total, "max_id": maxId})
+	filterHash, err := filter.DeletionHash(maxId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	expiresAt := time.Now().Add(promptAuditDeleteConfirmTTL).Unix()
+	token, err := signPromptAuditDeleteClaims(promptAuditDeleteClaims{FilterHash: filterHash, SnapshotMaxId: maxId, AdminId: c.GetInt("id"), ExpiresAt: expiresAt})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"matched_count": total, "snapshot_max_id": maxId, "filter_hash": filterHash,
+		"confirmation_token": token, "expires_at": expiresAt})
 }
 
-// DeletePromptAuditEventsByFilter deletes the events counted by a preview;
-// max_id from that preview keeps newer events out of the deletion.
+// DeletePromptAuditEventsByFilter deletes, in batches, the events a preview
+// counted. The confirmation must be unexpired, issued to the same user, and
+// match the filter and snapshot sent now; otherwise the user previews again.
 func DeletePromptAuditEventsByFilter(c *gin.Context) {
 	var request struct {
-		Filter model.PromptAuditEventFilter `json:"filter"`
-		MaxId  int64                        `json:"max_id"`
+		Filter            model.PromptAuditEventFilter `json:"filter"`
+		SnapshotMaxId     int64                        `json:"snapshot_max_id"`
+		FilterHash        string                       `json:"filter_hash"`
+		ConfirmationToken string                       `json:"confirmation_token"`
 	}
-	if err := common.DecodeJson(c.Request.Body, &request); err != nil || request.MaxId <= 0 {
-		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Preview the deletion before confirming it"))
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errPromptAuditDeleteConfirmInvalid)
 		return
 	}
-	deleted, err := model.DeletePromptAuditEventsByFilter(request.Filter, request.MaxId)
+	claims, ok := verifyPromptAuditDeleteToken(request.ConfirmationToken, c.GetInt("id"))
+	if !ok {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errPromptAuditDeleteConfirmInvalid)
+		return
+	}
+	if time.Now().Unix() >= claims.ExpiresAt {
+		common.ApiErrorStatus(c, http.StatusConflict, errPromptAuditDeleteConfirmExpired)
+		return
+	}
+	filterHash, err := request.Filter.DeletionHash(request.SnapshotMaxId)
+	if promptAuditFilterRejected(err) {
+		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		return
+	}
+	if err != nil || filterHash != claims.FilterHash || request.FilterHash != claims.FilterHash || request.SnapshotMaxId != claims.SnapshotMaxId {
+		common.ApiErrorStatus(c, http.StatusConflict, errPromptAuditDeleteFilterChanged)
+		return
+	}
+	deleted, err := model.DeletePromptAuditEventsByFilter(request.Filter, claims.SnapshotMaxId)
+	if promptAuditFilterRejected(err) {
+		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		return
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	recordManageAudit(c, "prompt_audit.events_delete", map[string]any{"count": deleted, "scope": "filter"})
+	filter := request.Filter
+	recordManageAudit(c, "prompt_audit.events_delete", map[string]any{
+		"count": deleted, "scope": "filter", "snapshot_max_id": claims.SnapshotMaxId, "filter_hash": claims.FilterHash,
+		"decision": filter.Decision, "risk_level": filter.RiskLevel, "user_id": filter.UserId, "token_id": filter.TokenId,
+		"group": filter.Group, "model_name": filter.ModelName, "request_id": filter.RequestId, "prompt_hash": filter.PromptHash,
+		"keyword": strings.TrimSpace(filter.Keyword), "keyword_fields": filter.KeywordFields,
+		"start_time": filter.StartTime, "end_time": filter.EndTime,
+	})
 	common.ApiSuccess(c, gin.H{"deleted": deleted})
+}
+
+// promptAuditFilterRejected reports a filter refused before any database
+// work: an unknown keyword mode or field, or a scanned search sent to
+// filtered deletion.
+func promptAuditFilterRejected(err error) bool {
+	return errors.Is(err, model.ErrPromptAuditInvalidKeywordMode) || errors.Is(err, model.ErrPromptAuditInvalidKeywordField) ||
+		errors.Is(err, model.ErrPromptAuditScanFilterDelete)
 }

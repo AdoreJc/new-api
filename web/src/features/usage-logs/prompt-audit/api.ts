@@ -59,6 +59,22 @@ export type PromptAuditEvent = {
   full_prompt?: string
 }
 
+export type PromptAuditKeywordMode = 'plain' | 'regex'
+
+/**
+ * One page of events. A plain search on the default fields pages with a
+ * total; a regex or full prompt search scans rows and pages with a cursor
+ * instead: when truncated, rows below next_cursor were not read yet.
+ */
+export type PromptAuditEventsPage = {
+  items: PromptAuditEvent[]
+  total?: number
+  truncated?: boolean
+  next_cursor?: number
+  scanned?: number
+  stop_reason?: 'page_full' | 'scan_limit' | 'time_budget'
+}
+
 /** Filters shared by listing and filtered deletion. */
 export type PromptAuditEventFilter = {
   decision?: string
@@ -69,6 +85,12 @@ export type PromptAuditEventFilter = {
   request_id?: string
   prompt_hash?: string
   keyword?: string
+  /** plain (default) matches a substring; regex matches an RE2 expression. */
+  keyword_mode?: PromptAuditKeywordMode
+  /** Comma-separated search fields; empty searches every field but full_prompt. */
+  keyword_fields?: string
+  /** Regex mode only; plain mode always ignores case. */
+  case_sensitive?: boolean
   start_time?: number
   end_time?: number
 }
@@ -87,13 +109,13 @@ async function unwrap<T>(
 export function getPromptAuditEvents(
   filter: PromptAuditEventFilter,
   page: number,
-  pageSize: number
+  pageSize: number,
+  cursor?: number
 ) {
   return unwrap(
-    api.get<ApiResponse<{ items: PromptAuditEvent[]; total: number }>>(
-      '/api/prompt_audit/events',
-      { params: { ...filter, p: page, page_size: pageSize } }
-    ),
+    api.get<ApiResponse<PromptAuditEventsPage>>('/api/prompt_audit/events', {
+      params: { ...filter, p: page, page_size: pageSize, cursor },
+    }),
     t('Failed to load prompt audit events')
   )
 }
@@ -114,9 +136,32 @@ export function deletePromptAuditEvent(id: number) {
   )
 }
 
+export function batchDeletePromptAuditEvents(ids: number[]) {
+  return unwrap(
+    api.post<ApiResponse<{ deleted: number }>>(
+      '/api/prompt_audit/events/batch-delete',
+      { ids }
+    ),
+    t('Failed to delete prompt audit events')
+  )
+}
+
+/**
+ * A filtered deletion preview. The confirmation token expires after a few
+ * minutes and only deletes events up to snapshot_max_id that still match the
+ * same filter.
+ */
+export type PromptAuditDeletionPreview = {
+  matched_count: number
+  snapshot_max_id: number
+  filter_hash: string
+  confirmation_token: string
+  expires_at: number
+}
+
 export function previewPromptAuditDeletion(filter: PromptAuditEventFilter) {
   return unwrap(
-    api.post<ApiResponse<{ total: number; max_id: number }>>(
+    api.post<ApiResponse<PromptAuditDeletionPreview>>(
       '/api/prompt_audit/events/delete-preview',
       filter
     ),
@@ -126,12 +171,17 @@ export function previewPromptAuditDeletion(filter: PromptAuditEventFilter) {
 
 export function deletePromptAuditEventsByFilter(
   filter: PromptAuditEventFilter,
-  maxId: number
+  preview: PromptAuditDeletionPreview
 ) {
   return unwrap(
     api.post<ApiResponse<{ deleted: number }>>(
       '/api/prompt_audit/events/delete-by-filter',
-      { filter, max_id: maxId }
+      {
+        filter,
+        snapshot_max_id: preview.snapshot_max_id,
+        filter_hash: preview.filter_hash,
+        confirmation_token: preview.confirmation_token,
+      }
     ),
     t('Failed to delete prompt audit events')
   )
