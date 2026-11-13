@@ -537,6 +537,10 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'channel.delete_batch': 'Batch deleted {{count}} channels',
   'channel.delete_disabled': 'Deleted all disabled channels ({{count}})',
   'channel.key_view': 'Viewed channel key {{name}} (ID: {{id}})',
+  'channel.auto_reset_credit_update':
+    'Updated automatic reset credit setting of channel {{name}} (ID: {{id}}): enabled {{enabled}}',
+  'channel.reset_credit_auto_redeem':
+    'Automatically redeemed a {{provider}} reset credit for channel {{channel_id}}: {{result}}',
   'channel.tag_disable': 'Disabled channels with tag {{tag}}',
   'channel.tag_enable': 'Enabled channels with tag {{tag}}',
   'channel.tag_edit': 'Edited channels with tag {{tag}}',

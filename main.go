@@ -147,6 +147,10 @@ func main() {
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
 
+	// Automatic reset-credit redemption of Codex / Claude OAuth channels
+	// (evaluates only the channels whose switch is on)
+	controller.StartChannelAutoResetCreditTask()
+
 	// Report this process as a system instance so the System Info page can show
 	// all currently alive nodes in multi-instance deployments.
 	service.StartSystemInstanceReporter()

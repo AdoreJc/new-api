@@ -257,7 +257,9 @@ func RecordCodexPassiveUsage(channelID int, headers http.Header) {
 	gopool.Go(func() {
 		if err := model.UpdateChannelOtherInfoEntry(channelID, CodexPassiveUsageKey, windows); err != nil {
 			common.SysLog(common.LogText("failed to store codex passive usage: channel_id=%d, error=%v", channelID, err))
+			return
 		}
+		NotifyChannelAutoResetUsageSample(channelID)
 	})
 }
 

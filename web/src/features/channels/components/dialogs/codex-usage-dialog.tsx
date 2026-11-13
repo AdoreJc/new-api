@@ -24,6 +24,7 @@ import {
   Copy,
   RefreshCw,
   RotateCcw,
+  Timer,
 } from 'lucide-react'
 import { type ReactNode, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -69,6 +70,7 @@ import {
   formatUsageIsoTimestamp,
   formatUsageTimeLeftUntil,
 } from '../../lib/usage-format'
+import { AutoResetCreditDialog } from './auto-reset-credit-dialog'
 import {
   UsageInfoField,
   UsageSectionHeading,
@@ -705,6 +707,7 @@ export function CodexUsageDialog({
   isRefreshing,
 }: CodexUsageDialogProps) {
   const { t } = useTranslation()
+  const [autoResetOpen, setAutoResetOpen] = useState(false)
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
   const [showRawJson, setShowRawJson] = useState(false)
   const [showResetCredits, setShowResetCredits] = useState(false)
@@ -884,13 +887,25 @@ export function CodexUsageDialog({
       contentHeight='auto'
       bodyClassName='flex flex-col gap-4'
       footer={
-        <Button
-          type='button'
-          variant='outline'
-          onClick={() => handleDialogOpenChange(false)}
-        >
-          {t('Close')}
-        </Button>
+        <>
+          {channelId ? (
+            <Button
+              type='button'
+              variant='outline'
+              onClick={() => setAutoResetOpen(true)}
+            >
+              <Timer data-icon='inline-start' />
+              {t('Automatic reset')}
+            </Button>
+          ) : null}
+          <Button
+            type='button'
+            variant='outline'
+            onClick={() => handleDialogOpenChange(false)}
+          >
+            {t('Close')}
+          </Button>
+        </>
       }
     >
       <div className='flex flex-col gap-4'>
@@ -1156,6 +1171,13 @@ export function CodexUsageDialog({
         confirmText={isResetting ? t('Resetting...') : t('Apply reset')}
         handleConfirm={handleConfirmReset}
       />
+      {channelId && autoResetOpen ? (
+        <AutoResetCreditDialog
+          open
+          onOpenChange={setAutoResetOpen}
+          channelId={channelId}
+        />
+      ) : null}
     </Dialog>
   )
 }

@@ -20,6 +20,11 @@ import { getGroups as getUserGroups } from '@/features/users/api'
 import { api, type ApiRequestConfig } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
+import type {
+  AutoResetConfig,
+  AutoResetDecision,
+  AutoResetView,
+} from './lib/auto-reset-rule'
 import type { PriorityMove, PriorityOrder } from './lib/channel-priority-order'
 import type { InferenceStatus } from './lib/inference-status'
 import type {
@@ -838,6 +843,51 @@ export async function resetClaudeUsage(
   const res = await api.post(
     `/api/channel/${channelId}/claude/usage/reset`,
     {},
+    channelActionConfig({ disableDuplicate: true })
+  )
+  return res.data
+}
+
+// ============================================================================
+// Automatic reset credit (Codex / Claude OAuth)
+// ============================================================================
+
+type AutoResetResponse<T> = {
+  success: boolean
+  message?: string
+  data?: T
+}
+
+export async function getChannelAutoResetCredit(
+  channelId: number
+): Promise<AutoResetResponse<AutoResetView>> {
+  const res = await api.get(
+    `/api/channel/${channelId}/auto-reset-credit`,
+    channelActionConfig({ disableDuplicate: true })
+  )
+  return res.data
+}
+
+export async function updateChannelAutoResetCredit(
+  channelId: number,
+  config: AutoResetConfig
+): Promise<AutoResetResponse<AutoResetView>> {
+  const res = await api.put(
+    `/api/channel/${channelId}/auto-reset-credit`,
+    config,
+    channelActionConfig({ disableDuplicate: true })
+  )
+  return res.data
+}
+
+/** Evaluates config (or the stored setting) without redeeming a credit. */
+export async function dryRunChannelAutoResetCredit(
+  channelId: number,
+  config?: AutoResetConfig
+): Promise<AutoResetResponse<AutoResetDecision>> {
+  const res = await api.post(
+    `/api/channel/${channelId}/auto-reset-credit/dry-run`,
+    config ? { config } : {},
     channelActionConfig({ disableDuplicate: true })
   )
   return res.data
