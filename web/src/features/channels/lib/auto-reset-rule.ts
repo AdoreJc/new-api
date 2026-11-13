@@ -86,6 +86,8 @@ export type AutoResetState = {
   /** Set while a redemption request is out, or after one was interrupted. */
   in_flight_since?: number
   in_flight_source?: string
+  /** The in-flight record outlived any request: interrupted, outcome unknown. */
+  in_flight_interrupted?: boolean
   last_attempt_at?: number
   last_result?: string
   last_success?: boolean

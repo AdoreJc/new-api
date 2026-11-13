@@ -115,6 +115,28 @@ func ReleaseChannelAutoResetLease(channelId int, owner string, updates map[strin
 		Updates(updates).Error
 }
 
+// FinishChannelAutoResetRedemption writes updates and releases the lease in
+// one statement, only while owner is still the lease holder (expired or not).
+// It reports false when another redemption has taken the lease over since;
+// nothing is written then.
+func FinishChannelAutoResetRedemption(channelId int, owner string, updates map[string]any) (bool, error) {
+	updates["lease_owner"] = ""
+	updates["lease_until"] = 0
+	updates["updated_at"] = time.Now().UnixNano()
+	result := DB.Model(&ChannelAutoResetState{}).
+		Where("channel_id = ? AND lease_owner = ?", channelId, owner).
+		Updates(updates)
+	return result.RowsAffected == 1, result.Error
+}
+
+// RaiseChannelLastRedeem records a redemption at `at` as the last one unless
+// a later one is already recorded.
+func RaiseChannelLastRedeem(channelId int, at int64, source string) error {
+	return DB.Model(&ChannelAutoResetState{}).
+		Where("channel_id = ? AND last_redeem_at < ?", channelId, at).
+		Updates(map[string]any{"last_redeem_at": at, "last_redeem_source": source, "updated_at": time.Now().UnixNano()}).Error
+}
+
 // UpdateChannelAutoResetStateFields writes columns that no redemption owns
 // (the switch mirror, the last skip reason).
 func UpdateChannelAutoResetStateFields(channelId int, updates map[string]any) error {
@@ -155,11 +177,21 @@ func MutateChannelOtherInfo(channelId int, fn func(info map[string]any) bool) er
 			return nil
 		}
 		channel.SetOtherInfo(info)
-		result := DB.Model(&Channel{}).Where("id = ? AND other_info = ?", channelId, before).Update("other_info", channel.OtherInfo)
+		target := channel.OtherInfo
+		if target == before {
+			return nil
+		}
+		result := DB.Model(&Channel{}).Where("id = ? AND other_info = ?", channelId, before).Update("other_info", target)
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected == 1 {
+			return nil
+		}
+		// MySQL counts a row whose value did not change as not affected;
+		// the stored text already being the target is a success.
+		current := &Channel{}
+		if err := DB.Select("id", "other_info").First(current, "id = ?", channelId).Error; err == nil && current.OtherInfo == target {
 			return nil
 		}
 	}

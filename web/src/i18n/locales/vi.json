@@ -8048,6 +8048,7 @@
     "Subscriber": "Người đăng ký",
     "Last redemption (any source)": "Lần dùng gần nhất (mọi nguồn)",
     "Redemption in progress": "Lần dùng đang chạy",
-    "Automatic redemptions in the last 7 days": "Số lần dùng tự động trong 7 ngày qua"
+    "Automatic redemptions in the last 7 days": "Số lần dùng tự động trong 7 ngày qua",
+    "Interrupted redemption (outcome unknown, still counted)": "Lần dùng bị gián đoạn (chưa rõ kết quả, vẫn được tính)"
   }
 }

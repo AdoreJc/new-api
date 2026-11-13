@@ -8048,6 +8048,7 @@
     "Subscriber": "Abonné",
     "Last redemption (any source)": "Dernière utilisation (toute source)",
     "Redemption in progress": "Utilisation en cours",
-    "Automatic redemptions in the last 7 days": "Utilisations automatiques sur les 7 derniers jours"
+    "Automatic redemptions in the last 7 days": "Utilisations automatiques sur les 7 derniers jours",
+    "Interrupted redemption (outcome unknown, still counted)": "Utilisation interrompue (résultat inconnu, toujours comptée)"
   }
 }

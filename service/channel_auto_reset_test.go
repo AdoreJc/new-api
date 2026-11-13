@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // fakeAutoResetProvider stands in for the upstream usage, credit and redeem
@@ -477,12 +478,22 @@ func TestChannelAutoResetAudit(t *testing.T) {
 // test releases it.
 type gatedAutoResetProvider struct {
 	*fakeAutoResetProvider
-	usageGate  chan struct{}
-	usageIn    chan struct{}
-	redeemGate chan struct{}
-	redeemIn   chan struct{}
-	usageOnce  sync.Once
-	redeemOnce sync.Once
+	usageGate   chan struct{}
+	usageIn     chan struct{}
+	redeemGate  chan struct{}
+	redeemIn    chan struct{}
+	creditsGate chan struct{}
+	creditsIn   chan struct{}
+	usageOnce   sync.Once
+	redeemOnce  sync.Once
+	creditsOnce sync.Once
+}
+
+func (p *gatedAutoResetProvider) LoadCredits(ctx context.Context, ch *model.Channel) (*ChannelAutoResetCredits, error) {
+	if p.creditsGate != nil {
+		p.creditsOnce.Do(func() { close(p.creditsIn); <-p.creditsGate })
+	}
+	return p.fakeAutoResetProvider.LoadCredits(ctx, ch)
 }
 
 func (p *gatedAutoResetProvider) LoadUsage(ctx context.Context, ch *model.Channel, allowUpstream bool) (*ChannelAutoResetUsage, error) {
@@ -646,4 +657,110 @@ func TestChannelAutoResetAlarmFiresWithoutUsage(t *testing.T) {
 	usage, _, redeems := provider.calls()
 	assert.Equal(t, 1, redeems)
 	assert.Equal(t, 1, usage, "only the after-redemption read for the audit")
+}
+
+// Node A crashes while its alarm redemption is in flight (its Redeem never
+// returns). With a minimum interval shorter than the alarm grace, node B
+// evaluates after the interval: the alarm must not fire a second time.
+func TestChannelAutoResetAlarmNotRefiredAfterCrash(t *testing.T) {
+	alarmAt := autoResetTestNow
+	cfg := autoResetTestConfig(ChannelAutoResetRule{Type: ChannelAutoResetCondAtTime, Times: []string{"2026-11-12T08:00:00Z"}})
+	cfg.MinIntervalMinutes = 10
+	ch := seedAutoResetChannel(t, cfg, nil)
+	base := &fakeAutoResetProvider{credits: ChannelAutoResetCredits{Available: 3}}
+	crashed := &gatedAutoResetProvider{fakeAutoResetProvider: base, redeemGate: make(chan struct{}), redeemIn: make(chan struct{})}
+	t.Cleanup(func() { close(crashed.redeemGate) })
+	go NewChannelAutoResetEngine(crashed).Evaluate(context.Background(), ch, alarmAt.Add(30*time.Second), false, nil)
+	<-crashed.redeemIn
+
+	decision := NewChannelAutoResetEngine(base).Evaluate(context.Background(), reloadAutoResetChannel(t, ch.Id), alarmAt.Add(11*time.Minute), false, nil)
+
+	assert.NotEqual(t, AutoResetReasonRedeemed, decision.Reason)
+	_, _, redeems := base.calls()
+	assert.Zero(t, redeems, "node B sent nothing; node A's request is still blocked")
+}
+
+// A transient database error while the scheduler reads a channel leaves its
+// shared state alone; only a deleted channel loses it.
+func TestChannelAutoResetRunOnceKeepsStateOnReadError(t *testing.T) {
+	ch := seedAutoResetChannel(t, autoResetTestConfig(fiveHourAtLeast(90)), &ChannelAutoResetState{LastRedeemAt: autoResetTestNow.Unix()})
+	require.NoError(t, model.DB.Create(&model.ChannelAutoResetState{ChannelId: ch.Id + 1000, AutoEnabled: true}).Error)
+	callback := "test:fail_channel_read"
+	require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(callback, func(tx *gorm.DB) {
+		if tx.Statement != nil && tx.Statement.Table == "channels" {
+			tx.AddError(errors.New("database unavailable"))
+		}
+	}))
+	engine := NewChannelAutoResetEngine(&fakeAutoResetProvider{})
+	engine.RunOnce(context.Background())
+	require.NoError(t, model.DB.Callback().Query().Remove(callback))
+
+	state := loadAutoResetState(t, ch.Id)
+	assert.Equal(t, autoResetTestNow.Unix(), state.LastRedeemAt)
+	ids, err := model.ListChannelAutoResetEnabledIds()
+	require.NoError(t, err)
+	assert.Contains(t, ids, ch.Id)
+
+	engine.RunOnce(context.Background())
+	ids, err = model.ListChannelAutoResetEnabledIds()
+	require.NoError(t, err)
+	assert.NotContains(t, ids, ch.Id+1000, "the state of a deleted channel is removed")
+	assert.Contains(t, ids, ch.Id)
+}
+
+// The switch is turned off while the lease holder reads credits upstream:
+// the redemption is not sent.
+func TestChannelAutoResetDisableDuringLeasedReads(t *testing.T) {
+	now := autoResetTestNow
+	cfg := autoResetTestConfig(fiveHourAtLeast(90))
+	ch := seedAutoResetChannel(t, cfg, nil)
+	provider := &gatedAutoResetProvider{
+		fakeAutoResetProvider: &fakeAutoResetProvider{usage: map[string]ChannelAutoResetWindow{"five_hour": {Utilization: 100, ResetsAt: now.Add(4 * time.Hour)}}, credits: ChannelAutoResetCredits{Available: 1}},
+		creditsGate:           make(chan struct{}),
+		creditsIn:             make(chan struct{}),
+	}
+	done := make(chan ChannelAutoResetDecision)
+	go func() {
+		done <- NewChannelAutoResetEngine(provider).Evaluate(context.Background(), ch, now, false, nil)
+	}()
+	<-provider.creditsIn
+	off := cfg
+	off.Enabled = false
+	require.NoError(t, SaveChannelAutoResetConfig(ch.Id, off))
+	close(provider.creditsGate)
+
+	assert.NotEqual(t, AutoResetReasonRedeemed, (<-done).Reason)
+	_, _, redeems := provider.calls()
+	assert.Zero(t, redeems)
+}
+
+// A manual redemption outlives its lease and a subscriber redemption takes
+// over. The late Finish of the first must not undo the second's record.
+func TestChannelRedemptionLateFinishKeepsTakeover(t *testing.T) {
+	ch := seedAutoResetChannel(t, autoResetTestConfig(fiveHourAtLeast(90)), nil)
+	manual, err := BeginChannelRedemption(ch.Id, "manual")
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Model(&model.ChannelAutoResetState{}).Where("channel_id = ?", ch.Id).Update("lease_until", 1).Error)
+	subscriber, err := BeginChannelRedemption(ch.Id, "subscription")
+	require.NoError(t, err)
+
+	manual.Finish(false, nil)
+	state := loadAutoResetState(t, ch.Id)
+	assert.Equal(t, "subscription", state.InFlightSource)
+	assert.NotZero(t, state.LastRedeemAt)
+
+	subscriber.Finish(true, nil)
+	state = loadAutoResetState(t, ch.Id)
+	assert.Equal(t, "subscription", state.LastRedeemSource)
+	assert.NotZero(t, state.LastRedeemAt)
+	assert.Zero(t, state.InFlightSince)
+}
+
+// Saving the same setting twice succeeds (MySQL reports an unchanged row as
+// not affected; the compare-and-swap must not read that as contention).
+func TestSaveChannelAutoResetConfigTwice(t *testing.T) {
+	cfg := autoResetTestConfig(fiveHourAtLeast(90))
+	ch := seedAutoResetChannel(t, cfg, nil)
+	require.NoError(t, SaveChannelAutoResetConfig(ch.Id, cfg))
+	require.NoError(t, SaveChannelAutoResetConfig(ch.Id, cfg))
 }

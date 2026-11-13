@@ -8048,6 +8048,7 @@
     "Subscriber": "Subscriber",
     "Last redemption (any source)": "Last redemption (any source)",
     "Redemption in progress": "Redemption in progress",
-    "Automatic redemptions in the last 7 days": "Automatic redemptions in the last 7 days"
+    "Automatic redemptions in the last 7 days": "Automatic redemptions in the last 7 days",
+    "Interrupted redemption (outcome unknown, still counted)": "Interrupted redemption (outcome unknown, still counted)"
   }
 }

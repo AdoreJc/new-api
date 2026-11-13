@@ -8048,6 +8048,7 @@
     "Subscriber": "订阅用户",
     "Last redemption (any source)": "上次兑换（任意来源）",
     "Redemption in progress": "进行中的兑换",
-    "Automatic redemptions in the last 7 days": "最近 7 天自动兑换次数"
+    "Automatic redemptions in the last 7 days": "最近 7 天自动兑换次数",
+    "Interrupted redemption (outcome unknown, still counted)": "被中断的兑换（结果未知，仍计入防护）"
   }
 }

@@ -8048,6 +8048,7 @@
     "Subscriber": "サブスクライバー",
     "Last redemption (any source)": "前回の使用（すべての経路）",
     "Redemption in progress": "進行中の使用",
-    "Automatic redemptions in the last 7 days": "過去 7 日間の自動使用回数"
+    "Automatic redemptions in the last 7 days": "過去 7 日間の自動使用回数",
+    "Interrupted redemption (outcome unknown, still counted)": "中断された使用（結果不明、制限には計上）"
   }
 }

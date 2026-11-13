@@ -210,7 +210,13 @@ export function AutoResetStatePanel(props: { view: AutoResetView }) {
           : '-'}
       </Field>
       {state.in_flight_since ? (
-        <Field label={t('Redemption in progress')}>
+        <Field
+          label={
+            state.in_flight_interrupted
+              ? t('Interrupted redemption (outcome unknown, still counted)')
+              : t('Redemption in progress')
+          }
+        >
           {`${formatUnix(state.in_flight_since)} · ${t(SOURCE_LABELS[state.in_flight_source ?? ''] ?? state.in_flight_source ?? '-')}`}
         </Field>
       ) : null}

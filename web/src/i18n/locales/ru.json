@@ -8048,6 +8048,7 @@
     "Subscriber": "Подписчик",
     "Last redemption (any source)": "Последнее использование (любой источник)",
     "Redemption in progress": "Использование в процессе",
-    "Automatic redemptions in the last 7 days": "Автоиспользований за 7 дней"
+    "Automatic redemptions in the last 7 days": "Автоиспользований за 7 дней",
+    "Interrupted redemption (outcome unknown, still counted)": "Прерванное использование (результат неизвестен, учитывается)"
   }
 }

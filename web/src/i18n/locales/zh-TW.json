@@ -8048,6 +8048,7 @@
     "Subscriber": "訂閱用戶",
     "Last redemption (any source)": "上次兌換（任意來源）",
     "Redemption in progress": "進行中的兌換",
-    "Automatic redemptions in the last 7 days": "最近 7 天自動兌換次數"
+    "Automatic redemptions in the last 7 days": "最近 7 天自動兌換次數",
+    "Interrupted redemption (outcome unknown, still counted)": "被中斷的兌換（結果未知，仍計入防護）"
   }
 }

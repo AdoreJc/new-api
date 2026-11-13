@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/bytedance/gopkg/util/gopool"
+	"gorm.io/gorm"
 )
 
 // Automatic reset-credit redemption for Codex and Claude Subscription (OAuth)
@@ -180,19 +181,22 @@ type ChannelAutoResetState struct {
 	RedeemedAt []int64 `json:"redeemed_at,omitempty"`
 	// Last redemption from any source (auto, manual, subscription) that may
 	// have used a credit; the minimum interval counts from it.
-	LastRedeemAt     int64                 `json:"last_redeem_at,omitempty"`
-	LastRedeemSource string                `json:"last_redeem_source,omitempty"`
-	InFlightSince    int64                 `json:"in_flight_since,omitempty"`
-	InFlightSource   string                `json:"in_flight_source,omitempty"`
-	LastAttemptAt    int64                 `json:"last_attempt_at,omitempty"`
-	LastResult       string                `json:"last_result,omitempty"`
-	LastSuccess      bool                  `json:"last_success,omitempty"`
-	LastHits         []ChannelAutoResetHit `json:"last_hits,omitempty"`
-	FailCount        int                   `json:"fail_count,omitempty"`
-	BackoffUntil     int64                 `json:"backoff_until,omitempty"`
-	FiredAlarms      []string              `json:"fired_alarms,omitempty"`
-	LastSkipReason   string                `json:"last_skip_reason,omitempty"`
-	LastSkipAt       int64                 `json:"last_skip_at,omitempty"`
+	LastRedeemAt     int64  `json:"last_redeem_at,omitempty"`
+	LastRedeemSource string `json:"last_redeem_source,omitempty"`
+	InFlightSince    int64  `json:"in_flight_since,omitempty"`
+	InFlightSource   string `json:"in_flight_source,omitempty"`
+	// The in-flight record is older than any request could run: the request
+	// was interrupted and its outcome is unknown. It stays counted.
+	InFlightInterrupted bool                  `json:"in_flight_interrupted,omitempty"`
+	LastAttemptAt       int64                 `json:"last_attempt_at,omitempty"`
+	LastResult          string                `json:"last_result,omitempty"`
+	LastSuccess         bool                  `json:"last_success,omitempty"`
+	LastHits            []ChannelAutoResetHit `json:"last_hits,omitempty"`
+	FailCount           int                   `json:"fail_count,omitempty"`
+	BackoffUntil        int64                 `json:"backoff_until,omitempty"`
+	FiredAlarms         []string              `json:"fired_alarms,omitempty"`
+	LastSkipReason      string                `json:"last_skip_reason,omitempty"`
+	LastSkipAt          int64                 `json:"last_skip_at,omitempty"`
 }
 
 type ChannelAutoResetWindow struct {
@@ -641,7 +645,9 @@ func LoadChannelAutoResetState(channelId int) (ChannelAutoResetState, error) {
 	if err != nil {
 		return ChannelAutoResetState{}, err
 	}
-	return channelAutoResetStateView(row), nil
+	state := channelAutoResetStateView(row)
+	state.InFlightInterrupted = state.InFlightSince > 0 && time.Since(time.Unix(state.InFlightSince, 0)) > ChannelRedemptionLeaseTTL
+	return state, nil
 }
 
 // ---- Guards ----
@@ -833,7 +839,7 @@ func BeginChannelRedemption(channelId int, source string) (*ChannelRedemption, e
 	row, err := model.GetChannelAutoResetState(channelId)
 	if err == nil {
 		redemption := &ChannelRedemption{channelId: channelId, owner: owner, source: source, at: now.Unix(), prevAt: row.LastRedeemAt, prevSource: row.LastRedeemSource}
-		err = redemption.markInFlight(now, nil)
+		err = redemption.markInFlight(now, nil, nil)
 		if err == nil {
 			return redemption, nil
 		}
@@ -842,7 +848,11 @@ func BeginChannelRedemption(channelId int, source string) (*ChannelRedemption, e
 	return nil, err
 }
 
-func (r *ChannelRedemption) markInFlight(now time.Time, history []int64) error {
+// markInFlight records the redemption before it is sent. history (automatic
+// redemptions) and fired (alarms this redemption answers) are written in the
+// same conditional update, so a node that takes over after a crash neither
+// misses the redemption nor fires the same alarm again.
+func (r *ChannelRedemption) markInFlight(now time.Time, history []int64, fired []string) error {
 	updates := map[string]any{
 		"in_flight_since":    r.at,
 		"in_flight_source":   r.source,
@@ -854,13 +864,18 @@ func (r *ChannelRedemption) markInFlight(now time.Time, history []int64) error {
 		r.history = history
 		updates["auto_history"] = encodeChannelAutoResetJSON(history)
 	}
+	if fired != nil {
+		updates["fired_alarms"] = encodeChannelAutoResetJSON(fired)
+	}
 	return model.UpdateChannelAutoResetStateAsOwner(r.channelId, r.owner, now, updates)
 }
 
 // Finish records the outcome and releases the lease. consumed means a credit
 // was or may have been used; otherwise the redemption is taken back out of
 // the history so it does not count against the guards. updates are written
-// with it (result columns of an automatic redemption).
+// with it (result columns of an automatic redemption). If another redemption
+// took the lease over meanwhile, its record is left as it is; a consumed
+// credit is still recorded as the last redemption unless a later one is.
 func (r *ChannelRedemption) Finish(consumed bool, updates map[string]any) {
 	if updates == nil {
 		updates = map[string]any{}
@@ -874,13 +889,14 @@ func (r *ChannelRedemption) Finish(consumed bool, updates map[string]any) {
 			updates["auto_history"] = encodeChannelAutoResetJSON(slices.DeleteFunc(slices.Clone(r.history), func(t int64) bool { return t == r.at }))
 		}
 	}
-	// Written even if the lease ran out meanwhile: a node that took it over
-	// saw the in-flight record and did not redeem.
-	if err := model.UpdateChannelAutoResetStateFields(r.channelId, updates); err != nil {
+	owned, err := model.FinishChannelAutoResetRedemption(r.channelId, r.owner, updates)
+	if err != nil {
 		common.SysError(common.LogText("failed to store reset credit redemption outcome: channel_id=%d, error=%v", r.channelId, err))
 	}
-	if err := model.ReleaseChannelAutoResetLease(r.channelId, r.owner, nil); err != nil {
-		common.SysError(common.LogText("failed to release reset credit lease: channel_id=%d, error=%v", r.channelId, err))
+	if !owned && consumed {
+		if err := model.RaiseChannelLastRedeem(r.channelId, r.at, r.source); err != nil {
+			common.SysError(common.LogText("failed to store reset credit redemption: channel_id=%d, error=%v", r.channelId, err))
+		}
 	}
 	if consumed {
 		InvalidateSubscriptionUsage(r.channelId)
@@ -1100,7 +1116,8 @@ func (e *ChannelAutoResetEngine) Evaluate(ctx context.Context, ch *model.Channel
 	// unless the evaluation could not finish (lease busy, usage unavailable
 	// after the lease); they are recorded only afterwards so the re-check
 	// under the lease still sees them in the stored rule.
-	if due := collectChannelAutoResetDue(cfg.Rule, facts); !dryRun && len(due) > 0 {
+	due := collectChannelAutoResetDue(cfg.Rule, facts)
+	if !dryRun && len(due) > 0 {
 		defer func() {
 			if decision.Reason != AutoResetReasonBusy && decision.Reason != AutoResetReasonUsageMissing {
 				e.recordFiredAlarms(ch.Id, append(slices.Clone(state.FiredAlarms), due...), now)
@@ -1131,7 +1148,7 @@ func (e *ChannelAutoResetEngine) Evaluate(ctx context.Context, ch *model.Channel
 		}
 		return decision
 	}
-	e.redeem(ctx, ch, facts, clock, &decision)
+	e.redeem(ctx, ch, facts, due, clock, &decision)
 	return decision
 }
 
@@ -1169,7 +1186,7 @@ func pruneStoredChannelAutoResetAlarms(channelId int, fired []string, now time.T
 // redeem claims the lease, re-reads the switch, the rule, the state and the
 // usage, evaluates the rule again on that data, records the redemption as in
 // flight and only then sends it.
-func (e *ChannelAutoResetEngine) redeem(ctx context.Context, ch *model.Channel, facts channelAutoResetFacts, clock func() time.Time, decision *ChannelAutoResetDecision) {
+func (e *ChannelAutoResetEngine) redeem(ctx context.Context, ch *model.Channel, facts channelAutoResetFacts, due []string, clock func() time.Time, decision *ChannelAutoResetDecision) {
 	owner := "auto_" + e.nodeId + "_" + common.GetRandomString(8)
 	acquired, err := model.AcquireChannelAutoResetLease(ch.Id, owner, clock(), ChannelRedemptionLeaseTTL)
 	if err != nil || !acquired {
@@ -1278,12 +1295,24 @@ func (e *ChannelAutoResetEngine) redeem(ctx context.Context, ch *model.Channel, 
 		return
 	}
 
-	// Record the redemption before sending it: a node that takes the lease
-	// over, after a crash or a request that outlives the lease, counts it.
+	// The upstream reads above may have taken minutes: the switch is read
+	// once more right before anything is sent.
+	if latest, err := model.GetChannelById(ch.Id, true); err != nil || !LoadChannelAutoResetConfig(latest).Enabled || latest.Status != common.ChannelStatusEnabled {
+		decision.Reason = AutoResetReasonDisabled
+		return
+	}
+
+	// Record the redemption, and the alarms it answers, before sending it: a
+	// node that takes the lease over after a crash or a request that outlives
+	// the lease counts it and does not fire those alarms again.
 	at := clock()
+	var fired []string
+	if len(due) > 0 {
+		fired = append(slices.Clone(facts.fired), due...)
+	}
 	history := slices.DeleteFunc(slices.Clone(state.RedeemedAt), func(t int64) bool { return t <= at.Add(-channelAutoResetHistoryKeep).Unix() })
 	redemption := &ChannelRedemption{channelId: ch.Id, owner: owner, source: "auto", at: at.Unix(), prevAt: state.LastRedeemAt, prevSource: state.LastRedeemSource}
-	if err := redemption.markInFlight(at, append(history, at.Unix())); err != nil {
+	if err := redemption.markInFlight(at, append(history, at.Unix()), fired); err != nil {
 		decision.Reason = AutoResetReasonBusy
 		decision.Result = err.Error()
 		return
@@ -1457,9 +1486,15 @@ func (e *ChannelAutoResetEngine) RunOnce(ctx context.Context) {
 	e.mu.Unlock()
 	for _, id := range ids {
 		ch, err := model.GetChannelById(id, true)
-		if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			// The channel was deleted; its state goes with it.
 			_ = model.DeleteChannelAutoResetState(id)
+			continue
+		}
+		if err != nil {
+			// A transient read error must not drop the in-flight record,
+			// the history or the switch mirror.
+			common.SysError(common.LogText("failed to read auto reset channel: channel_id=%d, error=%v", id, err))
 			continue
 		}
 		e.Evaluate(ctx, ch, time.Now(), false, nil)
