@@ -294,12 +294,32 @@ export interface CostSummaryRow {
   cost_quota: number
   accounted_quota: number
   pending_rows: number
+  // Amortized fixed monthly cost allocated to this row.
+  fixed_cost_quota: number
+  // Fixed cost of days without requests on the channel.
+  unallocated?: boolean
+}
+
+export interface FixedCostChannel {
+  channel_id: number
+  channel_name: string
+  channel_type: number
+  monthly_cost_usd: number | null
+  effective_from: number | null
+  effective_to: number | null
+  effective_from_auto: boolean
+  effective_to_auto: boolean
+  plan_type?: string
+  expired: boolean
+  missing: boolean
+  cost_quota: number
 }
 
 export interface CostSummary {
   total: CostSummaryRow
   rows: CostSummaryRow[]
   accounting_start_time: number
+  fixed_channels: FixedCostChannel[]
 }
 
 export interface CostBackfillTask {

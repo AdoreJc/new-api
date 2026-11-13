@@ -335,6 +335,9 @@ func runCostAccountingMatrix(t *testing.T, kind common.DatabaseType, db, logDB *
 	assert.True(t, db.Migrator().HasColumn(&QuotaData{}, "standard_quota"))
 	assert.True(t, db.Migrator().HasColumn(&QuotaData{}, "cost_quota"))
 	assert.True(t, db.Migrator().HasColumn(&Channel{}, "cost_ratio"))
+	for _, column := range []string{"cost_mode", "monthly_cost_usd", "cost_effective_from", "cost_effective_to", "subscription_plan_type", "subscription_active_start", "subscription_active_until", "subscription_synced_at"} {
+		assert.True(t, db.Migrator().HasColumn(&Channel{}, column), column)
+	}
 
 	fresh := Channel{Name: "fresh", Key: "k", Status: common.ChannelStatusEnabled}
 	require.NoError(t, db.Create(&fresh).Error)
@@ -344,6 +347,35 @@ func runCostAccountingMatrix(t *testing.T, kind common.DatabaseType, db, logDB *
 	assert.Equal(t, 1.0, channelCostRatio(fresh.Id))
 	require.NoError(t, db.Model(&Channel{}).Where("id = ?", fresh.Id).Update("cost_ratio", 0.25).Error)
 	assert.Equal(t, 0.25, channelCostRatio(fresh.Id))
+	assert.Nil(t, fresh.CostMode, "existing and new channels follow the type default")
+	assert.Nil(t, fresh.MonthlyCostUSD)
+
+	// A Codex subscription channel with a monthly cost is amortized on every
+	// dialect; clearing the cost back to NULL reports it as not entered.
+	until := hour + 86400
+	codex := Channel{Name: "codex-fixed", Key: "k", Type: constant.ChannelTypeCodex, MonthlyCostUSD: new(30.0), SubscriptionActiveUntil: &until}
+	require.NoError(t, db.Create(&codex).Error)
+	require.NoError(t, UpdateChannelSubscriptionWindow(codex.Id, "plus", nil, &until, hour))
+	withFixed, err := GetCostSummary(hour-7200, hour+3600, "", CostDimensionChannel)
+	require.NoError(t, err)
+	var codexInfo *FixedCostChannel
+	for i := range withFixed.FixedChannels {
+		if withFixed.FixedChannels[i].ChannelID == codex.Id {
+			codexInfo = &withFixed.FixedChannels[i]
+		}
+	}
+	require.NotNil(t, codexInfo)
+	assert.Positive(t, codexInfo.CostQuota)
+	assert.Equal(t, "plus", codexInfo.PlanType)
+	require.NoError(t, UpdateChannelCostSettings(&Channel{Id: codex.Id}, map[string]any{"monthly_cost_usd": nil}))
+	withFixed, err = GetCostSummary(hour-7200, hour+3600, "", CostDimensionChannel)
+	require.NoError(t, err)
+	for _, info := range withFixed.FixedChannels {
+		if info.ChannelID == codex.Id {
+			assert.True(t, info.Missing)
+		}
+	}
+	require.NoError(t, db.Delete(&Channel{}, codex.Id).Error)
 
 	ctx := context.Background()
 	if legacy {

@@ -36,6 +36,8 @@ import {
 } from '@/components/data-table'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   getCostBackfillStatus,
@@ -76,19 +78,32 @@ const DIMENSION_HEADER_KEYS: Record<CostDimension, string> = {
   user: 'User',
 }
 
-// Profit and margin only count rows that carry a cost; rows still waiting
-// for the backfill have revenue but no cost yet.
-function grossProfit(row: CostSummaryRow): number {
-  return row.accounted_quota - row.cost_quota
+// Usage-based cost plus, unless hidden, the amortized fixed monthly cost.
+function totalCost(row: CostSummaryRow, includeFixed: boolean): number {
+  return row.cost_quota + (includeFixed ? row.fixed_cost_quota : 0)
+}
+
+// Profit and margin only count revenue of rows that carry a cost; rows still
+// waiting for the backfill have revenue but no cost yet.
+function grossProfit(row: CostSummaryRow, includeFixed: boolean): number {
+  return row.accounted_quota - totalCost(row, includeFixed)
 }
 
 // Gross margin in percent of revenue; undefined when nothing was charged.
-function grossMargin(row: CostSummaryRow): number | undefined {
+function grossMargin(
+  row: CostSummaryRow,
+  includeFixed: boolean
+): number | undefined {
   if (row.accounted_quota <= 0) return undefined
-  return (grossProfit(row) / row.accounted_quota) * 100
+  return (grossProfit(row, includeFixed) / row.accounted_quota) * 100
 }
 
-function dimensionLabel(row: CostSummaryRow, dimension: CostDimension): string {
+function dimensionLabel(
+  row: CostSummaryRow,
+  dimension: CostDimension,
+  unallocatedLabel: string
+): string {
+  if (row.unallocated) return unallocatedLabel
   switch (dimension) {
     case 'group':
       return row.use_group || '-'
@@ -104,6 +119,7 @@ function dimensionLabel(row: CostSummaryRow, dimension: CostDimension): string {
 }
 
 function rowKey(row: CostSummaryRow, dimension: CostDimension): string {
+  if (row.unallocated) return 'unallocated'
   switch (dimension) {
     case 'group':
       return `g:${row.use_group ?? ''}`
@@ -125,6 +141,8 @@ export function CostAccounting(props: CostAccountingProps) {
   )
   const [dimension, setDimension] = useState<CostDimension>('group')
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [usageCostOnly, setUsageCostOnly] = useState(false)
+  const includeFixed = !usageCostOnly
 
   const timeRange = useMemo(
     () =>
@@ -192,6 +210,16 @@ export function CostAccounting(props: CostAccountingProps) {
   const startTime = summary?.accounting_start_time ?? 0
   const rangeHasEstimates =
     startTime > 0 && timeRange.start_timestamp < startTime
+  const fixedChannels = summary?.fixed_channels ?? []
+  const missingFixed = fixedChannels.filter((channel) => channel.missing)
+  const expiredFixed = fixedChannels.filter((channel) => channel.expired)
+  const channelNames = (list: typeof fixedChannels) =>
+    list
+      .map((channel) => channel.channel_name || `#${channel.channel_id}`)
+      .join(', ')
+  const allCost = total ? totalCost(total, true) : 0
+  const fixedShare =
+    total && allCost > 0 ? (total.fixed_cost_quota / allCost) * 100 : 0
 
   const cards = [
     {
@@ -213,9 +241,13 @@ export function CostAccounting(props: CostAccountingProps) {
     {
       key: 'cost',
       title: t('Channel cost'),
-      description: t('List price times channel cost ratio'),
+      description: includeFixed
+        ? t('Fixed monthly cost {{share}} of the total', {
+            share: formatPercent(fixedShare),
+          })
+        : t('Usage-based cost only'),
       icon: BadgeDollarSign,
-      value: formatQuota(total?.cost_quota ?? 0),
+      value: formatQuota(total ? totalCost(total, includeFixed) : 0),
       tone: 'accent-3' as const,
     },
     {
@@ -223,7 +255,7 @@ export function CostAccounting(props: CostAccountingProps) {
       title: t('Gross profit'),
       description: t('Revenue minus channel cost'),
       icon: TrendingUp,
-      value: formatQuota(total ? grossProfit(total) : 0),
+      value: formatQuota(total ? grossProfit(total, includeFixed) : 0),
       tone: 'accent-1' as const,
     },
     {
@@ -231,7 +263,9 @@ export function CostAccounting(props: CostAccountingProps) {
       title: t('Gross margin'),
       description: t('Gross profit as a share of revenue'),
       icon: Percent,
-      value: formatPercent(total ? grossMargin(total) : undefined),
+      value: formatPercent(
+        total ? grossMargin(total, includeFixed) : undefined
+      ),
       tone: 'accent-2' as const,
     },
   ]
@@ -241,7 +275,8 @@ export function CostAccounting(props: CostAccountingProps) {
       id: 'name',
       header: t(DIMENSION_HEADER_KEYS[dimension]),
       cellClassName: 'max-w-64 truncate font-medium',
-      cell: (row) => dimensionLabel(row, dimension),
+      cell: (row) =>
+        dimensionLabel(row, dimension, t('Unallocated fixed cost')),
     },
     {
       id: 'count',
@@ -269,26 +304,50 @@ export function CostAccounting(props: CostAccountingProps) {
       header: t('Channel cost'),
       className: 'text-right',
       cellClassName: 'text-right tabular-nums',
-      cell: (row) => formatQuota(row.cost_quota),
+      cell: (row) => formatQuota(totalCost(row, includeFixed)),
     },
     {
       id: 'profit',
       header: t('Gross profit'),
       className: 'text-right',
       cellClassName: 'text-right tabular-nums',
-      cell: (row) => formatQuota(grossProfit(row)),
+      cell: (row) => formatQuota(grossProfit(row, includeFixed)),
     },
     {
       id: 'margin',
       header: t('Gross margin'),
       className: 'text-right',
       cellClassName: 'text-right tabular-nums',
-      cell: (row) => formatPercent(grossMargin(row)),
+      cell: (row) => formatPercent(grossMargin(row, includeFixed)),
     },
   ]
 
   return (
     <div className='space-y-3 sm:space-y-4'>
+      {(missingFixed.length > 0 || expiredFixed.length > 0) && (
+        <Alert variant='destructive'>
+          <CircleAlert />
+          <AlertTitle>{t('Fixed monthly costs need attention')}</AlertTitle>
+          <AlertDescription>
+            {missingFixed.length > 0 && (
+              <p>
+                {t(
+                  'Monthly cost not entered for: {{channels}}. Their cost is left out until it is entered.',
+                  { channels: channelNames(missingFixed) }
+                )}
+              </p>
+            )}
+            {expiredFixed.length > 0 && (
+              <p>
+                {t(
+                  'Subscription expired for: {{channels}}. Their fixed cost stops at the end date until a renewal is read.',
+                  { channels: channelNames(expiredFixed) }
+                )}
+              </p>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
       {(rangeHasEstimates || pendingRows > 0) && (
         <Alert>
           <CircleAlert />
@@ -363,18 +422,27 @@ export function CostAccounting(props: CostAccountingProps) {
         )}
         loading={summaryQuery.isLoading}
         headerActions={
-          <Tabs
-            value={dimension}
-            onValueChange={(value) => setDimension(value as CostDimension)}
-          >
-            <TabsList>
-              {DIMENSION_OPTIONS.map((option) => (
-                <TabsTrigger key={option.value} value={option.value}>
-                  {t(option.labelKey)}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
+          <div className='flex flex-wrap items-center gap-3'>
+            <Label className='flex items-center gap-2 text-xs font-normal'>
+              <Switch
+                checked={usageCostOnly}
+                onCheckedChange={setUsageCostOnly}
+              />
+              {t('Usage-based cost only')}
+            </Label>
+            <Tabs
+              value={dimension}
+              onValueChange={(value) => setDimension(value as CostDimension)}
+            >
+              <TabsList>
+                {DIMENSION_OPTIONS.map((option) => (
+                  <TabsTrigger key={option.value} value={option.value}>
+                    {t(option.labelKey)}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          </div>
         }
         contentClassName='p-0 sm:p-0'
       >

@@ -241,6 +241,22 @@ export const channelFormSchema = z
       .number()
       .gt(0, 'Channel cost ratio must be greater than 0 and at most 10')
       .max(10, 'Channel cost ratio must be greater than 0 and at most 10'),
+    // '' follows the channel type default (see defaultChannelCostMode).
+    cost_mode: z.enum(['', 'ratio', 'fixed_monthly']),
+    // '' means the monthly cost has not been entered yet.
+    monthly_cost_usd: z
+      .string()
+      .refine(
+        (value) =>
+          value.trim() === '' ||
+          (Number.isFinite(Number(value)) &&
+            Number(value) >= 0 &&
+            Number(value) <= 1_000_000),
+        'Monthly cost must be between 0 and 1000000 USD'
+      ),
+    // YYYY-MM-DD; '' falls back to the subscription window.
+    cost_effective_from: z.string(),
+    cost_effective_to: z.string(),
     test_model: z.string().optional(),
     auto_ban: z.number().optional(),
     status: z.number(),
@@ -480,6 +496,10 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   priority: 0,
   weight: 0,
   cost_ratio: 1,
+  cost_mode: '',
+  monthly_cost_usd: '',
+  cost_effective_from: '',
+  cost_effective_to: '',
   test_model: '',
   auto_ban: 1,
   status: CHANNEL_STATUS.ENABLED,
@@ -656,6 +676,14 @@ export function transformChannelToFormDefaults(
     priority: channel.priority || 0,
     weight: channel.weight || 0,
     cost_ratio: channel.cost_ratio ?? 1,
+    cost_mode:
+      channel.cost_mode === 'ratio' || channel.cost_mode === 'fixed_monthly'
+        ? channel.cost_mode
+        : '',
+    monthly_cost_usd:
+      channel.monthly_cost_usd == null ? '' : String(channel.monthly_cost_usd),
+    cost_effective_from: unixToDateInput(channel.cost_effective_from),
+    cost_effective_to: unixToDateInput(channel.cost_effective_to, true),
     test_model: channel.test_model || '',
     auto_ban: channel.auto_ban ?? 1,
     status: channel.status,
@@ -925,6 +953,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     priority: formData.priority || null,
     weight: formData.weight || null,
     cost_ratio: formData.cost_ratio,
+    ...costSettingsPayload(formData),
     test_model: formData.test_model || null,
     auto_ban: formData.auto_ban ?? 1,
     status: formData.status,
@@ -974,6 +1003,7 @@ export function transformFormDataToUpdatePayload(
     priority: formData.priority ?? 0,
     weight: formData.weight ?? 0,
     cost_ratio: formData.cost_ratio,
+    ...costSettingsPayload(formData),
     test_model: formData.test_model || null,
     auto_ban: formData.auto_ban ?? 1,
     status_code_mapping: formData.status_code_mapping || null,
@@ -1071,4 +1101,57 @@ export function formatModels(models: string[]): string {
  */
 export function formatGroups(groups: string[]): string {
   return groups.join(',')
+}
+
+// ============================================================================
+// Cost accounting settings
+// ============================================================================
+
+const SUBSCRIPTION_CHANNEL_TYPES = new Set([57, 64])
+
+/** Subscription (OAuth) accounts default to a fixed monthly cost. */
+export function defaultChannelCostMode(
+  channelType: number
+): 'ratio' | 'fixed_monthly' {
+  return SUBSCRIPTION_CHANNEL_TYPES.has(channelType) ? 'fixed_monthly' : 'ratio'
+}
+
+/**
+ * Converts a stored bound to a date input value in local time. End bounds
+ * are exclusive, so the input shows the last included day.
+ */
+export function unixToDateInput(
+  value: number | null | undefined,
+  exclusiveEnd = false
+): string {
+  if (value == null) return ''
+  const date = new Date((exclusiveEnd ? value - 1 : value) * 1000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+/** Local midnight of a date input; an end date includes its whole day. */
+export function dateInputToUnix(
+  value: string,
+  exclusiveEnd = false
+): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim())
+  if (!match) return null
+  const date = new Date(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]) + (exclusiveEnd ? 1 : 0)
+  )
+  return Math.floor(date.getTime() / 1000)
+}
+
+/** Cost settings are always sent so cleared values are stored as null. */
+function costSettingsPayload(formData: ChannelFormValues) {
+  const monthly = formData.monthly_cost_usd.trim()
+  return {
+    cost_mode: formData.cost_mode || null,
+    monthly_cost_usd: monthly === '' ? null : Number(monthly),
+    cost_effective_from: dateInputToUnix(formData.cost_effective_from),
+    cost_effective_to: dateInputToUnix(formData.cost_effective_to, true),
+  }
 }
