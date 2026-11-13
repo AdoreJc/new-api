@@ -8084,7 +8084,6 @@
     "Rule {{rule}} will be removed from the table. It takes effect when you save the audit policy.": "Правило {{rule}} будет удалено из таблицы. Изменение вступит в силу после сохранения политики аудита.",
     "Any format": "Любой формат",
     "Test a request": "Проверить запрос",
-    "Shows which saved rule a request would match and what each engine would do. No check is run and nothing is recorded.": "Показывает, под какое сохранённое правило подойдёт запрос и что сделает каждый движок. Проверка не выполняется, ничего не записывается.",
     "Request format": "Формат запроса",
     "Rule {{position}}: {{rule}}": "Правило {{position}}: {{rule}}",
     "Matched rule": "Подходящее правило",
@@ -8145,5 +8144,17 @@
   "Group the token asked for, for example auto": "Группа, указанная в токене, например auto",
   "Requested groups: {{value}}": "Запрошенные группы: {{value}}",
   "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.": "Сохранённую политику аудита не удалось прочитать полностью. Нечитаемые правила не выполняют проверок; там, где они требовали блокировки, решает их политика отказа. Проверьте правила и сохраните, чтобы исправить политику.",
-  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "это правило не удалось прочитать; проверки не выполняются, а там, где требовалась блокировка, решает его политика отказа"
+  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "это правило не удалось прочитать; проверки не выполняются, а там, где требовалась блокировка, решает его политика отказа",
+  "Save the audit policy": "Сохранить политику аудита",
+  "The rules are saved as they are now. After saving they no longer follow changes to the prompt audit and content moderation scope settings; change them here instead.": "Правила будут сохранены в текущем виде. После сохранения они больше не следуют за настройками области аудита промптов и модерации; меняйте их здесь.",
+  "Requested group": "Запрошенная группа",
+  "Shows which rule a request would match in the rules being edited, saved or not, and what each engine would do. No check is run and nothing is recorded.": "Показывает, какое правило из редактируемых (сохранённых или нет) сработает для запроса и что сделает каждый движок. Проверка не выполняется и ничего не записывается.",
+  "Patterns are at most 255 characters": "Шаблон — не более 255 символов",
+  "A rule lists at most 200 patterns per condition": "В условии правила не более 200 шаблонов",
+  "A rule lists at most 1000 IDs per condition": "В условии правила не более 1000 ID",
+  "Audit policy rule names are at most 128 characters": "Название правила — не более 128 символов",
+  "A reroute group is at most 64 characters": "Группа перенаправления — не более 64 символов",
+  "Audit policy list notes are at most 255 characters": "Примечание в списке — не более 255 символов",
+  "The audit policy is too large to save; it must stay under 1 MB": "Политика аудита слишком велика; она должна быть меньше 1 МБ",
+  "Select at least one keyword list for the keyword mode": "Выберите хотя бы один список ключевых слов для этого режима"
 }

@@ -26,7 +26,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { handleServerError } from '@/lib/handle-server-error'
 
-import { testAuditPolicy, type AuditPolicyTestResult } from './api'
+import {
+  testAuditPolicy,
+  type AuditPolicyConfig,
+  type AuditPolicyTestResult,
+} from './api'
 import {
   ACTION_LABELS,
   ENGINE_MODE_LABELS,
@@ -40,6 +44,7 @@ const TEXT_FIELDS = [
   { name: 'user_id', label: 'User ID', type: 'number' },
   { name: 'token_id', label: 'Token ID', type: 'number' },
   { name: 'group', label: 'Group', type: 'text' },
+  { name: 'requested_group', label: 'Requested group', type: 'text' },
   { name: 'model', label: 'Model', type: 'text' },
 ] as const
 
@@ -47,12 +52,17 @@ type TestInput = Record<(typeof TEXT_FIELDS)[number]['name'], string> & {
   format: string
 }
 
-export function AuditPolicyTestPanel(props: { relayFormats: string[] }) {
+export function AuditPolicyTestPanel(props: {
+  relayFormats: string[]
+  /** The rules being edited; tested as they are, without saving them. */
+  draft: AuditPolicyConfig
+}) {
   const { t } = useTranslation()
   const [input, setInput] = useState<TestInput>({
     user_id: '',
     token_id: '',
     group: '',
+    requested_group: '',
     model: '',
     format: INHERIT,
   })
@@ -62,8 +72,10 @@ export function AuditPolicyTestPanel(props: { relayFormats: string[] }) {
         user_id: Number.parseInt(input.user_id, 10) || 0,
         token_id: Number.parseInt(input.token_id, 10) || 0,
         group: input.group.trim(),
+        requested_group: input.requested_group.trim(),
         model: input.model.trim(),
         format: input.format === INHERIT ? '' : input.format,
+        config: props.draft,
       }),
     onError: (error) => handleServerError(error),
   })
@@ -84,13 +96,13 @@ export function AuditPolicyTestPanel(props: { relayFormats: string[] }) {
         <h4 className='text-sm font-medium'>{t('Test a request')}</h4>
         <p className='text-muted-foreground text-xs'>
           {t(
-            'Shows which saved rule a request would match and what each engine would do. No check is run and nothing is recorded.'
+            'Shows which rule a request would match in the rules being edited, saved or not, and what each engine would do. No check is run and nothing is recorded.'
           )}
         </p>
       </div>
       <form
         onSubmit={onSubmit}
-        className='grid gap-3 sm:grid-cols-2 lg:grid-cols-5'
+        className='grid gap-3 sm:grid-cols-2 lg:grid-cols-6'
       >
         {TEXT_FIELDS.map((field) => (
           <div key={field.name} className='flex min-w-0 flex-col gap-1.5'>
@@ -117,7 +129,7 @@ export function AuditPolicyTestPanel(props: { relayFormats: string[] }) {
             ariaLabel={t('Request format')}
           />
         </div>
-        <div className='sm:col-span-2 lg:col-span-5'>
+        <div className='sm:col-span-2 lg:col-span-6'>
           <Button type='submit' size='sm' disabled={test.isPending}>
             {t('Test')}
           </Button>

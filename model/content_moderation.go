@@ -27,7 +27,7 @@ const (
 	ContentModerationActionReroute = "reroute"
 	// ContentModerationActionUnavailable is a request blocked because the
 	// engine failed and the rule's failure policy is closed.
-	ContentModerationActionUnavailable = "unavailable_block"
+	ContentModerationActionUnavailable = "fail_block"
 	// ContentModerationPromptAuditCategory marks violations counted from a
 	// prompt audit finding of a rule that counts toward disposal.
 	ContentModerationPromptAuditCategory = "prompt_audit"

@@ -8084,7 +8084,6 @@
     "Rule {{rule}} will be removed from the table. It takes effect when you save the audit policy.": "Rule {{rule}} will be removed from the table. It takes effect when you save the audit policy.",
     "Any format": "Any format",
     "Test a request": "Test a request",
-    "Shows which saved rule a request would match and what each engine would do. No check is run and nothing is recorded.": "Shows which saved rule a request would match and what each engine would do. No check is run and nothing is recorded.",
     "Request format": "Request format",
     "Rule {{position}}: {{rule}}": "Rule {{position}}: {{rule}}",
     "Matched rule": "Matched rule",
@@ -8145,5 +8144,17 @@
   "Group the token asked for, for example auto": "Group the token asked for, for example auto",
   "Requested groups: {{value}}": "Requested groups: {{value}}",
   "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.": "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.",
-  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "this rule could not be read; no check runs and its failure policy decides where it asked to block"
+  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "this rule could not be read; no check runs and its failure policy decides where it asked to block",
+  "Save the audit policy": "Save the audit policy",
+  "The rules are saved as they are now. After saving they no longer follow changes to the prompt audit and content moderation scope settings; change them here instead.": "The rules are saved as they are now. After saving they no longer follow changes to the prompt audit and content moderation scope settings; change them here instead.",
+  "Requested group": "Requested group",
+  "Shows which rule a request would match in the rules being edited, saved or not, and what each engine would do. No check is run and nothing is recorded.": "Shows which rule a request would match in the rules being edited, saved or not, and what each engine would do. No check is run and nothing is recorded.",
+  "Patterns are at most 255 characters": "Patterns are at most 255 characters",
+  "A rule lists at most 200 patterns per condition": "A rule lists at most 200 patterns per condition",
+  "A rule lists at most 1000 IDs per condition": "A rule lists at most 1000 IDs per condition",
+  "Audit policy rule names are at most 128 characters": "Audit policy rule names are at most 128 characters",
+  "A reroute group is at most 64 characters": "A reroute group is at most 64 characters",
+  "Audit policy list notes are at most 255 characters": "Audit policy list notes are at most 255 characters",
+  "The audit policy is too large to save; it must stay under 1 MB": "The audit policy is too large to save; it must stay under 1 MB",
+  "Select at least one keyword list for the keyword mode": "Select at least one keyword list for the keyword mode"
 }

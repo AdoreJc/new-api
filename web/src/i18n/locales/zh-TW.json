@@ -8084,7 +8084,6 @@
     "Rule {{rule}} will be removed from the table. It takes effect when you save the audit policy.": "規則 {{rule}} 將從表中移除。儲存稽核策略後生效。",
     "Any format": "任意格式",
     "Test a request": "測試請求",
-    "Shows which saved rule a request would match and what each engine would do. No check is run and nothing is recorded.": "顯示請求會符合哪條已儲存的規則以及各引擎會執行什麼操作。不會執行任何檢查，也不會記錄任何內容。",
     "Request format": "請求格式",
     "Rule {{position}}: {{rule}}": "規則 {{position}}：{{rule}}",
     "Matched rule": "符合的規則",
@@ -8145,5 +8144,17 @@
   "Group the token asked for, for example auto": "令牌本身的分組，例如 auto",
   "Requested groups: {{value}}": "請求分組：{{value}}",
   "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.": "已儲存的審核策略無法完整讀取。無法讀取的規則不執行任何檢查；原本要求攔截的規則依其故障策略處理。請檢查規則並重新儲存以修復策略。",
-  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "此規則無法讀取：不執行任何檢查，原本要求攔截時依其故障策略處理"
+  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "此規則無法讀取：不執行任何檢查，原本要求攔截時依其故障策略處理",
+  "Save the audit policy": "儲存審核策略",
+  "The rules are saved as they are now. After saving they no longer follow changes to the prompt audit and content moderation scope settings; change them here instead.": "規則將依目前內容儲存。儲存後，它們不再隨提示詞審計和內容審計的範圍設定變化，之後請在這裡修改。",
+  "Requested group": "請求分組",
+  "Shows which rule a request would match in the rules being edited, saved or not, and what each engine would do. No check is run and nothing is recorded.": "依正在編輯的規則（無論是否已儲存）顯示請求會命中哪條規則，以及每個引擎會如何處理。不會執行檢查，也不會記錄。",
+  "Patterns are at most 255 characters": "每個比對模式最多 255 個字元",
+  "A rule lists at most 200 patterns per condition": "每個條件最多 200 個比對模式",
+  "A rule lists at most 1000 IDs per condition": "每個條件最多 1000 個 ID",
+  "Audit policy rule names are at most 128 characters": "審核策略規則名稱最多 128 個字元",
+  "A reroute group is at most 64 characters": "改路由目標分組最多 64 個字元",
+  "Audit policy list notes are at most 255 characters": "名單備註最多 255 個字元",
+  "The audit policy is too large to save; it must stay under 1 MB": "審核策略過大，無法儲存；總大小須小於 1 MB",
+  "Select at least one keyword list for the keyword mode": "關鍵詞模式至少要選擇一個詞表"
 }

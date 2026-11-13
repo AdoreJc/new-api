@@ -46,7 +46,13 @@ import {
   CONTENT_MODERATION_MODE_LABELS,
   PROMPT_AUDIT_MODE_LABELS,
 } from './lib/constants'
-import { createRule, duplicateRule } from './lib/rule-form'
+import {
+  charCount,
+  createRule,
+  duplicateRule,
+  editorKey,
+  MAX_NOTE_CHARS,
+} from './lib/rule-form'
 import { ListEntriesEditor } from './list-entries-editor'
 import { RuleEditorDialog } from './rule-editor-dialog'
 import { RuleList } from './rule-list'
@@ -68,9 +74,11 @@ export function AuditPolicySection() {
     )
   }
   // Remounting on a new version drops the draft and starts from the server.
+  // Derived rules keep their version while the engine settings change, so
+  // their content is part of the key.
   return (
     <AuditPolicyEditor
-      key={`${policy.data.config.config_version}-${policy.data.saved}`}
+      key={editorKey(policy.data)}
       data={policy.data}
       onReload={() => void policy.refetch()}
     />
@@ -94,6 +102,7 @@ function AuditPolicyEditor(props: {
   const [editing, setEditing] = useState<Editing | null>(null)
   const [conflict, setConflict] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
+  const [confirmFirstSave, setConfirmFirstSave] = useState(false)
 
   const draft: AuditPolicyConfig = {
     ...initial,
@@ -141,6 +150,17 @@ function AuditPolicyEditor(props: {
     )
     if (invalidEntry) {
       toast.error(t('Audit policy list entries need a positive user ID'))
+      return
+    }
+    const longNote = [...allowlist, ...blocklist].some(
+      (entry) => charCount(entry.note) > MAX_NOTE_CHARS
+    )
+    if (longNote) {
+      toast.error(t('Audit policy list notes are at most 255 characters'))
+      return
+    }
+    if (!props.data.saved) {
+      setConfirmFirstSave(true)
       return
     }
     save.mutate()
@@ -293,7 +313,10 @@ function AuditPolicyEditor(props: {
           'Changes apply when you save the audit policy. Every save is recorded in the audit log.'
         )}
       </p>
-      <AuditPolicyTestPanel relayFormats={props.data.relay_formats ?? []} />
+      <AuditPolicyTestPanel
+        relayFormats={props.data.relay_formats ?? []}
+        draft={draft}
+      />
       {editing !== null && (
         <RuleEditorDialog
           rule={editing.rule}
@@ -308,6 +331,20 @@ function AuditPolicyEditor(props: {
           }}
         />
       )}
+      <ConfirmDialog
+        open={confirmFirstSave}
+        onOpenChange={setConfirmFirstSave}
+        title={t('Save the audit policy')}
+        desc={t(
+          'The rules are saved as they are now. After saving they no longer follow changes to the prompt audit and content moderation scope settings; change them here instead.'
+        )}
+        confirmText={t('Save audit policy')}
+        isLoading={save.isPending}
+        handleConfirm={() => {
+          setConfirmFirstSave(false)
+          save.mutate()
+        }}
+      />
       <ConfirmDialog
         open={confirmReset}
         onOpenChange={setConfirmReset}

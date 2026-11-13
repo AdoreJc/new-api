@@ -8084,7 +8084,6 @@
     "Rule {{rule}} will be removed from the table. It takes effect when you save the audit policy.": "ルール {{rule}} は表から削除されます。監査ポリシーを保存すると反映されます。",
     "Any format": "任意の形式",
     "Test a request": "リクエストをテスト",
-    "Shows which saved rule a request would match and what each engine would do. No check is run and nothing is recorded.": "リクエストがどの保存済みルールに一致し、各エンジンが何をするかを表示します。チェックは実行されず、何も記録されません。",
     "Request format": "リクエスト形式",
     "Rule {{position}}: {{rule}}": "ルール {{position}}：{{rule}}",
     "Matched rule": "一致したルール",
@@ -8145,5 +8144,17 @@
   "Group the token asked for, for example auto": "トークン自身のグループ（例：auto）",
   "Requested groups: {{value}}": "リクエストグループ：{{value}}",
   "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.": "保存された監査ポリシーを完全には読み込めませんでした。読み込めないルールはチェックを行いません。ブロックを指定していたルールは障害時ポリシーに従います。ルールを確認し、保存してポリシーを修復してください。",
-  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "このルールは読み込めません。チェックは行われず、ブロックを指定していた場合は障害時ポリシーに従います"
+  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "このルールは読み込めません。チェックは行われず、ブロックを指定していた場合は障害時ポリシーに従います",
+  "Save the audit policy": "監査ポリシーを保存",
+  "The rules are saved as they are now. After saving they no longer follow changes to the prompt audit and content moderation scope settings; change them here instead.": "ルールは現在の内容で保存されます。保存後はプロンプト監査とコンテンツモデレーションの範囲設定に追従しなくなるため、ここで変更してください。",
+  "Requested group": "リクエストグループ",
+  "Shows which rule a request would match in the rules being edited, saved or not, and what each engine would do. No check is run and nothing is recorded.": "編集中のルール（保存済みかどうかに関わらず）でリクエストがどのルールに一致し、各エンジンが何をするかを表示します。チェックは実行されず、記録もされません。",
+  "Patterns are at most 255 characters": "パターンは 255 文字以内です",
+  "A rule lists at most 200 patterns per condition": "1 つの条件に指定できるパターンは 200 個までです",
+  "A rule lists at most 1000 IDs per condition": "1 つの条件に指定できる ID は 1000 個までです",
+  "Audit policy rule names are at most 128 characters": "ルール名は 128 文字以内です",
+  "A reroute group is at most 64 characters": "転送先グループは 64 文字以内です",
+  "Audit policy list notes are at most 255 characters": "リストのメモは 255 文字以内です",
+  "The audit policy is too large to save; it must stay under 1 MB": "監査ポリシーが大きすぎて保存できません。1 MB 未満にしてください",
+  "Select at least one keyword list for the keyword mode": "キーワードモードには少なくとも 1 つのリストを選択してください"
 }

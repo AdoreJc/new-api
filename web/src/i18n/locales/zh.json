@@ -8084,7 +8084,6 @@
     "Rule {{rule}} will be removed from the table. It takes effect when you save the audit policy.": "规则 {{rule}} 将从表中移除。保存审计策略后生效。",
     "Any format": "任意格式",
     "Test a request": "测试请求",
-    "Shows which saved rule a request would match and what each engine would do. No check is run and nothing is recorded.": "显示请求会匹配哪条已保存的规则以及各引擎会执行什么操作。不会运行任何检查，也不会记录任何内容。",
     "Request format": "请求格式",
     "Rule {{position}}: {{rule}}": "规则 {{position}}：{{rule}}",
     "Matched rule": "匹配的规则",
@@ -8145,5 +8144,17 @@
   "Group the token asked for, for example auto": "令牌本身的分组，例如 auto",
   "Requested groups: {{value}}": "请求分组：{{value}}",
   "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.": "已保存的审核策略无法完整读取。无法读取的规则不执行任何检查；原本要求拦截的规则按其故障策略处理。请检查规则并重新保存以修复策略。",
-  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "该规则无法读取：不执行任何检查，原本要求拦截时按其故障策略处理"
+  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "该规则无法读取：不执行任何检查，原本要求拦截时按其故障策略处理",
+  "Save the audit policy": "保存审核策略",
+  "The rules are saved as they are now. After saving they no longer follow changes to the prompt audit and content moderation scope settings; change them here instead.": "规则将按当前内容保存。保存后，它们不再随提示词审计和内容审计的范围设置变化，之后请在这里修改。",
+  "Requested group": "请求分组",
+  "Shows which rule a request would match in the rules being edited, saved or not, and what each engine would do. No check is run and nothing is recorded.": "按正在编辑的规则（无论是否已保存）显示请求会命中哪条规则，以及每个引擎会怎么处理。不会执行检查，也不会记录。",
+  "Patterns are at most 255 characters": "每个匹配模式最多 255 个字符",
+  "A rule lists at most 200 patterns per condition": "每个条件最多 200 个匹配模式",
+  "A rule lists at most 1000 IDs per condition": "每个条件最多 1000 个 ID",
+  "Audit policy rule names are at most 128 characters": "审核策略规则名称最多 128 个字符",
+  "A reroute group is at most 64 characters": "改路由目标分组最多 64 个字符",
+  "Audit policy list notes are at most 255 characters": "名单备注最多 255 个字符",
+  "The audit policy is too large to save; it must stay under 1 MB": "审核策略过大，无法保存；总大小须小于 1 MB",
+  "Select at least one keyword list for the keyword mode": "关键词模式至少要选择一个词表"
 }

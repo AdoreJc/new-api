@@ -177,6 +177,8 @@ function PromptAuditForm(props: {
       void queryClient.invalidateQueries({
         queryKey: ['prompt-audit', 'runtime'],
       })
+      // Rules derived from these settings change with them.
+      void queryClient.invalidateQueries({ queryKey: ['audit-policy'] })
       toast.success(t('Prompt audit settings saved'))
     },
     onError: (error) => {

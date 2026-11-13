@@ -166,7 +166,7 @@ export const CONTENT_MODERATION_ACTION_LABELS: Record<string, string> = {
   hash_block: 'Blocked (remembered input)',
   keyword_block: 'Blocked (keyword)',
   reroute: 'Rerouted',
-  unavailable_block: 'Blocked (engine unavailable)',
+  fail_block: 'Blocked (engine unavailable)',
   error: 'API failed',
 }
 

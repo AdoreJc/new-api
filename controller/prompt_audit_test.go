@@ -504,7 +504,7 @@ func TestAuditPolicySaveConflictAndReset(t *testing.T) {
 	require.NoError(t, model.DB.AutoMigrate(&model.Option{}))
 	t.Cleanup(func() { audit_policy_setting.ApplyOption(audit_policy_setting.OptionKey, "") })
 	save := func(version int64) *httptest.ResponseRecorder {
-		body := `{"expected_config_version":` + common.Interface2String(version) + `,"config":{"rules":[{"id":"oauth","enabled":true,
+		body := `{"expected_config_version":` + strconv.FormatInt(version, 10) + `,"config":{"rules":[{"id":"oauth","enabled":true,
 			"match":{"groups":["claude-ch*"]},"prompt_audit":{"enabled":true,"action":"block","fail_policy":"closed"}}]}}`
 		return securityEnrollmentRequest(http.MethodPut, "/api/audit_policy/", body, "", identity, UpdateAuditPolicy)
 	}
@@ -524,13 +524,59 @@ func TestAuditPolicySaveConflictAndReset(t *testing.T) {
 	tested := securityEnrollmentRequest(http.MethodPost, "/api/audit_policy/test", `{"user_id":1,"group":"claude-ch2","model":"m"}`, "", identity, TestAuditPolicy)
 	assert.Contains(t, tested.Body.String(), `"rule_id":"oauth"`)
 
+	draft := securityEnrollmentRequest(http.MethodPost, "/api/audit_policy/test", `{"user_id":1,"group":"default","requested_group":"auto",
+		"config":{"rules":[{"id":"draft-auto","enabled":true,"match":{"requested_groups":["auto"]}}]}}`, "", identity, TestAuditPolicy)
+	assert.Contains(t, draft.Body.String(), `"rule_id":"draft-auto"`, "a draft is tested without saving it")
+	assert.Equal(t, "oauth", audit_policy_setting.Current().Config.Rules[0].ID)
+
 	reset := securityEnrollmentRequest(http.MethodPost, "/api/audit_policy/reset", `{"expected_config_version":1}`, "", identity, ResetAuditPolicy)
 	require.Contains(t, reset.Body.String(), `"success":true`, reset.Body.String())
+	assert.Contains(t, reset.Body.String(), `"config_version":2`, "the version keeps counting after a reset")
 	assert.False(t, audit_policy_setting.Current().Saved, "reset returns to the derived rules")
+	assert.Equal(t, http.StatusConflict, save(1).Code, "an editor holding the version before the reset cannot overwrite")
+	assert.Equal(t, http.StatusConflict, save(0).Code)
+	require.Contains(t, save(2).Body.String(), `"config_version":3`)
+
+	// Another node saved a prompt audit scope this node has not synced yet:
+	// the derived rules shown come from the database.
+	reset = securityEnrollmentRequest(http.MethodPost, "/api/audit_policy/reset", `{"expected_config_version":3}`, "", identity, ResetAuditPolicy)
+	require.Contains(t, reset.Body.String(), `"config_version":4`, reset.Body.String())
+	stored := `{"enabled":true,"all_groups":false,"groups":["other-node*"],"worker_count":1,"queue_capacity":1,"retention_days":1,
+		"endpoints":[{"id":"g1","base_url":"http://127.0.0.1:1","model":"guard","enabled":true}]}`
+	require.NoError(t, model.DB.Where(model.Option{Key: prompt_audit_setting.OptionKey}).Assign(map[string]any{"value": stored}).FirstOrCreate(&model.Option{}).Error)
+	shown := securityEnrollmentRequest(http.MethodGet, "/api/audit_policy/", "", "", identity, GetAuditPolicy)
+	assert.Contains(t, shown.Body.String(), `"other-node*"`, "derived rules come from the stored settings, not this node's copy")
+	assert.Contains(t, shown.Body.String(), `"config_version":4`)
 
 	var audits int64
 	require.NoError(t, model.LOG_DB.Model(&model.AuditLog{}).Where("action IN ?", []string{"audit_policy.update", "audit_policy.reset"}).Count(&audits).Error)
-	assert.Equal(t, int64(2), audits, "every change is in the audit log")
+	assert.Equal(t, int64(4), audits, "every change is in the audit log")
+}
+
+// TestAuditPolicyLimits counts names and notes in characters and refuses a
+// table that would be stored larger than the limit.
+func TestAuditPolicyLimits(t *testing.T) {
+	setupPromptAuditTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Option{}))
+	t.Cleanup(func() { audit_policy_setting.ApplyOption(audit_policy_setting.OptionKey, "") })
+	named := audit_policy_setting.Config{
+		Rules:     []audit_policy_setting.Rule{{ID: "named", Name: strings.Repeat("规", 128)}},
+		Allowlist: []audit_policy_setting.ListEntry{{UserID: 1, Note: strings.Repeat("注", 255)}},
+	}
+	require.NoError(t, named.Normalize(), "128 and 255 characters fit whatever their byte length")
+	named.Rules[0].Name += "则"
+	assert.ErrorIs(t, named.Normalize(), audit_policy_setting.ErrRuleNameTooLong)
+
+	large := audit_policy_setting.Config{}
+	patterns := make([]string, audit_policy_setting.MaxPatterns)
+	for index := range patterns {
+		patterns[index] = fmt.Sprintf("%0250d", index)
+	}
+	for index := range 30 {
+		large.Rules = append(large.Rules, audit_policy_setting.Rule{ID: fmt.Sprintf("r%d", index), Match: audit_policy_setting.Match{Groups: patterns}})
+	}
+	_, err := model.SaveAuditPolicy(&large, 0)
+	assert.ErrorIs(t, err, audit_policy_setting.ErrPolicyTooLarge)
 }
 
 // TestAuditRerouteMovesAnAutoTokenToTheTargetGroup reroutes an "auto"

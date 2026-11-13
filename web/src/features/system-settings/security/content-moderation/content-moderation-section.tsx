@@ -202,6 +202,8 @@ function ContentModerationForm(props: {
     onSuccess: (data) => {
       queryClient.setQueryData(CONFIG_QUERY_KEY, data)
       void queryClient.invalidateQueries({ queryKey: RUNTIME_QUERY_KEY })
+      // Rules derived from these settings change with them.
+      void queryClient.invalidateQueries({ queryKey: ['audit-policy'] })
       toast.success(t('Content moderation settings saved'))
     },
     onError: (error) => {

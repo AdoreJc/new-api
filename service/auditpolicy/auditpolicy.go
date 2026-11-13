@@ -101,6 +101,12 @@ func Explain(subject audit_policy_setting.Subject) Plan {
 	return plan(snapshot, resolution)
 }
 
+// ExplainDraft resolves the subject against a draft table that is not saved.
+func ExplainDraft(config audit_policy_setting.Config, subject audit_policy_setting.Subject) Plan {
+	snapshot := &audit_policy_setting.Snapshot{Config: config, Saved: true}
+	return plan(snapshot, snapshot.Config.Resolve(subject))
+}
+
 func plan(snapshot *audit_policy_setting.Snapshot, resolution audit_policy_setting.Resolution) Plan {
 	rule := resolution.Rule
 	result := Plan{

@@ -8084,7 +8084,6 @@
     "Rule {{rule}} will be removed from the table. It takes effect when you save the audit policy.": "Quy tắc {{rule}} sẽ bị xóa khỏi bảng. Thay đổi có hiệu lực khi bạn lưu chính sách kiểm duyệt.",
     "Any format": "Mọi định dạng",
     "Test a request": "Kiểm tra một yêu cầu",
-    "Shows which saved rule a request would match and what each engine would do. No check is run and nothing is recorded.": "Cho biết yêu cầu sẽ khớp quy tắc đã lưu nào và mỗi công cụ sẽ làm gì. Không chạy kiểm tra nào và không ghi lại gì.",
     "Request format": "Định dạng yêu cầu",
     "Rule {{position}}: {{rule}}": "Quy tắc {{position}}: {{rule}}",
     "Matched rule": "Quy tắc khớp",
@@ -8145,5 +8144,17 @@
   "Group the token asked for, for example auto": "Nhóm mà token yêu cầu, ví dụ auto",
   "Requested groups: {{value}}": "Nhóm được yêu cầu: {{value}}",
   "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.": "Không thể đọc đầy đủ chính sách kiểm duyệt đã lưu. Các quy tắc không đọc được sẽ không kiểm tra; nếu chúng yêu cầu chặn, chính sách khi lỗi của chúng sẽ quyết định. Hãy xem lại các quy tắc và lưu để sửa chính sách.",
-  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "không đọc được quy tắc này; không kiểm tra, và khi quy tắc yêu cầu chặn thì chính sách khi lỗi sẽ quyết định"
+  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "không đọc được quy tắc này; không kiểm tra, và khi quy tắc yêu cầu chặn thì chính sách khi lỗi sẽ quyết định",
+  "Save the audit policy": "Lưu chính sách kiểm duyệt",
+  "The rules are saved as they are now. After saving they no longer follow changes to the prompt audit and content moderation scope settings; change them here instead.": "Các quy tắc được lưu như hiện tại. Sau khi lưu, chúng không còn theo cài đặt phạm vi của kiểm duyệt prompt và kiểm duyệt nội dung; hãy sửa chúng tại đây.",
+  "Requested group": "Nhóm được yêu cầu",
+  "Shows which rule a request would match in the rules being edited, saved or not, and what each engine would do. No check is run and nothing is recorded.": "Cho biết yêu cầu sẽ khớp quy tắc nào trong các quy tắc đang chỉnh sửa (đã lưu hay chưa) và mỗi bộ máy sẽ làm gì. Không kiểm tra và không ghi lại gì.",
+  "Patterns are at most 255 characters": "Mỗi mẫu tối đa 255 ký tự",
+  "A rule lists at most 200 patterns per condition": "Mỗi điều kiện tối đa 200 mẫu",
+  "A rule lists at most 1000 IDs per condition": "Mỗi điều kiện tối đa 1000 ID",
+  "Audit policy rule names are at most 128 characters": "Tên quy tắc tối đa 128 ký tự",
+  "A reroute group is at most 64 characters": "Nhóm chuyển hướng tối đa 64 ký tự",
+  "Audit policy list notes are at most 255 characters": "Ghi chú danh sách tối đa 255 ký tự",
+  "The audit policy is too large to save; it must stay under 1 MB": "Chính sách kiểm duyệt quá lớn để lưu; phải nhỏ hơn 1 MB",
+  "Select at least one keyword list for the keyword mode": "Chọn ít nhất một danh sách từ khóa cho chế độ này"
 }

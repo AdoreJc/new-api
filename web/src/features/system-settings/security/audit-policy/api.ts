@@ -123,8 +123,12 @@ export type AuditPolicyTestRequest = {
   user_id: number
   token_id: number
   group: string
+  /** The token's own group, such as auto, when group is the chosen one. */
+  requested_group: string
   model: string
   format: string
+  /** A draft table to test instead of the rules in use. */
+  config?: AuditPolicyConfig
 }
 
 export type AuditPolicyEngineMode = 'off' | 'async' | 'sync'

@@ -8084,7 +8084,6 @@
     "Rule {{rule}} will be removed from the table. It takes effect when you save the audit policy.": "La règle {{rule}} sera retirée du tableau. Cela prend effet à l'enregistrement de la politique d'audit.",
     "Any format": "Tout format",
     "Test a request": "Tester une requête",
-    "Shows which saved rule a request would match and what each engine would do. No check is run and nothing is recorded.": "Indique quelle règle enregistrée une requête ciblerait et ce que ferait chaque moteur. Aucune vérification n'est exécutée et rien n'est enregistré.",
     "Request format": "Format de requête",
     "Rule {{position}}: {{rule}}": "Règle {{position}} : {{rule}}",
     "Matched rule": "Règle correspondante",
@@ -8145,5 +8144,17 @@
   "Group the token asked for, for example auto": "Groupe demandé par le jeton, par exemple auto",
   "Requested groups: {{value}}": "Groupes demandés : {{value}}",
   "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.": "La politique d’audit enregistrée n’a pas pu être lue entièrement. Les règles illisibles n’effectuent aucune vérification ; lorsqu’elles demandaient un blocage, leur politique en cas d’échec décide. Vérifiez les règles et enregistrez pour réparer la politique.",
-  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "cette règle n’a pas pu être lue ; aucune vérification n’est effectuée et sa politique en cas d’échec décide lorsqu’elle demandait un blocage"
+  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "cette règle n’a pas pu être lue ; aucune vérification n’est effectuée et sa politique en cas d’échec décide lorsqu’elle demandait un blocage",
+  "Save the audit policy": "Enregistrer la politique d’audit",
+  "The rules are saved as they are now. After saving they no longer follow changes to the prompt audit and content moderation scope settings; change them here instead.": "Les règles sont enregistrées telles quelles. Ensuite, elles ne suivent plus les réglages de portée de l’audit des prompts et de la modération ; modifiez-les ici.",
+  "Requested group": "Groupe demandé",
+  "Shows which rule a request would match in the rules being edited, saved or not, and what each engine would do. No check is run and nothing is recorded.": "Indique quelle règle, parmi celles en cours d’édition (enregistrées ou non), une requête déclencherait et ce que ferait chaque moteur. Aucune vérification n’est effectuée et rien n’est enregistré.",
+  "Patterns are at most 255 characters": "Les motifs font au plus 255 caractères",
+  "A rule lists at most 200 patterns per condition": "Une règle liste au plus 200 motifs par condition",
+  "A rule lists at most 1000 IDs per condition": "Une règle liste au plus 1000 ID par condition",
+  "Audit policy rule names are at most 128 characters": "Les noms de règle sont limités à 128 caractères",
+  "A reroute group is at most 64 characters": "Le groupe de redirection fait au plus 64 caractères",
+  "Audit policy list notes are at most 255 characters": "Les notes de liste font au plus 255 caractères",
+  "The audit policy is too large to save; it must stay under 1 MB": "La politique d’audit est trop volumineuse ; elle doit rester sous 1 Mo",
+  "Select at least one keyword list for the keyword mode": "Choisissez au moins une liste de mots-clés pour ce mode"
 }

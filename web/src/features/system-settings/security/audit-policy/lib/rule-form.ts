@@ -28,11 +28,32 @@ import { INHERIT } from './constants'
 
 export const DEFAULT_RULE_ID = 'default'
 const MAX_RULE_ID_LENGTH = 64
+// Server limits (setting/audit_policy_setting). Names, notes and patterns
+// are counted in characters, as the server counts them.
+export const MAX_RULE_NAME_CHARS = 128
+export const MAX_NOTE_CHARS = 255
+const MAX_PATTERN_CHARS = 255
+const MAX_PATTERNS = 200
+const MAX_IDS_PER_RULE = 1000
+const MAX_REROUTE_GROUP_CHARS = 64
+
+/** Counts characters (code points), not UTF-16 units. */
+export function charCount(value: string): number {
+  return [...value].length
+}
 
 const POSITIVE_ID = /^[1-9]\d*$/
 
 const patternList = z
   .array(z.string())
+  .max(MAX_PATTERNS, 'A rule lists at most 200 patterns per condition')
+  .refine(
+    (patterns) =>
+      patterns.every(
+        (pattern) => charCount(pattern.trim()) <= MAX_PATTERN_CHARS
+      ),
+    'Patterns are at most 255 characters'
+  )
   .refine(
     (patterns) =>
       patterns.every(
@@ -45,6 +66,7 @@ const patternList = z
 
 const idList = z
   .array(z.string())
+  .max(MAX_IDS_PER_RULE, 'A rule lists at most 1000 IDs per condition')
   .refine(
     (ids) => ids.every((id) => POSITIVE_ID.test(id.trim())),
     'Enter positive numeric IDs'
@@ -54,10 +76,20 @@ const rerouteTarget = z
   .string()
   .trim()
   .refine((value) => !value.includes('*'), 'A reroute target cannot use *')
+  .refine(
+    (value) => charCount(value) <= MAX_PATTERN_CHARS,
+    'Patterns are at most 255 characters'
+  )
 
 const ruleFormObject = z.object({
   id: z.string().trim(),
-  name: z.string().trim().max(128),
+  name: z
+    .string()
+    .trim()
+    .refine(
+      (value) => charCount(value) <= MAX_RULE_NAME_CHARS,
+      'Audit policy rule names are at most 128 characters'
+    ),
   enabled: z.boolean(),
   match: z.object({
     groups: patternList,
@@ -94,7 +126,13 @@ const ruleFormObject = z.object({
     fail_policy: z.enum(['open', 'closed']),
     count_disposal: z.boolean(),
   }),
-  reroute: z.object({ model: rerouteTarget, group: rerouteTarget }),
+  reroute: z.object({
+    model: rerouteTarget,
+    group: rerouteTarget.refine(
+      (value) => charCount(value) <= MAX_REROUTE_GROUP_CHARS,
+      'A reroute group is at most 64 characters'
+    ),
+  }),
   reroute_fallback: z.enum(['observe', 'block']),
 })
 
@@ -159,6 +197,19 @@ export function createRuleFormSchema(options: {
         code: 'custom',
         path: ['content_moderation', 'thresholds'],
         message: 'Thresholds must be between 0 and 1',
+      })
+    }
+    const moderation = values.content_moderation
+    if (
+      moderation.override_keyword_lists &&
+      moderation.keyword_mode !== INHERIT &&
+      moderation.keyword_mode !== 'api_only' &&
+      cleanList(moderation.keyword_lists).length === 0
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['content_moderation', 'keyword_lists'],
+        message: 'Select at least one keyword list for the keyword mode',
       })
     }
     if (
@@ -315,6 +366,23 @@ export function uniqueRuleId(base: string, existingIds: string[]): string {
 }
 
 /** A new rule audits prompts in the background and blocks nothing. */
+/**
+ * Identifies the server state an editor starts from: the version of a saved
+ * table, or the content of derived rules, which change without a version.
+ */
+export function editorKey(data: {
+  saved: boolean
+  config: { config_version: number }
+}): string {
+  if (data.saved) return `saved-${data.config.config_version}`
+  const text = JSON.stringify(data.config)
+  let hash = 0
+  for (let index = 0; index < text.length; index++) {
+    hash = (Math.imul(hash, 31) + text.charCodeAt(index)) | 0
+  }
+  return `derived-${data.config.config_version}-${hash >>> 0}`
+}
+
 export function createRule(existingIds: string[]): AuditPolicyRule {
   return {
     id: uniqueRuleId('rule', existingIds),

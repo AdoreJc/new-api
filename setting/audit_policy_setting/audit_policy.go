@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/content_moderation_setting"
@@ -176,7 +177,13 @@ type Config struct {
 	ConfigVersion int64       `json:"config_version"`
 	UpdatedAt     int64       `json:"updated_at"`
 	UpdatedBy     int         `json:"updated_by"`
+	// Derived marks a stored reset: no table is saved and the rules are
+	// derived again, but the version keeps counting from here.
+	Derived bool `json:"derived,omitempty"`
 }
+
+// MaxStoredBytes bounds the stored table.
+const MaxStoredBytes = 1 << 20
 
 // Snapshot is the immutable runtime view. Saved is false while the rules are
 // derived from the legacy engine settings.
@@ -193,6 +200,7 @@ type Snapshot struct {
 type derivedSnapshot struct {
 	pa       *prompt_audit_setting.Snapshot
 	cm       *content_moderation_setting.Snapshot
+	version  int64
 	snapshot *Snapshot
 }
 
@@ -200,6 +208,9 @@ var (
 	// saved is the saved table, or nil when none is saved.
 	saved   atomic.Pointer[Snapshot]
 	derived atomic.Pointer[derivedSnapshot]
+	// derivedVersion is the version of a reset table, so derived rules keep
+	// counting up and an editor holding an older version cannot overwrite.
+	derivedVersion atomic.Int64
 )
 
 // Current returns the active snapshot: the saved table, or the rules derived
@@ -208,12 +219,13 @@ func Current() *Snapshot {
 	if snapshot := saved.Load(); snapshot != nil {
 		return snapshot
 	}
-	pa, cm := prompt_audit_setting.Current(), content_moderation_setting.Current()
-	if cached := derived.Load(); cached != nil && cached.pa == pa && cached.cm == cm {
+	pa, cm, version := prompt_audit_setting.Current(), content_moderation_setting.Current(), derivedVersion.Load()
+	if cached := derived.Load(); cached != nil && cached.pa == pa && cached.cm == cm && cached.version == version {
 		return cached.snapshot
 	}
 	snapshot := &Snapshot{Config: Derive(pa.Config, pa.Degraded, cm.Config)}
-	derived.Store(&derivedSnapshot{pa: pa, cm: cm, snapshot: snapshot})
+	snapshot.Config.ConfigVersion = version
+	derived.Store(&derivedSnapshot{pa: pa, cm: cm, version: version, snapshot: snapshot})
 	return snapshot
 }
 
@@ -229,9 +241,15 @@ func ApplyOption(key, value string) {
 	}
 	if strings.TrimSpace(value) == "" {
 		saved.Store(nil)
+		derivedVersion.Store(0)
 		return
 	}
 	config, err := ParseConfig(value)
+	if err == nil && config.Derived {
+		saved.Store(nil)
+		derivedVersion.Store(config.ConfigVersion)
+		return
+	}
 	if err == nil {
 		saved.Store(&Snapshot{Config: config, Saved: true})
 		return
@@ -275,7 +293,7 @@ func ParseDegraded(value string) (Config, []string) {
 		if kept.ID == "" || len(kept.ID) > MaxRuleIDLength || slices.Contains(ids, kept.ID) {
 			kept.ID = "invalid-" + strconv.Itoa(index+1)
 		}
-		if len(kept.Name) > MaxRuleNameLength {
+		if utf8.RuneCountInString(kept.Name) > MaxRuleNameLength {
 			kept.Name = ""
 		}
 		if err := kept.normalize(false); err != nil {
@@ -368,6 +386,9 @@ func ParseConfig(value string) (Config, error) {
 	if err := common.UnmarshalJsonStr(value, &config); err != nil {
 		return Config{}, err
 	}
+	if config.Derived {
+		return Config{Derived: true, ConfigVersion: config.ConfigVersion}, nil
+	}
 	if err := config.Normalize(); err != nil {
 		return Config{}, err
 	}
@@ -377,6 +398,9 @@ func ParseConfig(value string) (Config, error) {
 var (
 	ErrTooManyRules     = common.NewMessage("An audit policy holds at most 200 rules")
 	ErrInvalidRule      = common.NewMessage("Audit policy rule ids must be unique, non-empty and at most 64 characters")
+	ErrRuleNameTooLong  = common.NewMessage("Audit policy rule names are at most 128 characters")
+	ErrNoteTooLong      = common.NewMessage("Audit policy list notes are at most 255 characters")
+	ErrPolicyTooLarge   = common.NewMessage("The audit policy is too large to save; it must stay under 1 MB")
 	ErrInvalidPattern   = common.NewMessage("Audit policy group and model patterns are invalid")
 	ErrInvalidIDs       = common.NewMessage("Audit policy user and token IDs must be positive")
 	ErrInvalidList      = common.NewMessage("Audit policy list condition is invalid")
@@ -394,6 +418,7 @@ var (
 
 // Normalize trims, deduplicates and validates the table in place.
 func (c *Config) Normalize() error {
+	c.Derived = false
 	if len(c.Rules) > MaxRules {
 		return ErrTooManyRules
 	}
@@ -434,8 +459,11 @@ func normalizeEntries(entries []ListEntry) ([]ListEntry, error) {
 	normalized := make([]ListEntry, 0, len(entries))
 	for _, entry := range entries {
 		entry.Note = strings.TrimSpace(entry.Note)
-		if entry.UserID <= 0 || entry.TokenID < 0 || len(entry.Note) > MaxNoteLength {
+		if entry.UserID <= 0 || entry.TokenID < 0 {
 			return nil, ErrInvalidListEntry
+		}
+		if utf8.RuneCountInString(entry.Note) > MaxNoteLength {
+			return nil, ErrNoteTooLong
 		}
 		if slices.ContainsFunc(normalized, func(e ListEntry) bool { return e.UserID == entry.UserID && e.TokenID == entry.TokenID }) {
 			continue
@@ -450,8 +478,11 @@ func (r *Rule) normalize(isDefault bool) error {
 	r.Degraded = false
 	r.ID = strings.TrimSpace(r.ID)
 	r.Name = strings.TrimSpace(r.Name)
-	if r.ID == "" || len(r.ID) > MaxRuleIDLength || len(r.Name) > MaxRuleNameLength {
+	if r.ID == "" || len(r.ID) > MaxRuleIDLength {
 		return ErrInvalidRule
+	}
+	if utf8.RuneCountInString(r.Name) > MaxRuleNameLength {
+		return ErrRuleNameTooLong
 	}
 	if !isDefault {
 		var err error

@@ -11,9 +11,11 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service/contentmoderation"
+	"github.com/QuantumNous/new-api/service/promptaudit"
 	"github.com/QuantumNous/new-api/setting/audit_policy_setting"
 	"github.com/QuantumNous/new-api/setting/content_moderation_setting"
 	"github.com/QuantumNous/new-api/setting/prompt_audit_setting"
@@ -453,4 +455,24 @@ func TestEvaluateReadsNoBodyWhileOff(t *testing.T) {
 	c.Request.Body = io.NopCloser(body)
 	assert.Equal(t, Result{}, Evaluate(c, info, "", ""))
 	assert.Zero(t, body.reads.Load())
+}
+
+// TestStoredActionValuesFitTheirColumns keeps every value written to the
+// varchar(16) action, decision, risk and policy action columns within 16
+// characters; a longer one would be cut on insert and never match a filter.
+func TestStoredActionValuesFitTheirColumns(t *testing.T) {
+	values := []string{
+		model.ContentModerationActionAllow, model.ContentModerationActionBlock, model.ContentModerationActionHashBlock,
+		model.ContentModerationActionKeywordBlock, model.ContentModerationActionError, model.ContentModerationActionReroute,
+		model.ContentModerationActionUnavailable,
+		promptaudit.DecisionPass, promptaudit.DecisionFlag, promptaudit.DecisionCritical,
+		promptaudit.RiskLow, promptaudit.RiskMedium, promptaudit.RiskHigh, promptaudit.RiskCritical,
+		promptaudit.ActionAllow, promptaudit.ActionWarn, promptaudit.ActionBlock,
+		promptaudit.ModeAsync, promptaudit.ModeBlocking,
+		audit_policy_setting.ActionObserve, audit_policy_setting.ActionBlock, audit_policy_setting.ActionReroute, audit_policy_setting.ActionIgnore,
+		content_moderation_setting.ModeObserve, content_moderation_setting.ModePreBlock,
+	}
+	for _, value := range values {
+		assert.LessOrEqual(t, len([]rune(value)), 16, value)
+	}
 }

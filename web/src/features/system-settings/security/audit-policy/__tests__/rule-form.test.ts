@@ -21,6 +21,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createRule,
   createRuleFormSchema,
+  editorKey,
   toRule,
   toRuleFormValues,
   type RuleFormValues,
@@ -115,5 +116,85 @@ describe('rule conversion', () => {
     expect(rule.prompt_audit.scan_scope).toBe('')
     expect(rule.prompt_audit.category_actions).toEqual({ jailbreak: 'block' })
     expect(rule.content_moderation.keyword_lists).toBeNull()
+  })
+})
+
+describe('rule form limits', () => {
+  const schema = createRuleFormSchema({ otherIds: [], isDefault: false })
+  const base = () => ({ ...toRuleFormValues(createRule([])), id: 'limits' })
+
+  it('counts a rule name in characters, as the server does', () => {
+    expect(
+      schema.safeParse({ ...base(), name: '规'.repeat(128) }).success
+    ).toBe(true)
+    expect(
+      issuePaths(schema.safeParse({ ...base(), name: '规'.repeat(129) }))
+    ).toEqual(['name'])
+  })
+
+  it('rejects more patterns, ids or a longer reroute group than the server accepts', () => {
+    const values = base()
+    const patterns = Array.from({ length: 201 }, (_, index) => `g${index}`)
+    const ids = Array.from({ length: 1001 }, (_, index) => String(index + 1))
+    expect(
+      issuePaths(
+        schema.safeParse({
+          ...values,
+          match: { ...values.match, groups: patterns },
+        })
+      )
+    ).toEqual(['match.groups'])
+    expect(
+      issuePaths(
+        schema.safeParse({
+          ...values,
+          match: { ...values.match, user_ids: ids },
+        })
+      )
+    ).toEqual(['match.user_ids'])
+    expect(
+      issuePaths(
+        schema.safeParse({
+          ...rerouteValues({ model: '', group: 'g'.repeat(65) }),
+        })
+      )
+    ).toEqual(['reroute.group'])
+  })
+
+  it('needs a keyword list when a rule sets its own keyword mode', () => {
+    const values = base()
+    const moderation = {
+      ...values.content_moderation,
+      keyword_mode: 'keyword_only',
+      override_keyword_lists: true,
+      keyword_lists: [],
+    }
+    expect(
+      issuePaths(
+        schema.safeParse({ ...values, content_moderation: moderation })
+      )
+    ).toEqual(['content_moderation.keyword_lists'])
+  })
+})
+
+describe('editor key', () => {
+  const config = (version: number, groups: string[]) => ({
+    config_version: version,
+    rules: [{ ...createRule([]), match: { ...createRule([]).match, groups } }],
+  })
+
+  it('changes with the content of derived rules, which keep their version', () => {
+    expect(editorKey({ saved: false, config: config(2, ['a']) })).not.toBe(
+      editorKey({ saved: false, config: config(2, ['b']) })
+    )
+  })
+
+  it('follows the version of a saved table', () => {
+    expect(editorKey({ saved: true, config: config(3, ['a']) })).toBe(
+      editorKey({ saved: true, config: config(3, ['b']) })
+    )
+    expect(editorKey({ saved: true, config: config(3, ['a']) })).not.toBe(
+      editorKey({ saved: true, config: config(4, ['a']) })
+    )
   })
 })

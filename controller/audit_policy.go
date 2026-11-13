@@ -113,11 +113,17 @@ func ResetAuditPolicy(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
 		return
 	}
-	if _, err := model.SaveAuditPolicy(nil, request.ExpectedConfigVersion); !respondAuditPolicySaveError(c, err) {
+	reset, err := model.SaveAuditPolicy(nil, request.ExpectedConfigVersion)
+	if !respondAuditPolicySaveError(c, err) {
 		return
 	}
-	recordManageAudit(c, "audit_policy.reset", map[string]any{"previous_config_version": request.ExpectedConfigVersion})
-	common.ApiSuccess(c, buildAuditPolicyResponse(audit_policy_setting.Current().Config, false, nil))
+	recordManageAudit(c, "audit_policy.reset", map[string]any{"config_version": reset.ConfigVersion})
+	config, _, _, err := model.AuditPolicyStoredConfig()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, buildAuditPolicyResponse(config, false, nil))
 }
 
 func respondAuditPolicySaveError(c *gin.Context, err error) bool {
@@ -136,8 +142,13 @@ type auditPolicyTestRequest struct {
 	UserID  int    `json:"user_id"`
 	TokenID int    `json:"token_id"`
 	Group   string `json:"group"`
-	Model   string `json:"model"`
-	Format  string `json:"format"`
+	// RequestedGroup is the token's own group, such as "auto", when Group is
+	// the group the distributor chose for it.
+	RequestedGroup string `json:"requested_group"`
+	Model          string `json:"model"`
+	Format         string `json:"format"`
+	// Config, when set, is a draft table tested instead of the rules in use.
+	Config *audit_policy_setting.Config `json:"config"`
 }
 
 // TestAuditPolicy shows which rule a request would match and what each
@@ -150,7 +161,15 @@ func TestAuditPolicy(c *gin.Context) {
 	}
 	subject := audit_policy_setting.Subject{
 		UserID: request.UserID, TokenID: request.TokenID, Group: strings.TrimSpace(request.Group),
-		Model: strings.TrimSpace(request.Model), Format: strings.TrimSpace(request.Format),
+		RequestedGroup: strings.TrimSpace(request.RequestedGroup), Model: strings.TrimSpace(request.Model), Format: strings.TrimSpace(request.Format),
 	}
-	common.ApiSuccess(c, auditpolicy.Explain(subject))
+	if request.Config == nil {
+		common.ApiSuccess(c, auditpolicy.Explain(subject))
+		return
+	}
+	if err := request.Config.Normalize(); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		return
+	}
+	common.ApiSuccess(c, auditpolicy.ExplainDraft(*request.Config, subject))
 }
