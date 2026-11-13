@@ -543,6 +543,9 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	if channel == nil {
 		return fmt.Errorf("channel cannot be empty")
 	}
+	if channel.CostRatio != nil && !(*channel.CostRatio > 0 && *channel.CostRatio <= model.MaxChannelCostRatio) {
+		return common.NewMessage("Channel cost ratio must be greater than 0 and at most {{max}}", map[string]any{"max": model.MaxChannelCostRatio})
+	}
 
 	// 校验 channel settings
 	if err := channel.ValidateSettings(); err != nil {

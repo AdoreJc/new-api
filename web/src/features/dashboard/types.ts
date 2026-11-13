@@ -274,3 +274,44 @@ export interface FAQItem {
   question: string
   answer: string
 }
+
+// ============================================================================
+// Cost accounting (admin only)
+// ============================================================================
+
+export type CostDimension = 'group' | 'channel' | 'model' | 'user'
+
+export interface CostSummaryRow {
+  use_group?: string
+  channel_id?: number
+  channel_name?: string
+  model_name?: string
+  user_id?: number
+  username?: string
+  count: number
+  quota: number
+  standard_quota: number
+  cost_quota: number
+  pending_rows: number
+}
+
+export interface CostSummary {
+  total: CostSummaryRow
+  rows: CostSummaryRow[]
+  accounting_start_time: number
+  pending_backfill_count: number
+}
+
+export interface CostBackfillTask {
+  task_id: string
+  status: 'pending' | 'running' | 'succeeded' | 'failed'
+  state?: { processed?: number; total?: number; progress?: number } | null
+  error?: string
+  updated_at?: number
+}
+
+export interface CostBackfillStatus {
+  pending_logs: number
+  pending_quota_data: number
+  task: CostBackfillTask | null
+}

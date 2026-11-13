@@ -131,6 +131,9 @@ var channelNonSensitiveFields = map[string]struct{}{
 	"other_info":          {},
 	"tag":                 {},
 	"remark":              {},
-	"channel_info":        {},
-	"multi_key_mode":      {},
+	// cost_ratio only feeds admin cost accounting; it never changes routing,
+	// credentials or what users are charged.
+	"cost_ratio":     {},
+	"channel_info":   {},
+	"multi_key_mode": {},
 }

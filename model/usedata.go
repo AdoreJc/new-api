@@ -25,6 +25,10 @@ type QuotaData struct {
 	Quota               int    `json:"quota" gorm:"default:0"`
 	CacheReadTokens     int64  `json:"cache_read_tokens" gorm:"default:0"`
 	CacheCreationTokens int64  `json:"cache_creation_tokens" gorm:"default:0"`
+	// Admin-only cost accounting sums; NULL until backfilled for rows created
+	// before cost accounting. User endpoints never select them.
+	StandardQuota *int `json:"standard_quota,omitempty"`
+	CostQuota     *int `json:"cost_quota,omitempty"`
 }
 
 type QuotaDataLogParams struct {
@@ -40,6 +44,8 @@ type QuotaDataLogParams struct {
 	TokenID             int
 	ChannelID           int
 	NodeName            string
+	StandardQuota       int
+	CostQuota           int
 }
 
 func UpdateQuotaData() {
@@ -76,6 +82,8 @@ func logQuotaDataCache(quotaData *QuotaData) {
 		cachedQuotaData.TokenUsed += tokenUsed
 		cachedQuotaData.CacheReadTokens += quotaData.CacheReadTokens
 		cachedQuotaData.CacheCreationTokens += quotaData.CacheCreationTokens
+		*cachedQuotaData.StandardQuota += *quotaData.StandardQuota
+		*cachedQuotaData.CostQuota += *quotaData.CostQuota
 		quotaData = cachedQuotaData
 	}
 	CacheQuotaData[key] = quotaData
@@ -98,6 +106,8 @@ func LogQuotaData(params QuotaDataLogParams) {
 		TokenUsed:           params.TokenUsed,
 		CacheReadTokens:     max(0, params.CacheReadTokens),
 		CacheCreationTokens: max(0, params.CacheCreationTokens),
+		StandardQuota:       new(max(0, params.StandardQuota)),
+		CostQuota:           new(max(0, params.CostQuota)),
 	}
 
 	CacheQuotaDataLock.Lock()
@@ -142,6 +152,10 @@ func increaseQuotaData(quotaData *QuotaData) {
 			"token_used":            gorm.Expr("token_used + ?", quotaData.TokenUsed),
 			"cache_read_tokens":     gorm.Expr("cache_read_tokens + ?", quotaData.CacheReadTokens),
 			"cache_creation_tokens": gorm.Expr("cache_creation_tokens + ?", quotaData.CacheCreationTokens),
+			// NULL + n stays NULL: rows from before cost accounting keep waiting
+			// for the backfill, which derives them from the full quota.
+			"standard_quota": gorm.Expr("standard_quota + ?", *quotaData.StandardQuota),
+			"cost_quota":     gorm.Expr("cost_quota + ?", *quotaData.CostQuota),
 		}).Error
 	if err != nil {
 		common.SysLog(common.LogText("increaseQuotaData error: %s", err))

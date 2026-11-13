@@ -19,6 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 
 import type {
+  CostBackfillStatus,
+  CostBackfillTask,
+  CostDimension,
+  CostSummary,
   FlowQuotaDataItem,
   QuotaDataItem,
   UptimeGroupResult,
@@ -81,6 +85,42 @@ export async function getFlowQuotaDates(
     data?: FlowQuotaDataItem[]
     message?: string
   }>(endpoint, { params })
+  return res.data
+}
+
+// ----------------------------------------------------------------------------
+// Cost accounting (admin only)
+// ----------------------------------------------------------------------------
+
+export async function getCostSummary(params: {
+  start_timestamp: number
+  end_timestamp: number
+  username?: string
+  dimension: CostDimension
+}) {
+  const res = await api.get<{
+    success: boolean
+    data?: CostSummary
+    message?: string
+  }>('/api/data/cost', { params })
+  return res.data
+}
+
+export async function getCostBackfillStatus() {
+  const res = await api.get<{
+    success: boolean
+    data?: CostBackfillStatus
+    message?: string
+  }>('/api/data/cost/backfill')
+  return res.data
+}
+
+export async function startCostBackfill() {
+  const res = await api.post<{
+    success: boolean
+    data?: CostBackfillTask
+    message?: string
+  }>('/api/data/cost/backfill')
   return res.data
 }
 

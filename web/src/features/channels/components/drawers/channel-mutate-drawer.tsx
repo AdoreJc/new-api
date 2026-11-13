@@ -41,6 +41,7 @@ import {
   Settings,
   SlidersHorizontal,
   Wand2,
+  Wallet,
 } from 'lucide-react'
 import {
   type ComponentProps,
@@ -2241,6 +2242,47 @@ export function ChannelMutateDrawer({
         </FormItem>
       )}
     />
+  )
+
+  const costFields = (
+    <div
+      role='group'
+      aria-label={t('Cost accounting')}
+      className='flex flex-col gap-4'
+    >
+      <SubHeading
+        title={t('Cost accounting')}
+        icon={<Wallet className='h-3.5 w-3.5' />}
+        iconTone='info'
+      />
+      <FormField
+        control={form.control}
+        name='cost_ratio'
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>{t('Channel cost ratio')}</FormLabel>
+            <FormControl>
+              <Input
+                type='number'
+                inputMode='decimal'
+                min={0}
+                max={10}
+                step='0.01'
+                placeholder='1'
+                {...field}
+                onChange={(e) => field.onChange(Number(e.target.value))}
+              />
+            </FormControl>
+            <FormDescription>
+              {t(
+                'What this channel costs relative to the list price. Channel cost = list price x this ratio. Changes apply to new requests only.'
+              )}
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+    </div>
   )
 
   const routingFields = (
@@ -4875,6 +4917,7 @@ export function ChannelMutateDrawer({
           <>
             {redirectPanelActive ? redirectPanelNotice : modelMappingFields}
             {routingFields}
+            {costFields}
           </>
         }
         request={

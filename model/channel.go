@@ -56,8 +56,28 @@ type Channel struct {
 
 	OtherSettings string `json:"settings" gorm:"column:settings"` // 其他设置，存储azure版本等不需要检索的信息，详见dto.ChannelOtherSettings
 
+	// CostRatio is what this channel costs relative to the list price
+	// (standard_quota). Consume logs snapshot it into cost_quota; nil or
+	// out-of-range values count as 1.
+	CostRatio *float64 `json:"cost_ratio" gorm:"default:1"`
+
 	// cache info
 	Keys []string `json:"-" gorm:"-"`
+}
+
+// MaxChannelCostRatio bounds the administrator-entered channel cost ratio.
+const MaxChannelCostRatio = 10.0
+
+// GetCostRatio returns the channel cost ratio used for cost accounting.
+func (channel *Channel) GetCostRatio() float64 {
+	if channel == nil || channel.CostRatio == nil {
+		return 1
+	}
+	ratio := *channel.CostRatio
+	if !(ratio > 0 && ratio <= MaxChannelCostRatio) {
+		return 1
+	}
+	return ratio
 }
 
 const ChannelStatusReasonAllKeysDisabled = "All keys are disabled"

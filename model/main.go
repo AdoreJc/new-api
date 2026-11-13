@@ -384,6 +384,9 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	if err := EnsureCostAccountingStartTime(); err != nil {
+		return err
+	}
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err
 	}
@@ -419,6 +422,11 @@ func migrateClickHouseLogDB() error {
 	ttlDays := clickHouseLogTTLDays()
 	if err := LOG_DB.Exec(clickHouseLogCreateTableSQL(ttlDays)).Error; err != nil {
 		return err
+	}
+	for _, column := range []string{"standard_quota", "cost_quota"} {
+		if err := LOG_DB.Exec("ALTER TABLE logs ADD COLUMN IF NOT EXISTS " + column + " Nullable(Int32)").Error; err != nil {
+			return err
+		}
 	}
 	return syncClickHouseLogTTL(ttlDays)
 }
@@ -468,7 +476,9 @@ CREATE TABLE IF NOT EXISTS logs (
 	ip String DEFAULT '',
 	request_id String DEFAULT '',
 	upstream_request_id String DEFAULT '',
-	other String DEFAULT ''
+	other String DEFAULT '',
+	standard_quota Nullable(Int32),
+	cost_quota Nullable(Int32)
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(toDateTime(created_at))

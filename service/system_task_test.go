@@ -232,3 +232,33 @@ func TestEnqueueSystemTaskReportsCreatedAndExistingActive(t *testing.T) {
 	require.NotNil(t, second)
 	assert.NotEqual(t, first.TaskID, second.TaskID)
 }
+
+// The cost backfill stops when its context ends and a later run finishes the
+// rows that are still missing, leaving charged quota untouched.
+func TestCostBackfillResumesAfterInterruption(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.QuotaData{}))
+	t.Cleanup(func() { model.DB.Exec("DELETE FROM quota_data") })
+	for i := range 3 {
+		log := model.Log{UserId: 1, Type: model.LogTypeConsume, CreatedAt: int64(3600 + i), ModelName: "m", Quota: 200, Other: `{"group_ratio":2}`}
+		require.NoError(t, model.DB.Omit("standard_quota", "cost_quota").Create(&log).Error)
+	}
+	row := model.QuotaData{UserID: 1, Username: "u", ModelName: "m", CreatedAt: 3600, Count: 3, Quota: 600}
+	require.NoError(t, model.DB.Omit("standard_quota", "cost_quota").Create(&row).Error)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, runCostBackfill(ctx, func(int, int) {}), context.Canceled)
+
+	var reported []int
+	require.NoError(t, runCostBackfill(context.Background(), func(processed, total int) {
+		reported = append(reported, processed*100/max(total, 1))
+	}))
+	assert.Equal(t, 100, reported[len(reported)-1])
+	require.NoError(t, model.DB.First(&row, row.Id).Error)
+	assert.Equal(t, 600, row.Quota)
+	assert.Equal(t, 300, *row.StandardQuota)
+	pendingLogs, pendingData, err := model.CountCostBackfillPending(context.Background())
+	require.NoError(t, err)
+	assert.Zero(t, pendingLogs+pendingData)
+}
