@@ -283,9 +283,13 @@ func TestPromptAuditRegexSearch(t *testing.T) {
 		require.NoError(t, err)
 		assert.JSONEq(t, value, string(encoded), key)
 	}
-	encoded, err := common.Marshal(logs)
-	require.NoError(t, err)
-	assert.NotContains(t, string(encoded), "9876", "matched prompt text is never logged")
+	// Only what the handler wrote is checked; generated ids are random and
+	// may contain the same digits.
+	for _, entry := range logs {
+		encoded, err := common.Marshal([]any{entry.Content, entry.Other})
+		require.NoError(t, err)
+		assert.NotContains(t, string(encoded), "9876", "matched prompt text is never logged")
+	}
 
 	_, body = searchPromptAudit(t, identity, url.Values{"keyword": {"SECRET"}, "keyword_fields": {"full_prompt,username"}})
 	assert.Equal(t, []string{"erin", "carol", "bob"}, promptAuditSearchUsers(body), "plain full_prompt search scans as a literal")
