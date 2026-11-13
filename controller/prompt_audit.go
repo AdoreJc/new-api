@@ -112,6 +112,7 @@ func UpdatePromptAuditConfig(c *gin.Context) {
 		"groups": strings.Join(saved.Groups, ","), "endpoints": len(saved.Endpoints),
 		"store_full_prompt": saved.StoreFullPrompt, "retention_days": saved.RetentionDays,
 		"scan_scope": saved.ScanScope, "strict_jailbreak_mapping": saved.StrictJailbreakMapping,
+		"mode": saved.Mode, "fail_policy": saved.FailPolicy, "store_pass_events": saved.StorePassEvents,
 		"config_version": saved.ConfigVersion, "token_changes": strings.Join(tokenChanges, ","),
 	})
 	common.ApiSuccess(c, buildPromptAuditConfigResponse(saved, tokens))

@@ -1,25 +1,33 @@
-// Package promptaudit records Guard-model findings for relay prompts.
+// Package promptaudit checks relay prompts with a Qwen3Guard model.
 //
-// Phase one only records: EnqueueRelay copies the request body into a bounded
-// in-memory queue and returns. Background workers extract the text, scan it
-// with Qwen3Guard, and store flagged results. The queue lives only in memory,
-// so pending items are lost on restart, and a full queue drops new items.
+// Which requests are checked, and what a finding does, is decided by the
+// audit policy rules (setting/audit_policy_setting) through the coordinator
+// in service/auditpolicy. Two paths exist:
+//
+//   - Enqueue copies the request body into a bounded in-memory queue and
+//     returns; background workers scan it and store the result. The queue
+//     lives only in memory, so pending items are lost on restart, and a full
+//     queue drops new items.
+//   - Check scans the request on the request path, before billing, and
+//     returns the verdict. Calls in flight are bounded globally and per Guard
+//     endpoint; a full bulkhead, a timeout or a broken answer is reported as
+//     unavailable and the caller applies the rule's failure policy.
 package promptaudit
 
 import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
-	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/audit_policy_setting"
 	"github.com/QuantumNous/new-api/setting/prompt_audit_setting"
 
 	"github.com/gin-gonic/gin"
@@ -36,6 +44,10 @@ const (
 	writeBufferSize    = 512
 	cleanupInterval    = time.Hour
 	cleanupEvery       = 24 * time.Hour
+
+	// Event modes.
+	ModeAsync    = prompt_audit_setting.ModeAsync
+	ModeBlocking = prompt_audit_setting.ModeBlocking
 )
 
 // Metrics are process-local counters reset on restart.
@@ -64,6 +76,68 @@ type Metrics struct {
 	// chunksOverBudget counts chunks left unscanned by the per-request limit.
 	chunksCached     atomic.Int64
 	chunksOverBudget atomic.Int64
+	// bulkheadFull counts synchronous calls refused by a full bulkhead,
+	// globally or at one endpoint.
+	bulkheadFull atomic.Int64
+	// Synchronous checks and their outcomes.
+	syncChecks      atomic.Int64
+	syncUnavailable atomic.Int64
+	scanLatency     latencyWindow
+	syncLatency     latencyWindow
+}
+
+// latencyWindow keeps the latest samples for percentile estimates.
+type latencyWindow struct {
+	mu      sync.Mutex
+	samples [1024]int64
+	next    int
+	count   int
+}
+
+func (w *latencyWindow) add(ms int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.samples[w.next] = ms
+	w.next = (w.next + 1) % len(w.samples)
+	w.count = min(w.count+1, len(w.samples))
+}
+
+// percentiles returns p50, p95 and p99 of the kept samples.
+func (w *latencyWindow) percentiles() (int64, int64, int64) {
+	w.mu.Lock()
+	sorted := slices.Clone(w.samples[:w.count])
+	w.mu.Unlock()
+	if len(sorted) == 0 {
+		return 0, 0, 0
+	}
+	slices.Sort(sorted)
+	at := func(p int) int64 { return sorted[min(len(sorted)-1, len(sorted)*p/100)] }
+	return at(50), at(95), at(99)
+}
+
+// Meta describes a relay request for its audit event.
+type Meta struct {
+	RequestID   string
+	UserID      int
+	Username    string
+	UserEmail   string
+	TokenID     int
+	TokenName   string
+	Group       string
+	ChannelID   int
+	RelayFormat string
+	Endpoint    string
+	Model       string
+	Protocol    string
+}
+
+func (m Meta) event(mode string) model.PromptAuditEvent {
+	endpoint, _, _ := strings.Cut(m.Endpoint, "?")
+	return model.PromptAuditEvent{
+		RequestId: m.RequestID, UserId: m.UserID, Username: m.Username, TokenId: m.TokenID,
+		TokenName: m.TokenName, UsingGroup: m.Group, ChannelId: m.ChannelID, RelayFormat: m.RelayFormat,
+		Endpoint: endpoint, ModelName: m.Model, Mode: mode,
+	}
 }
 
 type job struct {
@@ -71,8 +145,14 @@ type job struct {
 	size       int64
 	body       []byte
 	event      model.PromptAuditEvent
+	email      string
+	rule       audit_policy_setting.PromptAudit
 	enqueuedAt time.Time
 }
+
+// DisposalHook receives triggered findings of rules that count toward
+// disposal. It is set by the policy coordinator.
+type DisposalHook func(event *model.PromptAuditEvent, email string)
 
 // Service owns the queue, workers and event writer.
 type Service struct {
@@ -81,16 +161,21 @@ type Service struct {
 	queuedBytes atomic.Int64
 	active      atomic.Int64
 	workerSlots atomic.Pointer[chan struct{}]
-	writes      chan *model.PromptAuditEvent
-	guard       guardClient
-	metrics     Metrics
-	startOnce   sync.Once
+	// syncSlots bound synchronous checks in flight across all endpoints.
+	syncSlots chan struct{}
+	writes    chan *model.PromptAuditEvent
+	guard     guardClient
+	metrics   Metrics
+	startOnce sync.Once
+	// lastCleanup is the unix time of the last retention cleanup.
 	lastCleanup atomic.Int64
+	disposal    atomic.Pointer[DisposalHook]
 	// lastFailureLog and suppressedFailures throttle scan failure logging so an
 	// unreachable Guard does not flood the log.
 	lastFailureLog     atomic.Int64
 	suppressedFailures atomic.Int64
-	// retryDelays are the waits before each retry of a retryable Guard failure.
+	// retryDelays are the waits before each retry of a retryable Guard failure
+	// in the background; synchronous checks never wait to retry.
 	retryDelays []time.Duration
 	now         func() time.Time
 }
@@ -98,6 +183,7 @@ type Service struct {
 func newService() *Service {
 	return &Service{
 		queue:       make(chan *job, prompt_audit_setting.MaxQueueCapacity),
+		syncSlots:   make(chan struct{}, prompt_audit_setting.GlobalConcurrency),
 		writes:      make(chan *model.PromptAuditEvent, writeBufferSize),
 		retryDelays: []time.Duration{200 * time.Millisecond, time.Second},
 		now:         time.Now,
@@ -120,31 +206,49 @@ func (s *Service) start(ctx context.Context) {
 	})
 }
 
-// EnqueueRelay queues the request for auditing when prompt audit is on and the
-// request is in scope. It never blocks, never fails the request, and does
-// nothing beyond one atomic load when auditing is off.
-func EnqueueRelay(c *gin.Context, info *relaycommon.RelayInfo) {
-	defaultService.enqueueRelay(c, info)
+// SetDisposalHook installs the function that counts triggered findings.
+func SetDisposalHook(hook DisposalHook) { defaultService.disposal.Store(&hook) }
+
+// RelayProtocol maps a relay format to the extraction protocol. Formats that
+// carry no free-form prompt text (embeddings, rerank, audio, realtime, search
+// and tool calls) are exempt.
+func RelayProtocol(format types.RelayFormat, path string) (string, bool) {
+	switch format {
+	case types.RelayFormatClaude:
+		return ProtocolClaude, true
+	case types.RelayFormatGemini:
+		if strings.Contains(path, "embed") {
+			return "", false
+		}
+		return ProtocolGemini, true
+	case types.RelayFormatOpenAIResponses, types.RelayFormatOpenAIResponsesCompaction:
+		return ProtocolResponses, true
+	case types.RelayFormatOpenAIImage:
+		return ProtocolImages, true
+	case types.RelayFormatOpenAI:
+		if strings.Contains(path, "/chat/completions") {
+			return ProtocolChat, true
+		}
+		return ProtocolGeneric, true
+	}
+	return "", false
 }
 
-func (s *Service) enqueueRelay(c *gin.Context, info *relaycommon.RelayInfo) {
+// Enabled reports whether the engine runs at all.
+func Enabled() bool { return prompt_audit_setting.Current().Config.Enabled }
+
+// CountSkipped counts a request the policy kept out of prompt audit.
+func CountSkipped() { defaultService.metrics.skipped.Add(1) }
+
+// Enqueue queues the request for background auditing with the rule's
+// settings. It never blocks and never fails the request.
+func Enqueue(c *gin.Context, meta Meta, ruleID string, rule audit_policy_setting.PromptAudit) {
+	defaultService.enqueue(c, meta, ruleID, rule)
+}
+
+func (s *Service) enqueue(c *gin.Context, meta Meta, ruleID string, rule audit_policy_setting.PromptAudit) {
 	snapshot := prompt_audit_setting.Current()
-	if !snapshot.Config.Enabled || info == nil {
-		return
-	}
-	protocol, audited := relayProtocol(info.RelayFormat, info.RequestURLPath)
-	group := info.UsingGroup
-	inScope := snapshot.Config.IncludesGroup(group)
-	// An "auto" token routes to a concrete group chosen by the distributor;
-	// scope rules and the event use that group, and "auto" still matches.
-	if group == "auto" {
-		if selected := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); selected != "" {
-			group = selected
-			inScope = inScope || snapshot.Config.IncludesGroup(selected)
-		}
-	}
-	if !audited || !inScope {
-		s.metrics.skipped.Add(1)
+	if !snapshot.Config.Enabled {
 		return
 	}
 	storage, err := common.GetBodyStorage(c)
@@ -182,26 +286,9 @@ func (s *Service) enqueueRelay(c *gin.Context, info *relaycommon.RelayInfo) {
 	if !storage.IsDisk() {
 		raw = bytes.Clone(raw)
 	}
-	endpoint, _, _ := strings.Cut(info.RequestURLPath, "?")
-	item := &job{
-		protocol: protocol,
-		size:     size,
-		body:     raw,
-		event: model.PromptAuditEvent{
-			RequestId:   c.GetString(common.RequestIdKey),
-			UserId:      info.UserId,
-			Username:    common.GetContextKeyString(c, constant.ContextKeyUserName),
-			TokenId:     info.TokenId,
-			TokenName:   c.GetString("token_name"),
-			UsingGroup:  group,
-			ChannelId:   common.GetContextKeyInt(c, constant.ContextKeyChannelId),
-			RelayFormat: string(info.RelayFormat),
-			Endpoint:    endpoint,
-			ModelName:   info.OriginModelName,
-			Mode:        prompt_audit_setting.ModeAsync,
-		},
-		enqueuedAt: s.now(),
-	}
+	event := meta.event(ModeAsync)
+	event.RuleId = ruleID
+	item := &job{protocol: meta.Protocol, size: size, body: raw, event: event, email: meta.UserEmail, rule: rule, enqueuedAt: s.now()}
 	select {
 	case s.queue <- item:
 		s.metrics.enqueued.Add(1)
@@ -214,31 +301,6 @@ func (s *Service) enqueueRelay(c *gin.Context, info *relaycommon.RelayInfo) {
 func (s *Service) release(item *job) {
 	s.depth.Add(-1)
 	s.queuedBytes.Add(-item.size)
-}
-
-// relayProtocol maps a relay format to the extraction protocol. Formats that
-// carry no free-form prompt text (embeddings, rerank, audio, realtime, search
-// and tool calls) are exempt in this phase.
-func relayProtocol(format types.RelayFormat, path string) (string, bool) {
-	switch format {
-	case types.RelayFormatClaude:
-		return ProtocolClaude, true
-	case types.RelayFormatGemini:
-		if strings.Contains(path, "embed") {
-			return "", false
-		}
-		return ProtocolGemini, true
-	case types.RelayFormatOpenAIResponses, types.RelayFormatOpenAIResponsesCompaction:
-		return ProtocolResponses, true
-	case types.RelayFormatOpenAIImage:
-		return ProtocolImages, true
-	case types.RelayFormatOpenAI:
-		if strings.Contains(path, "/chat/completions") {
-			return ProtocolChat, true
-		}
-		return ProtocolGeneric, true
-	}
-	return "", false
 }
 
 // slots returns the worker semaphore, resized when the configured count changes.
@@ -280,44 +342,82 @@ func (s *Service) process(ctx context.Context, item *job) {
 		s.metrics.skipped.Add(1)
 		return
 	}
-	prompt, err := extractPromptSnapshot(item.protocol, item.body, snapshot.Config.ScanScope)
-	if errors.Is(err, errAgentContextOnly) {
-		s.metrics.agentContextOnly.Add(1)
-		return
-	}
+	prompt, err := s.extract(item.protocol, item.body, snapshot, &item.rule)
 	if err != nil {
-		s.metrics.noText.Add(1)
 		return
 	}
 	s.metrics.scanned.Add(1)
 	// A failed scan can still return the findings of chunks scanned before
 	// the failure; those are recorded and marked incomplete.
-	result, err := s.guard.evaluate(ctx, snapshot, prompt.Latest, prompt.Rest, s.retryDelays, &s.metrics)
+	request := scanRequest{snapshot: snapshot, rule: &item.rule, retryDelays: s.retryDelays}
+	result, err := s.guard.evaluate(ctx, request, prompt.Latest, prompt.Rest, &s.metrics)
 	if err != nil {
-		s.metrics.failed.Add(1)
-		var guardErr *guardError
-		if errors.As(err, &guardErr) && guardErr.Timeout {
-			s.metrics.timeouts.Add(1)
-		}
-		s.logScanFailure(item.event.RequestId, err)
+		s.countFailure(item.event.RequestId, err)
 		if result == nil {
 			return
 		}
 	}
+	event := s.finish(item.event, snapshot, prompt, result)
+	if event == nil {
+		return
+	}
+	event.PolicyAction = audit_policy_setting.ActionObserve
+	if result.Decision == DecisionCritical && item.rule.ActionFor(result.Triggered) == audit_policy_setting.ActionIgnore {
+		event.PolicyAction = audit_policy_setting.ActionIgnore
+	}
+	if result.Decision == DecisionCritical && item.rule.CountDisposal && event.PolicyAction != audit_policy_setting.ActionIgnore {
+		if hook := s.disposal.Load(); hook != nil {
+			(*hook)(event, item.email)
+		}
+	}
+	s.Record(event)
+}
+
+// extract reads the text the rule's scan scope sends to the Guard and counts
+// requests without any.
+func (s *Service) extract(protocol string, body []byte, snapshot *prompt_audit_setting.Snapshot, rule *audit_policy_setting.PromptAudit) (*promptSnapshot, error) {
+	scope := rule.ScanScope
+	if scope == "" {
+		scope = snapshot.Config.ScanScope
+	}
+	prompt, err := extractPromptSnapshot(protocol, body, scope)
+	if errors.Is(err, errAgentContextOnly) {
+		s.metrics.agentContextOnly.Add(1)
+	} else if err != nil {
+		s.metrics.noText.Add(1)
+	}
+	return prompt, err
+}
+
+func (s *Service) countFailure(requestID string, err error) {
+	s.metrics.failed.Add(1)
+	var guardErr *guardError
+	if errors.As(err, &guardErr) && guardErr.Timeout || errors.Is(err, context.DeadlineExceeded) {
+		s.metrics.timeouts.Add(1)
+	}
+	s.logScanFailure(requestID, err)
+}
+
+// finish counts the verdict and builds its event. It returns nil for a pass
+// that is not stored.
+func (s *Service) finish(base model.PromptAuditEvent, snapshot *prompt_audit_setting.Snapshot, prompt *promptSnapshot, result *guardResult) *model.PromptAuditEvent {
 	s.metrics.latencyTotalMS.Add(int64(result.LatencyMS))
+	s.metrics.scanLatency.add(int64(result.LatencyMS))
 	for current := s.metrics.latencyMaxMS.Load(); int64(result.LatencyMS) > current &&
 		!s.metrics.latencyMaxMS.CompareAndSwap(current, int64(result.LatencyMS)); current = s.metrics.latencyMaxMS.Load() {
 	}
 	switch result.Decision {
 	case DecisionPass:
 		s.metrics.passed.Add(1)
-		return
+		if !snapshot.Config.StorePassEvents {
+			return nil
+		}
 	case DecisionCritical:
 		s.metrics.critical.Add(1)
 	default:
 		s.metrics.flagged.Add(1)
 	}
-	event := item.event
+	event := base
 	event.CreatedAt = s.now().Unix()
 	event.Decision, event.RiskLevel, event.Action, event.Safety = result.Decision, result.RiskLevel, result.Action, result.Safety
 	event.Categories = encodeList(result.Categories)
@@ -330,18 +430,137 @@ func (s *Service) process(ctx context.Context, item *job) {
 	event.HitChunks = encodeHits(result.Hits)
 	event.PromptHash, event.RedactedPreview = prompt.Hash, prompt.Preview
 	event.PromptLength, event.MessageCount = prompt.Length, prompt.MessageCount
-	if snapshot.Config.StoreFullPrompt {
+	if snapshot.Config.StoreFullPrompt && result.Decision != DecisionPass {
 		event.FullPrompt = model.LongText(prompt.FullPrompt)
 	}
+	return &event
+}
+
+// Record queues an event for storage.
+func Record(event *model.PromptAuditEvent) { defaultService.Record(event) }
+
+func (s *Service) Record(event *model.PromptAuditEvent) {
+	if event == nil {
+		return
+	}
 	select {
-	case s.writes <- &event:
+	case s.writes <- event:
 	default:
 		s.metrics.recordFailed.Add(1)
 	}
 }
 
+// Outcome is the result of a synchronous check.
+type Outcome int
+
+const (
+	// OutcomeSkipped: nothing was checked (engine off, no text, too large).
+	OutcomeSkipped Outcome = iota
+	OutcomePass
+	// OutcomeFlag is a finding below the rule's trigger level.
+	OutcomeFlag
+	// OutcomeTriggered is a finding at or above the trigger level.
+	OutcomeTriggered
+	// OutcomeUnavailable: the Guard could not answer in time or correctly, a
+	// bulkhead was full, or the stored settings could not be read.
+	OutcomeUnavailable
+)
+
+// Verdict is a synchronous check's answer. Event, when set, is not stored
+// yet: the caller sets the policy action and passes it to Record.
+type Verdict struct {
+	Outcome   Outcome
+	Triggered []string
+	Event     *model.PromptAuditEvent
+	LatencyMS int64
+}
+
+// Check scans the request synchronously with the rule's settings.
+func Check(ctx context.Context, c *gin.Context, meta Meta, ruleID string, rule audit_policy_setting.PromptAudit) Verdict {
+	return defaultService.check(ctx, c, meta, ruleID, rule)
+}
+
+func (s *Service) check(ctx context.Context, c *gin.Context, meta Meta, ruleID string, rule audit_policy_setting.PromptAudit) Verdict {
+	snapshot := prompt_audit_setting.Current()
+	started := s.now()
+	verdict := s.checkSnapshot(ctx, c, meta, ruleID, &rule, snapshot)
+	if verdict.Outcome != OutcomeSkipped {
+		verdict.LatencyMS = s.now().Sub(started).Milliseconds()
+		s.metrics.syncChecks.Add(1)
+		s.metrics.syncLatency.add(verdict.LatencyMS)
+	}
+	if verdict.Outcome == OutcomeUnavailable {
+		s.metrics.syncUnavailable.Add(1)
+	}
+	return verdict
+}
+
+func (s *Service) checkSnapshot(ctx context.Context, c *gin.Context, meta Meta, ruleID string, rule *audit_policy_setting.PromptAudit, snapshot *prompt_audit_setting.Snapshot) Verdict {
+	if snapshot.Degraded {
+		return Verdict{Outcome: OutcomeUnavailable}
+	}
+	if !snapshot.Config.Enabled {
+		s.metrics.skipped.Add(1)
+		return Verdict{Outcome: OutcomeSkipped}
+	}
+	endpoints := snapshot.Config.EnabledEndpoints()
+	if len(endpoints) == 0 {
+		return Verdict{Outcome: OutcomeUnavailable}
+	}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		s.metrics.skipped.Add(1)
+		return Verdict{Outcome: OutcomeSkipped}
+	}
+	if storage.Size() > maxBodyBytes {
+		s.metrics.tooLarge.Add(1)
+		return Verdict{Outcome: OutcomeSkipped}
+	}
+	body, err := storage.Bytes()
+	if err != nil {
+		s.metrics.skipped.Add(1)
+		return Verdict{Outcome: OutcomeSkipped}
+	}
+	prompt, err := s.extract(meta.Protocol, body, snapshot, rule)
+	if err != nil {
+		return Verdict{Outcome: OutcomeSkipped}
+	}
+	select {
+	case s.syncSlots <- struct{}{}:
+		defer func() { <-s.syncSlots }()
+	default:
+		s.metrics.bulkheadFull.Add(1)
+		return Verdict{Outcome: OutcomeUnavailable}
+	}
+	s.metrics.scanned.Add(1)
+	// The first endpoint's timeout bounds the whole check, failover included.
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(endpoints[0].TimeoutMS)*time.Millisecond)
+	defer cancel()
+	result, err := s.guard.evaluate(ctx, scanRequest{snapshot: snapshot, rule: rule, synchronous: true}, prompt.Latest, prompt.Rest, &s.metrics)
+	if err != nil {
+		s.countFailure(meta.RequestID, err)
+		// A critical finding before the failure still decides; anything less
+		// cannot vouch for the unscanned rest.
+		if result == nil || result.Decision != DecisionCritical {
+			return Verdict{Outcome: OutcomeUnavailable}
+		}
+	}
+	base := meta.event(ModeBlocking)
+	base.RuleId = ruleID
+	verdict := Verdict{Event: s.finish(base, snapshot, prompt, result), Triggered: result.Triggered}
+	switch result.Decision {
+	case DecisionPass:
+		verdict.Outcome = OutcomePass
+	case DecisionCritical:
+		verdict.Outcome = OutcomeTriggered
+	default:
+		verdict.Outcome = OutcomeFlag
+	}
+	return verdict
+}
+
 // logScanFailure logs at most one scan failure per minute and reports how
-// many were suppressed in between.
+// many were suppressed in between. The message never contains prompt text.
 func (s *Service) logScanFailure(requestID string, err error) {
 	now := s.now().Unix()
 	last := s.lastFailureLog.Load()
@@ -375,8 +594,8 @@ func encodeHits(hits []chunkHit) string {
 	return string(encoded)
 }
 
-// writer stores flagged events in small batches so SQLite takes its write
-// lock once per batch instead of once per event.
+// writer stores events in small batches so SQLite takes its write lock once
+// per batch instead of once per event.
 func (s *Service) writer(ctx context.Context) {
 	ticker := time.NewTicker(writeFlushInterval)
 	defer ticker.Stop()
@@ -428,8 +647,8 @@ func (s *Service) cleanupLoop(ctx context.Context) {
 	}
 }
 
-// cleanup deletes events older than the retention period. It also runs while
-// auditing is off so stored prompts still expire.
+// cleanup deletes events older than the retention period in batches. It also
+// runs while auditing is off so stored prompts still expire.
 func (s *Service) cleanup() (int64, error) {
 	days := prompt_audit_setting.Current().Config.RetentionDays
 	return model.CleanupPromptAuditEvents(s.now().Add(-time.Duration(days) * 24 * time.Hour).Unix())
@@ -439,6 +658,8 @@ func (s *Service) cleanup() (int64, error) {
 type RuntimeStatus struct {
 	Enabled          bool   `json:"enabled"`
 	Mode             string `json:"mode"`
+	Degraded         bool   `json:"degraded"`
+	FailPolicy       string `json:"fail_policy"`
 	ConfigVersion    int64  `json:"config_version"`
 	WorkerCount      int    `json:"worker_count"`
 	ActiveWorkers    int64  `json:"active_workers"`
@@ -461,35 +682,52 @@ type RuntimeStatus struct {
 	Timeouts         int64  `json:"timeouts"`
 	Failovers        int64  `json:"failovers"`
 	Retries          int64  `json:"retries"`
+	BulkheadFull     int64  `json:"bulkhead_full"`
 	Recorded         int64  `json:"recorded"`
 	RecordFailed     int64  `json:"record_failed"`
 	ChunksCached     int64  `json:"chunks_cached"`
 	ChunksOverBudget int64  `json:"chunks_over_budget"`
 	LatencyAvgMS     int64  `json:"latency_avg_ms"`
 	LatencyMaxMS     int64  `json:"latency_max_ms"`
+	LatencyP50MS     int64  `json:"latency_p50_ms"`
+	LatencyP95MS     int64  `json:"latency_p95_ms"`
+	LatencyP99MS     int64  `json:"latency_p99_ms"`
+	// Sync* describe checks on the request path; their latency is the extra
+	// time those requests waited.
+	SyncChecks      int64 `json:"sync_checks"`
+	SyncUnavailable int64 `json:"sync_unavailable"`
+	SyncInFlight    int   `json:"sync_in_flight"`
+	SyncConcurrency int   `json:"sync_concurrency"`
+	SyncP50MS       int64 `json:"sync_p50_ms"`
+	SyncP95MS       int64 `json:"sync_p95_ms"`
+	SyncP99MS       int64 `json:"sync_p99_ms"`
 }
 
 func Runtime() RuntimeStatus { return defaultService.runtime() }
 
 func (s *Service) runtime() RuntimeStatus {
-	config := prompt_audit_setting.Current().Config
+	snapshot := prompt_audit_setting.Current()
+	config := snapshot.Config
 	m := &s.metrics
 	status := RuntimeStatus{
-		Enabled: config.Enabled, Mode: config.Mode, ConfigVersion: config.ConfigVersion,
-		WorkerCount: config.WorkerCount, ActiveWorkers: s.active.Load(),
+		Enabled: config.Enabled, Mode: config.Mode, Degraded: snapshot.Degraded, FailPolicy: config.FailPolicy,
+		ConfigVersion: config.ConfigVersion, WorkerCount: config.WorkerCount, ActiveWorkers: s.active.Load(),
 		QueueDepth: s.depth.Load(), QueueCapacity: config.QueueCapacity,
 		QueuedBytes: s.queuedBytes.Load(), QueuedBytesLimit: maxQueuedBytes, QueueInMemory: true,
 		Enqueued: m.enqueued.Load(), Dropped: m.dropped.Load(), Skipped: m.skipped.Load(),
 		SkippedTooLarge: m.tooLarge.Load(), SkippedNoText: m.noText.Load(), SkippedAgentOnly: m.agentContextOnly.Load(), Scanned: m.scanned.Load(),
 		Passed: m.passed.Load(), Flagged: m.flagged.Load(), Critical: m.critical.Load(),
 		Failed: m.failed.Load(), Timeouts: m.timeouts.Load(), Failovers: m.failovers.Load(),
-		Retries: m.retries.Load(), Recorded: m.recorded.Load(), RecordFailed: m.recordFailed.Load(),
+		Retries: m.retries.Load(), BulkheadFull: m.bulkheadFull.Load(), Recorded: m.recorded.Load(), RecordFailed: m.recordFailed.Load(),
 		ChunksCached: m.chunksCached.Load(), ChunksOverBudget: m.chunksOverBudget.Load(),
-		LatencyMaxMS: m.latencyMaxMS.Load(),
+		LatencyMaxMS: m.latencyMaxMS.Load(), SyncChecks: m.syncChecks.Load(), SyncUnavailable: m.syncUnavailable.Load(),
+		SyncInFlight: len(s.syncSlots), SyncConcurrency: cap(s.syncSlots),
 	}
 	if completed := status.Passed + status.Flagged + status.Critical; completed > 0 {
 		status.LatencyAvgMS = m.latencyTotalMS.Load() / completed
 	}
+	status.LatencyP50MS, status.LatencyP95MS, status.LatencyP99MS = m.scanLatency.percentiles()
+	status.SyncP50MS, status.SyncP95MS, status.SyncP99MS = m.syncLatency.percentiles()
 	return status
 }
 
@@ -507,7 +745,8 @@ func Probe(ctx context.Context, endpoint prompt_audit_setting.Endpoint, token st
 	// A throwaway client: probing arbitrary addresses must not grow the cache.
 	client := newHTTPClient(endpoint)
 	defer client.CloseIdleConnections()
-	result, err := scanWith(ctx, client, endpoint, token, "Hello", prompt_audit_setting.ScannerIDs, false)
+	rule := audit_policy_setting.PromptAudit{MinLevel: audit_policy_setting.LevelUnsafe}
+	result, err := scanWith(ctx, client, endpoint, token, "Hello", &rule)
 	probe := ProbeResult{LatencyMS: time.Since(started).Milliseconds()}
 	if err != nil {
 		probe.Error = err.Error()

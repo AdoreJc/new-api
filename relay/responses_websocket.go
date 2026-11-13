@@ -3,6 +3,8 @@ package relay
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +29,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/auditpolicy"
 
 	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
@@ -272,6 +275,18 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 	common.SetContextKey(c, appconstant.ContextKeyOriginalModel, modelName)
 	common.SetContextKey(c, appconstant.ContextKeyRequestStartTime, time.Now())
 	service.GetChannelConstraints(c).AddFilter(appdto.ChannelFilter{Kind: appdto.FilterRequestPath, RequestPath: c.Request.URL.Path})
+
+	// Every turn is audited before billing, keyed by its body so the same
+	// turn is never checked twice. The connection is pinned to one model and
+	// channel, so a reroute cannot apply here and the turn is refused.
+	turnDigest := sha256.Sum256(create.Body)
+	audit := auditpolicy.Evaluate(c, relaycommon.GenRelayInfoResponses(c, &create.Request), auditpolicy.FormatResponsesWebSocket, hex.EncodeToString(turnDigest[:]))
+	if audit.Err != nil {
+		return audit.Err
+	}
+	if audit.Reroute != nil {
+		return auditpolicy.RerouteUnsupportedError(c, audit.Reroute)
+	}
 
 	if s.lockedChannelID != 0 {
 		if apiErr = s.restoreConnectionContext(c, modelName); apiErr != nil {

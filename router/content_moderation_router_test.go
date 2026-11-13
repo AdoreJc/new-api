@@ -1,6 +1,7 @@
 package router
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -14,9 +15,12 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service/contentmoderation"
+	"github.com/QuantumNous/new-api/service/promptaudit"
+	"github.com/QuantumNous/new-api/setting/audit_policy_setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/content_moderation_setting"
 	"github.com/QuantumNous/new-api/setting/perf_metrics_setting"
+	"github.com/QuantumNous/new-api/setting/prompt_audit_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
@@ -128,6 +132,9 @@ func TestContentModerationCoversEveryRelayPostRoute(t *testing.T) {
 		protocol, covered := contentmoderation.RelayProtocol(format, requestPath)
 		assert.True(t, covered, "POST %s must be moderated", route.Path)
 		assert.NotEmpty(t, protocol)
+		protocol, covered = promptaudit.RelayProtocol(format, requestPath)
+		assert.True(t, covered, "POST %s must be prompt audited", route.Path)
+		assert.NotEmpty(t, protocol)
 	}
 }
 
@@ -226,4 +233,181 @@ func TestContentModerationBlockHappensBeforeBilling(t *testing.T) {
 	allowed := send("hello")
 	assert.Equal(t, int64(2), moderationCalls.Load())
 	assert.Equal(t, int64(1), upstreamCalls.Load(), "a clean request reaches upstream: %s", allowed.Body.String())
+}
+
+// auditRelayFixture is a user with an unlimited token, mock upstream
+// channels for the given models, and a mock Guard that answers Unsafe for
+// prompts containing "forbidden".
+type auditRelayFixture struct {
+	engine        *gin.Engine
+	user          model.User
+	upstreamCalls *atomic.Int64
+	lastModel     *atomic.Value
+}
+
+func newAuditRelayFixture(t *testing.T, policy audit_policy_setting.Config, models ...string) auditRelayFixture {
+	t.Helper()
+	setupRelayRouterTestDB(t)
+	require.NoError(t, i18n.Init())
+	previousPerfMetrics := strconv.FormatBool(perf_metrics_setting.GetSetting().Enabled)
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{"perf_metrics_setting.enabled": "false"}))
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{"perf_metrics_setting.enabled": previousPerfMetrics}))
+	})
+	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Log{}, &model.UserSubscription{}, &model.PromptAuditEvent{},
+		&model.ContentModerationEvent{}, &model.ContentModerationFlaggedHash{}))
+
+	fixture := auditRelayFixture{upstreamCalls: &atomic.Int64{}, lastModel: &atomic.Value{}}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fixture.upstreamCalls.Add(1)
+		var payload struct {
+			Model string `json:"model"`
+		}
+		_ = common.DecodeJson(r.Body, &payload)
+		fixture.lastModel.Store(payload.Model)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"c1","object":"chat.completion","model":"` + payload.Model + `","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`))
+	}))
+	t.Cleanup(upstream.Close)
+	guard := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		answer := "Safety: Safe\nCategories: None"
+		if strings.Contains(string(body), "forbidden") {
+			answer = "Safety: Unsafe\nCategories: Violent"
+		}
+		encoded, _ := common.Marshal(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": answer}}}})
+		_, _ = w.Write(encoded)
+	}))
+	t.Cleanup(guard.Close)
+
+	fixture.user = model.User{Username: "audited-user", Status: common.UserStatusEnabled, Group: "default", Quota: 500000, AffCode: "aff-audited"}
+	require.NoError(t, model.DB.Create(&fixture.user).Error)
+	require.NoError(t, model.DB.Create(&model.Token{UserId: fixture.user.Id, Key: "auditkey", Status: common.TokenStatusEnabled,
+		ExpiredTime: -1, UnlimitedQuota: true, Name: "audit"}).Error)
+	baseURL := upstream.URL
+	for _, name := range models {
+		channel := model.Channel{Type: constant.ChannelTypeOpenAI, Key: "upstream-key", Status: common.ChannelStatusEnabled,
+			Name: "mock-" + name, Models: name, Group: "default", BaseURL: &baseURL}
+		require.NoError(t, channel.Insert())
+	}
+
+	pa := prompt_audit_setting.DefaultConfig()
+	pa.Enabled, pa.Mode = true, prompt_audit_setting.ModeBlocking
+	pa.Endpoints = []prompt_audit_setting.Endpoint{{ID: "g1", BaseURL: guard.URL, Model: "guard", TimeoutMS: 2000, Enabled: true}}
+	require.NoError(t, pa.Normalize())
+	previousPA := prompt_audit_setting.Current().Config
+	paJSON, err := common.Marshal(pa)
+	require.NoError(t, err)
+	prompt_audit_setting.ApplyOption(prompt_audit_setting.OptionKey, string(paJSON))
+	for index := range policy.Allowlist {
+		if policy.Allowlist[index].UserID == 0 {
+			policy.Allowlist[index].UserID = fixture.user.Id
+		}
+	}
+	require.NoError(t, policy.Normalize())
+	policyJSON, err := common.Marshal(policy)
+	require.NoError(t, err)
+	audit_policy_setting.ApplyOption(audit_policy_setting.OptionKey, string(policyJSON))
+	t.Cleanup(func() {
+		previousJSON, _ := common.Marshal(previousPA)
+		prompt_audit_setting.ApplyOption(prompt_audit_setting.OptionKey, string(previousJSON))
+		audit_policy_setting.ApplyOption(audit_policy_setting.OptionKey, "")
+	})
+
+	previousRatios := ratio_setting.ModelRatio2JSONString()
+	ratios := map[string]float64{}
+	for _, name := range models {
+		ratios[name] = 0.075
+	}
+	ratiosJSON, err := common.Marshal(ratios)
+	require.NoError(t, err)
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(ratiosJSON)))
+	t.Cleanup(func() { _ = ratio_setting.UpdateModelRatioByJSONString(previousRatios) })
+
+	fixture.engine = gin.New()
+	SetRelayRouter(fixture.engine)
+	return fixture
+}
+
+func (f auditRelayFixture) send(path, body string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer sk-auditkey")
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	f.engine.ServeHTTP(recorder, request)
+	return recorder
+}
+
+// TestPromptAuditBlockHappensBeforeBilling sends flagged requests through
+// the real relay router in blocking mode: each is answered with a JSON error
+// in its protocol's shape, even when streaming was asked for, with no
+// upstream call, no quota change and no consume log.
+func TestPromptAuditBlockHappensBeforeBilling(t *testing.T) {
+	policy := audit_policy_setting.Config{Default: audit_policy_setting.Rule{
+		PromptAudit: audit_policy_setting.PromptAudit{Enabled: true, Action: audit_policy_setting.ActionBlock},
+	}}
+	fixture := newAuditRelayFixture(t, policy, "gpt-4o-mini")
+
+	blocked := fixture.send("/v1/chat/completions", `{"model":"gpt-4o-mini","stream":true,"messages":[{"role":"user","content":"something forbidden"}]}`)
+	require.Equal(t, http.StatusForbidden, blocked.Code, blocked.Body.String())
+	assert.True(t, strings.HasPrefix(blocked.Header().Get("Content-Type"), "application/json"), "a blocked stream request gets JSON, not SSE")
+	assert.NotContains(t, blocked.Body.String(), "data:")
+	assert.Contains(t, blocked.Body.String(), `"code":"prompt_audit_blocked"`)
+	assert.NotContains(t, strings.ToLower(blocked.Body.String()), "violent", "the reply names no category")
+
+	claude := fixture.send("/v1/messages", `{"model":"gpt-4o-mini","max_tokens":16,"messages":[{"role":"user","content":"something forbidden"}]}`)
+	require.Equal(t, http.StatusForbidden, claude.Code, claude.Body.String())
+	assert.Contains(t, claude.Body.String(), `"type":"error"`, "Claude requests get a Claude error body")
+	assert.NotContains(t, strings.ToLower(claude.Body.String()), "violent")
+
+	assert.Zero(t, fixture.upstreamCalls.Load(), "a blocked request never reaches upstream")
+	var reloaded model.User
+	require.NoError(t, model.DB.First(&reloaded, fixture.user.Id).Error)
+	assert.Equal(t, fixture.user.Quota, reloaded.Quota, "a blocked request is not pre-charged")
+	assert.Zero(t, reloaded.UsedQuota)
+	var consumeLogs int64
+	require.NoError(t, model.DB.Model(&model.Log{}).Where("type = ?", model.LogTypeConsume).Count(&consumeLogs).Error)
+	assert.Zero(t, consumeLogs, "a blocked request writes no consume log")
+
+	allowed := fixture.send("/v1/chat/completions", `{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}`)
+	assert.Equal(t, http.StatusOK, allowed.Code, allowed.Body.String())
+	assert.Equal(t, int64(1), fixture.upstreamCalls.Load())
+}
+
+// TestAuditRerouteBillsAndLogsTheActualModel reroutes a flagged request of
+// a verified allowlist user: upstream receives the target model, and the
+// consume log names it and records the requested one. A user who is not
+// verified gets the rule's fallback instead.
+func TestAuditRerouteBillsAndLogsTheActualModel(t *testing.T) {
+	policy := audit_policy_setting.Config{
+		Rules: []audit_policy_setting.Rule{{
+			ID: "reroute-listed", Enabled: true, Match: audit_policy_setting.Match{List: audit_policy_setting.ListAllowlist},
+			PromptAudit:     audit_policy_setting.PromptAudit{Enabled: true, Action: audit_policy_setting.ActionReroute},
+			Reroute:         audit_policy_setting.RerouteTarget{Model: "safe-model"},
+			RerouteFallback: audit_policy_setting.ActionBlock,
+		}},
+		// UserID 0 is filled with the fixture user.
+		Allowlist: []audit_policy_setting.ListEntry{{Verified: true}},
+	}
+	fixture := newAuditRelayFixture(t, policy, "gpt-4o-mini", "safe-model")
+
+	rerouted := fixture.send("/v1/chat/completions", `{"model":"gpt-4o-mini","messages":[{"role":"user","content":"something forbidden"}]}`)
+	require.Equal(t, http.StatusOK, rerouted.Code, rerouted.Body.String())
+	assert.Equal(t, "safe-model", fixture.lastModel.Load(), "upstream receives the target model")
+	var log model.Log
+	require.NoError(t, model.DB.Where("type = ?", model.LogTypeConsume).Order("id desc").First(&log).Error)
+	assert.Equal(t, "safe-model", log.ModelName, "billing and the log use the actual model")
+	assert.Contains(t, log.Other, `"from_model":"gpt-4o-mini"`)
+	assert.Contains(t, log.Other, `"to_model":"safe-model"`)
+
+	unverified := policy
+	unverified.Allowlist = []audit_policy_setting.ListEntry{{UserID: fixture.user.Id, Verified: false}}
+	require.NoError(t, unverified.Normalize())
+	encoded, err := common.Marshal(unverified)
+	require.NoError(t, err)
+	audit_policy_setting.ApplyOption(audit_policy_setting.OptionKey, string(encoded))
+	calls := fixture.upstreamCalls.Load()
+	fallback := fixture.send("/v1/chat/completions", `{"model":"gpt-4o-mini","messages":[{"role":"user","content":"something forbidden"}]}`)
+	assert.Equal(t, http.StatusForbidden, fallback.Code, "a user who is not verified cannot be rerouted: %s", fallback.Body.String())
+	assert.Equal(t, calls, fixture.upstreamCalls.Load())
 }

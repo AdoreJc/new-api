@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -26,8 +27,8 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/service/contentmoderation"
-	"github.com/QuantumNous/new-api/service/promptaudit"
+	"github.com/QuantumNous/new-api/service/auditpolicy"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
@@ -159,12 +160,17 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		defer stopKeepAlive()
 	}
 
-	// Asynchronous prompt audit: only queues a copy of the body, never blocks
-	// or changes the response, and runs once before billing and retries.
-	promptaudit.EnqueueRelay(c, relayInfo)
-
-	if newAPIError = contentmoderation.CheckRelay(c, relayInfo); newAPIError != nil {
+	// Prompt audit and content moderation, as the audit policy rules say. It
+	// runs once, before billing and channel retries; a reroute switches the
+	// model or group and picks a channel for it before anything is charged.
+	audit := auditpolicy.Evaluate(c, relayInfo, "", "")
+	if newAPIError = audit.Err; newAPIError != nil {
 		return
+	}
+	if audit.Reroute != nil {
+		if newAPIError = applyAuditReroute(c, relayInfo, audit.Reroute); newAPIError != nil {
+			return
+		}
 	}
 	if newAPIError = relay.PrepareRequestBilling(c, relayInfo); newAPIError != nil {
 		return
@@ -312,6 +318,46 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true // 允许跨域
 	},
+}
+
+// applyAuditReroute switches the request to the audit policy rule's target
+// model or group and selects a channel for it, before billing, so the
+// request is billed and logged as the target. The first attempt then uses
+// that channel; retries select within the target. A channel that forwards
+// the client body unchanged would still name the original model upstream,
+// so it is not used, and the request is refused rather than sent to its
+// original model.
+func applyAuditReroute(c *gin.Context, info *relaycommon.RelayInfo, reroute *auditpolicy.Reroute) *types.NewAPIError {
+	fromModel, fromGroup := info.OriginModelName, info.UsingGroup
+	toModel, toGroup := cmp.Or(reroute.Model, fromModel), cmp.Or(reroute.Group, fromGroup)
+	if model_setting.GetGlobalSettings().PassThroughRequestEnabled {
+		return auditpolicy.RerouteFailedError(c, reroute, "request pass-through is enabled")
+	}
+	if toGroup != fromGroup {
+		common.SetContextKey(c, constant.ContextKeyAutoGroupIndex, 0)
+	}
+	channel, selectedGroup, err := service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
+		Ctx: c, TokenGroup: toGroup, ModelName: toModel, RequestPath: c.Request.URL.Path, Retry: common.GetPointer(0),
+	})
+	if err != nil || channel == nil {
+		return auditpolicy.RerouteFailedError(c, reroute, "no channel for the target")
+	}
+	if channel.GetSetting().PassThroughBodyEnabled {
+		return auditpolicy.RerouteFailedError(c, reroute, "the target channel forwards the body unchanged")
+	}
+	common.SetContextKey(c, constant.ContextKeyUsingGroup, toGroup)
+	info.UsingGroup = toGroup
+	info.OriginModelName = toModel
+	if apiErr := middleware.SetupContextForSelectedChannel(c, channel, toModel); apiErr != nil {
+		return apiErr
+	}
+	c.Set(service.AuditRerouteContextKey, service.AuditReroute{
+		RuleID: reroute.RuleID, FromModel: fromModel, ToModel: toModel, FromGroup: fromGroup, ToGroup: cmp.Or(selectedGroup, toGroup),
+	})
+	service.RequestPolicy(c).AddEvent(service.PolicyEvent{ChannelID: channel.Id, Group: selectedGroup, Rule: reroute.RuleID,
+		Decision: service.PolicyDecision{Action: "reroute", Reason: "audit_policy", Source: "audit_policy"}, Health: "unchanged"})
+	logger.LogInfo(c, common.LogText("audit policy rule %s rerouted the request from %s (%s) to %s (%s)", reroute.RuleID, fromModel, fromGroup, toModel, toGroup))
+	return nil
 }
 
 func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {

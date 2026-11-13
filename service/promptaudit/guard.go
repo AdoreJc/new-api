@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/audit_policy_setting"
 	"github.com/QuantumNous/new-api/setting/prompt_audit_setting"
 )
 
@@ -87,6 +88,9 @@ type guardResult struct {
 	Incomplete bool
 	// Hits locates every chunk the Guard did not pass.
 	Hits []chunkHit
+	// Triggered lists the categories that made the verdict critical. It is
+	// empty for a critical verdict caused by an unknown or missing category.
+	Triggered []string
 }
 
 // chunkHit records where a finding came from without storing its text: the
@@ -110,12 +114,12 @@ func normalizeCategory(value string) string {
 }
 
 // parseQwen3Guard reads the "Safety:" and "Categories:" lines of a Qwen3Guard
-// answer. Safe allows; Controversial warns, except PII and self-harm which are
-// critical, and jailbreak which is critical only with strictJailbreak (coding
-// agent system prompts are often judged a controversial jailbreak); Unsafe is
-// critical when an enabled or unknown category matched (or none was named),
-// otherwise a high-risk warning.
-func parseQwen3Guard(content string, enabledScanners []string, strictJailbreak bool) (*guardResult, error) {
+// answer and applies the rule's trigger levels. Safe allows. Controversial
+// warns, unless a category whose level is controversial matched, which is
+// critical. Unsafe is critical when a category that is not off matched, an
+// unknown category was named, or no category was named; otherwise it is a
+// high-risk warning. Triggered lists the categories that made it critical.
+func parseQwen3Guard(content string, rule *audit_policy_setting.PromptAudit) (*guardResult, error) {
 	var safety, categoryLine string
 	for line := range strings.SplitSeq(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
 		line = strings.TrimSpace(line)
@@ -155,22 +159,26 @@ func parseQwen3Guard(content string, enabledScanners []string, strictJailbreak b
 	result.Categories = orderedCategories(known)
 	result.UnknownCategories = orderedCategories(unknown)
 	for _, category := range result.Categories {
-		if slices.Contains(enabledScanners, category) {
+		if rule.Level(category) != audit_policy_setting.LevelOff {
 			result.MatchedScanners = append(result.MatchedScanners, category)
 		}
 	}
 	switch safety {
 	case "controversial":
 		result.Decision, result.RiskLevel, result.Action = DecisionFlag, RiskMedium, ActionWarn
-		if slices.ContainsFunc(result.MatchedScanners, func(category string) bool {
-			return (category == "jailbreak" && strictJailbreak) || category == "pii" || category == "suicide_and_self_harm"
-		}) {
+		for _, category := range result.MatchedScanners {
+			if rule.Level(category) == audit_policy_setting.LevelControversial {
+				result.Triggered = append(result.Triggered, category)
+			}
+		}
+		if len(result.Triggered) > 0 {
 			result.Decision, result.RiskLevel, result.Action = DecisionCritical, RiskCritical, ActionBlock
 		}
 	case "unsafe":
 		result.Decision, result.RiskLevel, result.Action = DecisionFlag, RiskHigh, ActionWarn
 		if len(result.MatchedScanners) > 0 || len(result.UnknownCategories) > 0 || len(result.Categories) == 0 {
 			result.Decision, result.RiskLevel, result.Action = DecisionCritical, RiskCritical, ActionBlock
+			result.Triggered = slices.Clone(result.MatchedScanners)
 		}
 	}
 	return result, nil
@@ -208,7 +216,7 @@ func decisionSeverity(decision string) int {
 // categories are the union of all chunks.
 func aggregateResults(results []*guardResult) *guardResult {
 	aggregated := &guardResult{Decision: DecisionPass, RiskLevel: RiskLow, Action: ActionAllow, ChunkTotal: len(results)}
-	categories, matched, unknown := map[string]struct{}{}, map[string]struct{}{}, map[string]struct{}{}
+	categories, matched, unknown, triggered := map[string]struct{}{}, map[string]struct{}{}, map[string]struct{}{}, map[string]struct{}{}
 	for _, result := range results {
 		if aggregated.GuardEndpointID == "" || decisionSeverity(result.Decision) > decisionSeverity(aggregated.Decision) {
 			aggregated.Decision, aggregated.RiskLevel, aggregated.Action = result.Decision, result.RiskLevel, result.Action
@@ -223,7 +231,11 @@ func aggregateResults(results []*guardResult) *guardResult {
 		for _, value := range result.UnknownCategories {
 			unknown[value] = struct{}{}
 		}
+		for _, value := range result.Triggered {
+			triggered[value] = struct{}{}
+		}
 	}
+	aggregated.Triggered = orderedCategories(triggered)
 	aggregated.Categories = orderedCategories(categories)
 	aggregated.MatchedScanners = orderedCategories(matched)
 	aggregated.UnknownCategories = orderedCategories(unknown)
@@ -319,6 +331,33 @@ type guardClient struct {
 	mu         sync.Mutex
 	clients    map[string]cachedHTTPClient
 	safeChunks safeChunkCache
+	// endpointSlots bound synchronous calls in flight per endpoint id.
+	endpointSlots map[string]chan struct{}
+}
+
+// errBulkheadFull is returned when an endpoint already serves its share of
+// synchronous checks; the next endpoint is tried as after a network error.
+var errBulkheadFull = &guardError{Code: errorCodeUnavailable, Retryable: true}
+
+// acquireEndpoint takes a synchronous call slot of the endpoint without
+// waiting. The returned function releases it.
+func (g *guardClient) acquireEndpoint(id string) (func(), bool) {
+	g.mu.Lock()
+	if g.endpointSlots == nil {
+		g.endpointSlots = map[string]chan struct{}{}
+	}
+	slots, ok := g.endpointSlots[id]
+	if !ok {
+		slots = make(chan struct{}, prompt_audit_setting.EndpointConcurrency)
+		g.endpointSlots[id] = slots
+	}
+	g.mu.Unlock()
+	select {
+	case slots <- struct{}{}:
+		return func() { <-slots }, true
+	default:
+		return nil, false
+	}
 }
 
 func newHTTPClient(endpoint prompt_audit_setting.Endpoint) *http.Client {
@@ -357,11 +396,11 @@ func (g *guardClient) httpClient(endpoint prompt_audit_setting.Endpoint) *http.C
 }
 
 // scan sends one chunk to one endpoint.
-func (g *guardClient) scan(ctx context.Context, endpoint prompt_audit_setting.Endpoint, token, chunk string, config *prompt_audit_setting.Config) (*guardResult, error) {
-	return scanWith(ctx, g.httpClient(endpoint), endpoint, token, chunk, config.Scanners, config.StrictJailbreakMapping)
+func (g *guardClient) scan(ctx context.Context, endpoint prompt_audit_setting.Endpoint, token, chunk string, rule *audit_policy_setting.PromptAudit) (*guardResult, error) {
+	return scanWith(ctx, g.httpClient(endpoint), endpoint, token, chunk, rule)
 }
 
-func scanWith(ctx context.Context, client *http.Client, endpoint prompt_audit_setting.Endpoint, token, chunk string, scanners []string, strictJailbreak bool) (*guardResult, error) {
+func scanWith(ctx context.Context, client *http.Client, endpoint prompt_audit_setting.Endpoint, token, chunk string, rule *audit_policy_setting.PromptAudit) (*guardResult, error) {
 	payload, err := common.Marshal(map[string]any{
 		"model":       endpoint.Model,
 		"messages":    []map[string]string{{"role": "user", "content": chunk}},
@@ -408,7 +447,7 @@ func scanWith(ctx context.Context, client *http.Client, endpoint prompt_audit_se
 	if err := common.Unmarshal(body, &envelope); err != nil || len(envelope.Choices) == 0 {
 		return nil, &guardError{Code: errorCodeInvalidResponse, Cause: err}
 	}
-	result, err := parseQwen3Guard(envelope.Choices[0].Message.Content, scanners, strictJailbreak)
+	result, err := parseQwen3Guard(envelope.Choices[0].Message.Content, rule)
 	if err != nil {
 		return nil, err
 	}
@@ -417,14 +456,35 @@ func scanWith(ctx context.Context, client *http.Client, endpoint prompt_audit_se
 	return result, nil
 }
 
+// scanRequest is what one evaluation needs besides the text.
+type scanRequest struct {
+	snapshot    *prompt_audit_setting.Snapshot
+	rule        *audit_policy_setting.PromptAudit
+	retryDelays []time.Duration
+	// synchronous calls hold a per-endpoint bulkhead slot.
+	synchronous bool
+}
+
 // scanChunk tries the enabled endpoints in order, moving on only after a
 // retryable error. When every endpoint failed retryably it waits and tries
 // the same chunk again, once per retry delay.
-func (g *guardClient) scanChunk(ctx context.Context, snapshot *prompt_audit_setting.Snapshot, endpoints []prompt_audit_setting.Endpoint, chunk string, retryDelays []time.Duration, metrics *Metrics) (*guardResult, error) {
+func (g *guardClient) scanChunk(ctx context.Context, request scanRequest, endpoints []prompt_audit_setting.Endpoint, chunk string, metrics *Metrics) (*guardResult, error) {
 	for attempt := 0; ; attempt++ {
 		var lastErr error
 		for index, endpoint := range endpoints {
-			result, err := g.scan(ctx, endpoint, snapshot.Tokens[endpoint.ID], chunk, &snapshot.Config)
+			var result *guardResult
+			var err error
+			if request.synchronous {
+				if release, acquired := g.acquireEndpoint(endpoint.ID); acquired {
+					result, err = g.scan(ctx, endpoint, request.snapshot.Tokens[endpoint.ID], chunk, request.rule)
+					release()
+				} else {
+					metrics.bulkheadFull.Add(1)
+					err = errBulkheadFull
+				}
+			} else {
+				result, err = g.scan(ctx, endpoint, request.snapshot.Tokens[endpoint.ID], chunk, request.rule)
+			}
 			if err == nil {
 				return result, nil
 			}
@@ -437,14 +497,14 @@ func (g *guardClient) scanChunk(ctx context.Context, snapshot *prompt_audit_sett
 				metrics.failovers.Add(1)
 			}
 		}
-		if attempt >= len(retryDelays) {
+		if attempt >= len(request.retryDelays) {
 			return nil, lastErr
 		}
 		metrics.retries.Add(1)
 		select {
 		case <-ctx.Done():
 			return nil, lastErr
-		case <-time.After(retryDelays[attempt]):
+		case <-time.After(request.retryDelays[attempt]):
 		}
 	}
 }
@@ -453,7 +513,8 @@ func (g *guardClient) scanChunk(ctx context.Context, snapshot *prompt_audit_sett
 // to oldest. Chunks judged safe recently are skipped, and at most
 // MaxChunksPerRequest chunks go to the Guard; the rest are left unscanned and
 // counted. It stops at the first chunk that would block.
-func (g *guardClient) evaluate(ctx context.Context, snapshot *prompt_audit_setting.Snapshot, latest, rest scanPart, retryDelays []time.Duration, metrics *Metrics) (*guardResult, error) {
+func (g *guardClient) evaluate(ctx context.Context, request scanRequest, latest, rest scanPart, metrics *Metrics) (*guardResult, error) {
+	snapshot := request.snapshot
 	endpoints := snapshot.Config.EnabledEndpoints()
 	if len(endpoints) == 0 {
 		return nil, &guardError{Code: errorCodeUnavailable}
@@ -479,7 +540,7 @@ func (g *guardClient) evaluate(ctx context.Context, snapshot *prompt_audit_setti
 			break
 		}
 		scanned++
-		result, err := g.scanChunk(ctx, snapshot, endpoints, chunk.text, retryDelays, metrics)
+		result, err := g.scanChunk(ctx, request, endpoints, chunk.text, metrics)
 		if err != nil {
 			// Keep what earlier chunks found instead of losing it with the error.
 			if !slices.ContainsFunc(results, func(r *guardResult) bool { return r.Decision != DecisionPass }) {
