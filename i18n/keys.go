@@ -56,6 +56,9 @@ const (
 
 	// A request blocked by content moderation; names no category.
 	MsgContentModerationBlocked = "content_moderation.blocked"
+	MsgPromptAuditBlocked       = "prompt_audit.blocked"
+	MsgAuditUnavailable         = "audit.unavailable"
+	MsgAuditRerouteFailed       = "audit.reroute_failed"
 
 	MsgQuotaBoundSubscriptionInsufficient          = "quota.bound_subscription_insufficient"
 	MsgRelaySubscriptionAccountLimited             = "relay.subscription_account_limited"

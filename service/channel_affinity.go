@@ -737,6 +737,13 @@ func RecordChannelAffinity(c *gin.Context, channelID int) {
 	if setting == nil || !setting.Enabled {
 		return
 	}
+	// A rerouted request ran on a channel of another model or group; it must
+	// not become the affinity of the session's original model.
+	if c != nil {
+		if _, rerouted := c.Get(AuditRerouteContextKey); rerouted {
+			return
+		}
+	}
 	if setting.SwitchOnSuccess && c != nil {
 		if successChannelID := c.GetInt("channel_id"); successChannelID > 0 {
 			channelID = successChannelID

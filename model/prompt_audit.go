@@ -63,6 +63,11 @@ type PromptAuditEvent struct {
 	// FullPrompt is longtext on MySQL: a 64K-character prompt can exceed the
 	// 65535-byte TEXT limit there.
 	FullPrompt LongText `json:"full_prompt,omitempty"`
+	// RuleId is the audit policy rule that sent the request to the Guard and
+	// PolicyAction what it did with the result (observe, block, reroute,
+	// ignore). Both are empty on events stored before the policy table.
+	RuleId       string `json:"rule_id" gorm:"type:varchar(64)"`
+	PolicyAction string `json:"policy_action" gorm:"type:varchar(16)"`
 }
 
 // fitColumns shortens variable-length columns to their declared size so an
@@ -77,6 +82,7 @@ func (e *PromptAuditEvent) fitColumns() {
 		{&e.RelayFormat, 32}, {&e.Endpoint, 128}, {&e.ModelName, 255}, {&e.Mode, 16},
 		{&e.Decision, 16}, {&e.RiskLevel, 16}, {&e.Action, 16}, {&e.Safety, 16},
 		{&e.GuardEndpointId, 64}, {&e.ScannerVersion, 255}, {&e.PromptHash, 64}, {&e.RedactedPreview, 512},
+		{&e.RuleId, 64}, {&e.PolicyAction, 16},
 	} {
 		if utf8.RuneCountInString(*field.value) > field.limit {
 			*field.value = string([]rune(*field.value)[:field.limit])

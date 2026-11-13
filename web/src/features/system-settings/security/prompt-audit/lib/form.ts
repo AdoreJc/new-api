@@ -90,9 +90,24 @@ const endpointSchema = z.object({
   clear_token: z.boolean(),
 })
 
+/** How prompt audit runs, with English i18n keys. */
+export const PROMPT_AUDIT_MODES = [
+  {
+    value: 'async_audit',
+    label: 'Record only (asynchronous)',
+  },
+  {
+    value: 'blocking',
+    label: 'Allow blocking (synchronous)',
+  },
+] as const
+
 export const promptAuditFormSchema = z
   .object({
     enabled: z.boolean(),
+    mode: z.enum(['async_audit', 'blocking']),
+    fail_policy: z.enum(['open', 'closed']),
+    store_pass_events: z.boolean(),
     all_groups: z.boolean(),
     groups: z.array(z.string()),
     scanners: z.array(z.string()),
@@ -163,6 +178,10 @@ export function toPromptAuditFormValues(
   const config = response.config
   return {
     enabled: config.enabled,
+    // Settings saved before these options existed read as the defaults.
+    mode: config.mode === 'blocking' ? 'blocking' : 'async_audit',
+    fail_policy: config.fail_policy === 'closed' ? 'closed' : 'open',
+    store_pass_events: config.store_pass_events ?? false,
     all_groups: config.all_groups,
     groups: config.groups ?? [],
     scanners: config.scanners ?? [],
@@ -205,6 +224,9 @@ export function toPromptAuditConfigRequest(
     config: {
       ...current,
       enabled: values.enabled,
+      mode: values.mode,
+      fail_policy: values.fail_policy,
+      store_pass_events: values.store_pass_events,
       all_groups: values.all_groups,
       groups: values.groups.map((group) => group.trim()).filter(Boolean),
       scanners: values.scanners,

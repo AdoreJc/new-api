@@ -472,7 +472,7 @@ func TestCheckRelayScopeSamplingAndAllowlist(t *testing.T) {
 	assert.Nil(t, s.checkRelay(c, chatInfo(7)), "allowlisted users are never blocked")
 	require.Equal(t, int64(1), s.depth.Load(), "allowlisted users are checked in the background")
 	item := <-s.queue
-	s.check(context.Background(), content_moderation_setting.Current(), item, "", 0, false)
+	s.moderate(context.Background(), content_moderation_setting.Current(), item, "", 0, false)
 	s.release(item)
 	drainRecords(s)
 	events, _, err := model.ListContentModerationEvents(model.ContentModerationEventFilter{}, 0, 10)
@@ -831,8 +831,8 @@ func TestConfigScopePolicy(t *testing.T) {
 		subject Subject
 		want    Decision
 	}{
-		{"in scope", Subject{UserID: 1, Group: "vip-1", Model: "m"}, Decision{Moderate: true, Mode: "pre_block", Action: ActionBlock, SampleRate: 40}},
-		{"auto token routed to a matching group", Subject{UserID: 1, Group: "vip-2", RequestedGroup: "auto", Model: "m"}, Decision{Moderate: true, Mode: "pre_block", Action: ActionBlock, SampleRate: 40}},
+		{"in scope", Subject{UserID: 1, Group: "vip-1", Model: "m"}, Decision{Moderate: true, Mode: "pre_block", Action: ActionBlock, SampleRate: 40, Dispose: true}},
+		{"auto token routed to a matching group", Subject{UserID: 1, Group: "vip-2", RequestedGroup: "auto", Model: "m"}, Decision{Moderate: true, Mode: "pre_block", Action: ActionBlock, SampleRate: 40, Dispose: true}},
 		{"allowlisted user", Subject{UserID: 9, Group: "vip-1", Model: "m"}, Decision{Moderate: true, Mode: "pre_block", Action: ActionRecordOnly, SampleRate: 40}},
 		{"group out of scope", Subject{UserID: 1, Group: "default", Model: "m"}, Decision{Mode: "pre_block"}},
 		{"excluded model", Subject{UserID: 1, Group: "vip-1", Model: "free-model"}, Decision{Mode: "pre_block"}},

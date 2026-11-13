@@ -33,7 +33,9 @@ import {
 import { getPromptAuditEvent, type PromptAuditEvent } from '../api'
 import {
   PROMPT_AUDIT_DECISION_LABELS,
+  PROMPT_AUDIT_POLICY_ACTION_LABELS,
   PROMPT_AUDIT_ROLE_LABELS,
+  PROMPT_AUDIT_SEVERITY,
   promptAuditCategories,
   promptAuditHitChunks,
 } from '../lib/event-format'
@@ -87,6 +89,22 @@ export function PromptAuditEventDialog(props: { event: PromptAuditEvent }) {
       </div>
       <DetailSection label={t('Findings')}>
         <DetailRow label={t('Guard verdict')} value={event.safety} mono />
+        {event.rule_id && (
+          <DetailRow
+            label={t('Audit policy rule')}
+            value={event.rule_id}
+            mono
+          />
+        )}
+        {event.policy_action && (
+          <DetailRow
+            label={t('Policy action')}
+            value={t(
+              PROMPT_AUDIT_POLICY_ACTION_LABELS[event.policy_action] ??
+                event.policy_action
+            )}
+          />
+        )}
         <DetailRow
           label={t('Risk categories')}
           value={
@@ -137,6 +155,58 @@ export function PromptAuditEventDialog(props: { event: PromptAuditEvent }) {
               'Scan incomplete: a later chunk could not be scanned; these are the findings so far'
             )}
           </p>
+        )}
+      </DetailSection>
+      <DetailSection label={t('Issues')}>
+        {!showFull && (
+          <div className='space-y-1'>
+            <Button
+              type='button'
+              size='sm'
+              variant='outline'
+              onClick={() => setShowFull(true)}
+            >
+              {t('Show issues')}
+            </Button>
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Issues load with the full event, and each view is recorded in the audit log.'
+              )}
+            </p>
+          </div>
+        )}
+        {showFull && detail.data && (detail.data.issues ?? []).length === 0 && (
+          <p className='text-muted-foreground text-xs'>{t('None')}</p>
+        )}
+        {showFull && detail.data && (detail.data.issues ?? []).length > 0 && (
+          <ul aria-label={t('Issues')} className='space-y-2 text-xs'>
+            {(detail.data.issues ?? []).map((issue) => {
+              const severity = PROMPT_AUDIT_SEVERITY[issue.severity]
+              return (
+                <li
+                  key={issue.category}
+                  className='flex flex-wrap items-center gap-x-2 gap-y-1'
+                >
+                  <StatusBadge
+                    label={t(severity?.label ?? issue.severity)}
+                    variant={severity?.variant ?? 'neutral'}
+                    copyable={false}
+                  />
+                  <span className='font-medium'>{t(issue.title)}</span>
+                  <span className='text-muted-foreground'>
+                    {t(issue.action)}
+                  </span>
+                  {issue.chunks.length > 0 && (
+                    <span className='text-muted-foreground tabular-nums'>
+                      {t('Chunks {{chunks}}', {
+                        chunks: issue.chunks.join(', '),
+                      })}
+                    </span>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
         )}
       </DetailSection>
       <DetailSection label={t('Request')}>

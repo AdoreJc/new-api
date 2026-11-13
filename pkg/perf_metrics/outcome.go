@@ -102,7 +102,7 @@ func classifyFailure(local bool, code, errorType string, status int) Outcome {
 		case types.ErrorCodeInvalidRequest, types.ErrorCodeSensitiveWordsDetected, types.ErrorCodeReadRequestBodyFailed,
 			types.ErrorCodeConvertRequestFailed, types.ErrorCodeAccessDenied, types.ErrorCodeBadRequestBody,
 			types.ErrorCodeInsufficientUserQuota, types.ErrorCodePreConsumeTokenQuotaFailed, types.ErrorCodePromptBlocked,
-			"content_moderation_blocked":
+			"content_moderation_blocked", "content_moderation_unavailable", "prompt_audit_blocked", "prompt_audit_unavailable", "audit_reroute_failed":
 			return OutcomeIgnored
 		}
 		return OutcomeFailure

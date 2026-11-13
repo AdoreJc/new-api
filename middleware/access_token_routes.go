@@ -150,17 +150,26 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"DELETE /api/subscription/admin/user_subscriptions/:id":              accessTokenScopeRule("billing:write"),
 
 	// router/api-router.go: /api/prompt_audit (root only). Events hold users'
-	// original prompts, so they are reachable from a browser session only.
-	"GET /api/prompt_audit/config":                   accessTokenScopeRule("option:read"),
-	"PUT /api/prompt_audit/config":                   accessTokenScopeRule("option:write"),
-	"POST /api/prompt_audit/endpoints/probe":         accessTokenScopeRule("option:write"),
-	"GET /api/prompt_audit/runtime":                  accessTokenScopeRule("option:read"),
+	// original prompts and its settings decide what is blocked, so every route
+	// needs a browser session; personal access tokens are refused.
+	"GET /api/prompt_audit/config":                   accessTokenSessionRule,
+	"PUT /api/prompt_audit/config":                   accessTokenSessionRule,
+	"POST /api/prompt_audit/endpoints/probe":         accessTokenSessionRule,
+	"GET /api/prompt_audit/runtime":                  accessTokenSessionRule,
 	"GET /api/prompt_audit/events":                   accessTokenSessionRule,
 	"GET /api/prompt_audit/events/:id":               accessTokenSessionRule,
 	"DELETE /api/prompt_audit/events/:id":            accessTokenSessionRule,
 	"POST /api/prompt_audit/events/batch-delete":     accessTokenSessionRule,
 	"POST /api/prompt_audit/events/delete-preview":   accessTokenSessionRule,
 	"POST /api/prompt_audit/events/delete-by-filter": accessTokenSessionRule,
+
+	// router/api-router.go: /api/audit_policy (root only). The rules decide
+	// which requests are blocked or rerouted, so every route needs a browser
+	// session.
+	"GET /api/audit_policy/":       accessTokenSessionRule,
+	"PUT /api/audit_policy/":       accessTokenSessionRule,
+	"POST /api/audit_policy/reset": accessTokenSessionRule,
+	"POST /api/audit_policy/test":  accessTokenSessionRule,
 
 	// router/api-router.go: /api/content_moderation (root only). Events hold
 	// excerpts of user input and the allowlist exempts users from blocking,

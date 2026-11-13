@@ -231,6 +231,16 @@ func SetApiRouter(router *gin.Engine) {
 			promptAuditRoute.POST("/events/delete-preview", controller.PreviewPromptAuditEventDeletion)
 			promptAuditRoute.POST("/events/delete-by-filter", controller.DeletePromptAuditEventsByFilter)
 		}
+		// The audit policy decides which requests are checked, blocked or
+		// rerouted, so the whole group is root-only.
+		auditPolicyRoute := apiRouter.Group("/audit_policy")
+		auditPolicyRoute.Use(middleware.RootAuth())
+		{
+			auditPolicyRoute.GET("/", controller.GetAuditPolicy)
+			auditPolicyRoute.PUT("/", controller.UpdateAuditPolicy)
+			auditPolicyRoute.POST("/reset", controller.ResetAuditPolicy)
+			auditPolicyRoute.POST("/test", controller.TestAuditPolicy)
+		}
 		// Content moderation stores excerpts of user input and can disable
 		// users, so the whole group is root-only.
 		contentModerationRoute := apiRouter.Group("/content_moderation")

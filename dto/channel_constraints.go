@@ -40,6 +40,10 @@ const (
 	FilterTaskPluginEndpoint ChannelFilterKind = "task_plugin_endpoint"
 	FilterTaskPluginIdentity ChannelFilterKind = "task_plugin_identity"
 	FilterResponsesWebSocket ChannelFilterKind = "responses_websocket"
+	// FilterBodyRewritten keeps only channels that send the converted request
+	// rather than the client body unchanged. A request whose model was
+	// rerouted needs it on every attempt, retries included.
+	FilterBodyRewritten ChannelFilterKind = "body_rewritten"
 )
 
 type ChannelFilter struct {

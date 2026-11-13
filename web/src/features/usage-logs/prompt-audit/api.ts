@@ -57,6 +57,22 @@ export type PromptAuditEvent = {
   prompt_length: number
   message_count: number
   full_prompt?: string
+  /** Audit policy rule that applied; empty for older events. */
+  rule_id?: string
+  /** observe, block, reroute or ignore; empty for older events. */
+  policy_action?: string
+  /** Only the single event endpoint returns the issues. */
+  issues?: PromptAuditIssue[]
+}
+
+/** One finding in reviewer terms; title and action are English i18n keys. */
+export type PromptAuditIssue = {
+  category: string
+  title: string
+  severity: 'critical' | 'high' | 'medium' | 'low'
+  action: string
+  /** 1-based scan positions of the chunks that named it. */
+  chunks: number[]
 }
 
 export type PromptAuditKeywordMode = 'plain' | 'regex'
