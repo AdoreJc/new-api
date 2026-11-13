@@ -594,7 +594,7 @@ func TestChannelAutoResetSharesLeaseWithManualRedemption(t *testing.T) {
 	rejected, err := BeginChannelRedemption(ch.Id, "manual")
 	require.NoError(t, err)
 	rejected.Finish(false, nil)
-	assert.Equal(t, now.Unix(), loadAutoResetState(t, ch.Id).LastRedeemAt, "a rejected redemption restores the previous record")
+	assert.Equal(t, state.LastRedeemAt, loadAutoResetState(t, ch.Id).LastRedeemAt, "a rejected redemption restores the previous record")
 	_, _, redeems := provider.calls()
 	assert.Zero(t, redeems)
 }
