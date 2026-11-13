@@ -18,7 +18,20 @@ const (
 	// endpoint id. The Secret suffix keeps it out of GET /api/option.
 	TokensOptionKey = "PromptAuditGuardTokensSecret"
 
-	ModeAsync = "async_audit"
+	// ModeAsync audits in the background and never blocks. ModeBlocking lets
+	// audit policy rules check requests before billing and block or reroute
+	// them; rules whose action is observe still audit in the background.
+	ModeAsync    = "async_audit"
+	ModeBlocking = "blocking"
+
+	// Failure policies of a synchronous check when the Guard cannot answer.
+	FailOpen   = "open"
+	FailClosed = "closed"
+
+	// GlobalConcurrency and EndpointConcurrency bound synchronous checks in
+	// flight; a full bulkhead counts as the Guard being unavailable.
+	GlobalConcurrency   = 64
+	EndpointConcurrency = 16
 
 	DefaultWorkerCount   = 2
 	MaxWorkerCount       = 8
@@ -94,17 +107,26 @@ type Config struct {
 	ScanScope string `json:"scan_scope"`
 	// StrictJailbreakMapping records a Controversial jailbreak verdict as
 	// critical, as before; by default it is a flagged warning.
-	StrictJailbreakMapping bool       `json:"strict_jailbreak_mapping"`
-	Endpoints              []Endpoint `json:"endpoints"`
-	ConfigVersion          int64      `json:"config_version"`
-	UpdatedAt              int64      `json:"updated_at"`
-	UpdatedBy              int        `json:"updated_by"`
+	StrictJailbreakMapping bool `json:"strict_jailbreak_mapping"`
+	// FailPolicy is the failure policy of the rules derived from these
+	// settings while no audit policy table is saved.
+	FailPolicy string `json:"fail_policy"`
+	// StorePassEvents also stores results the Guard judged safe.
+	StorePassEvents bool       `json:"store_pass_events"`
+	Endpoints       []Endpoint `json:"endpoints"`
+	ConfigVersion   int64      `json:"config_version"`
+	UpdatedAt       int64      `json:"updated_at"`
+	UpdatedBy       int        `json:"updated_by"`
 }
 
 // Snapshot is the immutable runtime view: configuration plus Guard tokens.
+// Degraded means the stored configuration could not be read while it asked
+// for blocking: the engine stays off, and blocking checks it should have run
+// follow their failure policy instead of passing silently.
 type Snapshot struct {
-	Config Config
-	Tokens map[string]string
+	Config   Config
+	Tokens   map[string]string
+	Degraded bool
 }
 
 var current atomic.Pointer[Snapshot]
@@ -125,6 +147,7 @@ func DefaultConfig() Config {
 		QueueCapacity:       DefaultQueueCapacity,
 		MaxChunksPerRequest: DefaultMaxChunks,
 		ScanScope:           DefaultScanScope,
+		FailPolicy:          FailOpen,
 		Endpoints:           []Endpoint{},
 	}
 }
@@ -139,13 +162,28 @@ func IsOptionKey(key string) bool { return key == OptionKey || key == TokensOpti
 // broken option never audits with half-parsed settings.
 func ApplyOption(key, value string) {
 	previous := Current()
-	next := &Snapshot{Config: previous.Config, Tokens: previous.Tokens}
+	next := &Snapshot{Config: previous.Config, Tokens: previous.Tokens, Degraded: previous.Degraded}
 	switch key {
 	case OptionKey:
 		config, err := ParseConfig(value)
+		next.Degraded = false
 		if err != nil {
 			common.SysError(common.LogText("prompt audit setting is invalid, auditing disabled: %s", err.Error()))
 			config = DefaultConfig()
+			// Keep the stored intent: a broken blocking setting must not turn
+			// into "audit nothing" without the failure policy deciding.
+			var intent struct {
+				Enabled    bool   `json:"enabled"`
+				Mode       string `json:"mode"`
+				FailPolicy string `json:"fail_policy"`
+			}
+			if common.UnmarshalJsonStr(value, &intent) == nil && intent.Enabled && intent.Mode == ModeBlocking {
+				next.Degraded = true
+				config.Mode = ModeBlocking
+				if intent.FailPolicy == FailClosed {
+					config.FailPolicy = FailClosed
+				}
+			}
 		}
 		next.Config = config
 	case TokensOptionKey:
@@ -186,6 +224,7 @@ func ParseTokens(value string) map[string]string {
 var (
 	ErrInvalidMode          = common.NewMessage("Prompt audit mode is invalid")
 	ErrInvalidScanScope     = common.NewMessage("Prompt audit scan scope is invalid")
+	ErrInvalidFailPolicy    = common.NewMessage("Prompt audit failure policy is invalid")
 	ErrGroupsRequired       = common.NewMessage("Select at least one group or audit all groups")
 	ErrInvalidGroup         = common.NewMessage("Prompt audit group names are invalid")
 	ErrInvalidScanner       = common.NewMessage("Prompt audit risk categories are invalid")
@@ -200,8 +239,14 @@ func (c *Config) Normalize() error {
 	if c.Mode == "" {
 		c.Mode = ModeAsync
 	}
-	if c.Mode != ModeAsync {
+	if c.Mode != ModeAsync && c.Mode != ModeBlocking {
 		return ErrInvalidMode
+	}
+	if c.FailPolicy == "" {
+		c.FailPolicy = FailOpen
+	}
+	if c.FailPolicy != FailOpen && c.FailPolicy != FailClosed {
+		return ErrInvalidFailPolicy
 	}
 	if c.ScanScope == "" {
 		c.ScanScope = DefaultScanScope

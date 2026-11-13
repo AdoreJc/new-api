@@ -22,6 +22,15 @@ const (
 	// list without an engine call.
 	ContentModerationActionKeywordBlock = "keyword_block"
 	ContentModerationActionError        = "error"
+	// ContentModerationActionReroute is a flagged request sent to another
+	// model or group by an audit policy rule.
+	ContentModerationActionReroute = "reroute"
+	// ContentModerationActionUnavailable is a request blocked because the
+	// engine failed and the rule's failure policy is closed.
+	ContentModerationActionUnavailable = "fail_block"
+	// ContentModerationPromptAuditCategory marks violations counted from a
+	// prompt audit finding of a rule that counts toward disposal.
+	ContentModerationPromptAuditCategory = "prompt_audit"
 
 	// ContentModerationHashCategory marks events matched by the hash
 	// blocklist instead of an engine call; they never count as violations.
@@ -71,6 +80,8 @@ type ContentModerationEvent struct {
 	AutoDisabled   bool   `json:"auto_disabled"`
 	EmailSent      bool   `json:"email_sent"`
 	ConfigVersion  int64  `json:"config_version"`
+	// RuleId is the audit policy rule that sent the request to moderation.
+	RuleId string `json:"rule_id" gorm:"type:varchar(64)"`
 }
 
 // fitColumns shortens variable-length columns to their declared size so an
@@ -82,7 +93,7 @@ func (e *ContentModerationEvent) fitColumns() {
 	}{
 		{&e.RequestId, 64}, {&e.Username, 64}, {&e.TokenName, 255}, {&e.UsingGroup, 64},
 		{&e.RelayFormat, 32}, {&e.Endpoint, 128}, {&e.ModelName, 255}, {&e.Mode, 16}, {&e.Action, 16},
-		{&e.HighestCategory, 64}, {&e.InputHash, 64}, {&e.KeywordList, 64}, {&e.EngineModel, 255}, {&e.Error, 255},
+		{&e.HighestCategory, 64}, {&e.InputHash, 64}, {&e.KeywordList, 64}, {&e.EngineModel, 255}, {&e.Error, 255}, {&e.RuleId, 64},
 	} {
 		if utf8.RuneCountInString(*field.value) > field.limit {
 			*field.value = string([]rune(*field.value)[:field.limit])

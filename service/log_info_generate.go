@@ -64,6 +64,20 @@ func appendRequestPath(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other
 	}
 }
 
+// AuditRerouteContextKey holds the AuditReroute of a request an audit policy
+// rule sent to another model or group.
+const AuditRerouteContextKey = "audit_reroute"
+
+// AuditReroute records the requested and the actual model and group of a
+// rerouted request; the log's model is the actual one.
+type AuditReroute struct {
+	RuleID    string `json:"rule_id"`
+	FromModel string `json:"from_model"`
+	ToModel   string `json:"to_model"`
+	FromGroup string `json:"from_group"`
+	ToGroup   string `json:"to_group"`
+}
+
 // AppendRelayLogAdminInfo records relay routing and conversion diagnostics in
 // the admin-only scope shared by successful and failed request logs.
 func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
@@ -71,6 +85,9 @@ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		return
 	}
 	other.SetAdmin("use_channel", ctx.GetStringSlice("use_channel"))
+	if reroute, ok := ctx.Get(AuditRerouteContextKey); ok {
+		other.SetAdmin("audit_reroute", reroute)
+	}
 	if relayInfo != nil {
 		if billingModel := relayInfo.GetBillingModelName(); billingModel != "" && billingModel != relayInfo.OriginModelName {
 			other.SetAdmin("billing_model", billingModel)

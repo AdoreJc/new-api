@@ -16,6 +16,8 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/audit_policy_setting"
+	"github.com/QuantumNous/new-api/setting/content_moderation_setting"
 	"github.com/QuantumNous/new-api/setting/prompt_audit_setting"
 
 	"github.com/gin-gonic/gin"
@@ -203,7 +205,9 @@ func TestGuardVerdictMapping(t *testing.T) {
 		{"Safety: Safe\nCategories: None", true, DecisionPass, ActionAllow},
 	}
 	for _, test := range tests {
-		result, err := parseQwen3Guard(test.answer, prompt_audit_setting.ScannerIDs, test.strict)
+		config := prompt_audit_setting.DefaultConfig()
+		config.StrictJailbreakMapping = test.strict
+		result, err := parseQwen3Guard(test.answer, legacyRule(&config))
 		require.NoError(t, err)
 		assert.Equal(t, test.decision, result.Decision, "%q strict=%v", test.answer, test.strict)
 		assert.Equal(t, test.action, result.Action, "%q strict=%v", test.answer, test.strict)
@@ -283,7 +287,7 @@ func TestRelayProtocolCoverage(t *testing.T) {
 		{types.RelayFormatMjProxy, "/mj/submit/imagine", "", "Midjourney does not go through Relay"},
 	}
 	for _, test := range tests {
-		protocol, audited := relayProtocol(test.format, test.path)
+		protocol, audited := RelayProtocol(test.format, test.path)
 		assert.Equal(t, test.protocol, protocol, test.path)
 		assert.Equal(t, test.reason == "", audited, test.path)
 	}
@@ -348,6 +352,38 @@ func useConfig(t *testing.T, config prompt_audit_setting.Config, tokens map[stri
 		prompt_audit_setting.ApplyOption(prompt_audit_setting.OptionKey, string(configJSON))
 		prompt_audit_setting.ApplyOption(prompt_audit_setting.TokensOptionKey, string(tokensJSON))
 	})
+}
+
+// legacyRule is the prompt audit part of the rule derived from config, the
+// rule every in-scope request gets while no audit policy table is saved.
+func legacyRule(config *prompt_audit_setting.Config) *audit_policy_setting.PromptAudit {
+	enabled := *config
+	enabled.Enabled = true
+	derived := audit_policy_setting.Derive(enabled, false, content_moderation_setting.DefaultConfig())
+	return &derived.Rules[0].PromptAudit
+}
+
+// enqueueRelay queues a request as the policy coordinator does under the
+// rules derived from the current settings.
+func (s *Service) enqueueRelay(c *gin.Context, info *relaycommon.RelayInfo) {
+	subject := audit_policy_setting.Subject{UserID: info.UserId, TokenID: info.TokenId, Group: info.UsingGroup, Model: info.OriginModelName, Format: string(info.RelayFormat)}
+	if subject.Group == "auto" {
+		if selected := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); selected != "" {
+			subject.Group, subject.RequestedGroup = selected, "auto"
+		}
+	}
+	resolution := audit_policy_setting.Current().Config.Resolve(subject)
+	protocol, covered := RelayProtocol(info.RelayFormat, info.RequestURLPath)
+	if !resolution.Rule.PromptAudit.Enabled || !covered {
+		if Enabled() {
+			s.metrics.skipped.Add(1)
+		}
+		return
+	}
+	meta := Meta{RequestID: c.GetString(common.RequestIdKey), UserID: info.UserId, TokenID: info.TokenId,
+		TokenName: c.GetString("token_name"), Group: subject.Group, RelayFormat: string(info.RelayFormat),
+		Endpoint: info.RequestURLPath, Model: info.OriginModelName, Protocol: protocol}
+	s.enqueue(c, meta, resolution.Rule.ID, resolution.Rule.PromptAudit)
 }
 
 func enabledConfig(baseURL string) prompt_audit_setting.Config {
@@ -560,7 +596,7 @@ func TestGuardRequestCarriesTokenAndFailsOver(t *testing.T) {
 
 	var metrics Metrics
 	var client guardClient
-	result, err := client.evaluate(context.Background(), snapshot, userPart("hello"), scanPart{}, nil, &metrics)
+	result, err := client.evaluate(context.Background(), scanRequest{snapshot: snapshot, rule: legacyRule(&snapshot.Config), retryDelays: nil}, userPart("hello"), scanPart{}, &metrics)
 	require.NoError(t, err)
 	assert.Equal(t, DecisionPass, result.Decision)
 	assert.Equal(t, "g2", result.GuardEndpointID)
@@ -686,7 +722,7 @@ func TestLongConversationsAreScannedWithinTheChunkBudget(t *testing.T) {
 
 	var metrics Metrics
 	var client guardClient
-	first, err := client.evaluate(context.Background(), snapshot, latest, history, nil, &metrics)
+	first, err := client.evaluate(context.Background(), scanRequest{snapshot: snapshot, rule: legacyRule(&snapshot.Config), retryDelays: nil}, latest, history, &metrics)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), calls.Load(), "only the budget is sent to the Guard")
 	assert.Equal(t, 5, first.ChunkTotal)
@@ -697,13 +733,13 @@ func TestLongConversationsAreScannedWithinTheChunkBudget(t *testing.T) {
 
 	// A resent conversation skips chunks already found safe, so the budget
 	// moves on to the older ones.
-	second, err := client.evaluate(context.Background(), snapshot, latest, history, nil, &metrics)
+	second, err := client.evaluate(context.Background(), scanRequest{snapshot: snapshot, rule: legacyRule(&snapshot.Config), retryDelays: nil}, latest, history, &metrics)
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), calls.Load())
 	assert.Equal(t, 2, second.ChunksScanned)
 	assert.Equal(t, int64(3), metrics.chunksCached.Load())
 
-	third, err := client.evaluate(context.Background(), snapshot, latest, history, nil, &metrics)
+	third, err := client.evaluate(context.Background(), scanRequest{snapshot: snapshot, rule: legacyRule(&snapshot.Config), retryDelays: nil}, latest, history, &metrics)
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), calls.Load(), "nothing is rescanned")
 	assert.Equal(t, DecisionPass, third.Decision)
@@ -717,7 +753,7 @@ func TestRetryRescansOnlyTheFailedChunk(t *testing.T) {
 
 	var metrics Metrics
 	var client guardClient
-	result, err := client.evaluate(context.Background(), snapshot, userPart("latest"), userPart("history"), []time.Duration{time.Millisecond}, &metrics)
+	result, err := client.evaluate(context.Background(), scanRequest{snapshot: snapshot, rule: legacyRule(&snapshot.Config), retryDelays: []time.Duration{time.Millisecond}}, userPart("latest"), userPart("history"), &metrics)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), calls.Load(), "one call per chunk plus one retry of the failed chunk")
 	assert.Equal(t, []string{"latest", "history"}, *texts)
@@ -783,7 +819,7 @@ func TestFindingsSurviveALaterChunkFailure(t *testing.T) {
 
 	var metrics Metrics
 	var client guardClient
-	result, err := client.evaluate(context.Background(), snapshot, userPart("latest"), userPart("history"), []time.Duration{time.Millisecond}, &metrics)
+	result, err := client.evaluate(context.Background(), scanRequest{snapshot: snapshot, rule: legacyRule(&snapshot.Config), retryDelays: []time.Duration{time.Millisecond}}, userPart("latest"), userPart("history"), &metrics)
 	require.Error(t, err)
 	require.NotNil(t, result, "the flagged first chunk is kept")
 	assert.Equal(t, DecisionFlag, result.Decision)
@@ -792,7 +828,7 @@ func TestFindingsSurviveALaterChunkFailure(t *testing.T) {
 	assert.Equal(t, []chunkHit{{Index: 1, Roles: []string{"user"}, Decision: DecisionFlag, Categories: []string{"politically_sensitive_topics"}}}, result.Hits)
 
 	calls.Store(1) // every call fails from now on
-	none, err := client.evaluate(context.Background(), snapshot, userPart("only"), userPart("chunks"), nil, &metrics)
+	none, err := client.evaluate(context.Background(), scanRequest{snapshot: snapshot, rule: legacyRule(&snapshot.Config), retryDelays: nil}, userPart("only"), userPart("chunks"), &metrics)
 	require.Error(t, err)
 	assert.Nil(t, none, "a failure with nothing found yet returns no result")
 }
@@ -817,7 +853,7 @@ func TestHitChunksNameRolesInScanOrder(t *testing.T) {
 
 	var metrics Metrics
 	var client guardClient
-	result, err := client.evaluate(context.Background(), snapshot, prompt.Latest, prompt.Rest, nil, &metrics)
+	result, err := client.evaluate(context.Background(), scanRequest{snapshot: snapshot, rule: legacyRule(&snapshot.Config), retryDelays: nil}, prompt.Latest, prompt.Rest, &metrics)
 	require.NoError(t, err)
 
 	// Scan order: the latest user turn, then the history from its end

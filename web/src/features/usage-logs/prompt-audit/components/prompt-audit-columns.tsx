@@ -29,6 +29,7 @@ import dayjs from '@/lib/dayjs'
 import type { PromptAuditEvent } from '../api'
 import {
   PROMPT_AUDIT_DECISION_LABELS,
+  PROMPT_AUDIT_POLICY_ACTION_LABELS,
   promptAuditCategories,
 } from '../lib/event-format'
 import { PromptAuditEventDialog } from './prompt-audit-event-dialog'
@@ -92,6 +93,31 @@ export function usePromptAuditColumns(
           />
         ),
         meta: { label: t('Result') },
+      },
+      {
+        id: 'policy_action',
+        header: t('Policy action'),
+        size: 110,
+        accessorFn: (event) =>
+          event.policy_action
+            ? t(
+                PROMPT_AUDIT_POLICY_ACTION_LABELS[event.policy_action] ??
+                  event.policy_action
+              )
+            : '',
+        cell: ({ row, getValue }) =>
+          row.original.policy_action ? (
+            <StatusBadge
+              label={getValue<string>()}
+              variant={
+                row.original.policy_action === 'block' ? 'danger' : 'neutral'
+              }
+              copyable={false}
+            />
+          ) : (
+            <span className='text-muted-foreground'>-</span>
+          ),
+        meta: { label: t('Policy action') },
       },
       {
         id: 'categories',
