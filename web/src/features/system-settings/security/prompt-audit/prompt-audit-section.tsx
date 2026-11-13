@@ -112,12 +112,24 @@ const SWITCHES = [
     description:
       'Also record an event when a scan finds nothing. This can create many events.',
   },
+  {
+    name: 'structure_stats_enabled',
+    label: 'Request structure statistics',
+    description:
+      'Measurement only: counts structural features of requests and a hash fingerprint of the system prompt. It never changes audit decisions and stores only hashes and counts, never prompt text.',
+  },
 ] as const
 
 const POLICY_SCOPED_NOTE = 'Used only while no audit policy is saved.'
 
 const NUMBER_FIELDS = [
   { name: 'retention_days', label: 'Retention (days)', min: 1, max: 365 },
+  {
+    name: 'structure_stats_retention_days',
+    label: 'Structure statistics retention (days)',
+    min: 1,
+    max: 365,
+  },
   { name: 'worker_count', label: 'Concurrent scans', min: 1, max: 8 },
   { name: 'queue_capacity', label: 'Queue capacity', min: 1, max: 10000 },
   {

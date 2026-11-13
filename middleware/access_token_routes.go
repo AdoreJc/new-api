@@ -162,6 +162,8 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/prompt_audit/events/batch-delete":     accessTokenSessionRule,
 	"POST /api/prompt_audit/events/delete-preview":   accessTokenSessionRule,
 	"POST /api/prompt_audit/events/delete-by-filter": accessTokenSessionRule,
+	"GET /api/prompt_audit/structure/fingerprints":   accessTokenSessionRule,
+	"GET /api/prompt_audit/structure/signals":        accessTokenSessionRule,
 
 	// router/api-router.go: /api/audit_policy (root only). The rules decide
 	// which requests are blocked or rerouted, so every route needs a browser

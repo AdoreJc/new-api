@@ -57,6 +57,10 @@ var (
 type promptSegment struct {
 	text string
 	role string
+	// turn is the 1-based position of the conversation message the text came
+	// from; 0 for text outside the conversation (top-level instructions,
+	// media prompts).
+	turn int
 }
 
 func (s promptSegment) isUser() bool { return s.role == "" || s.role == "user" }
@@ -117,12 +121,27 @@ type promptSnapshot struct {
 // turn, user keeps every user text, all keeps everything. Images, audio and
 // files are ignored.
 func extractPromptSnapshot(protocol string, body []byte, scope string) (*promptSnapshot, error) {
+	segments, _, err := requestSegments(protocol, body)
+	if err != nil {
+		return nil, err
+	}
+	return scopedSnapshot(segments, scope)
+}
+
+// requestSegments parses the request and returns its client-controlled texts
+// in request order, with the number of conversation messages.
+func requestSegments(protocol string, body []byte) ([]promptSegment, int, error) {
 	var document any
 	if err := common.Unmarshal(body, &document); err != nil {
-		return nil, errInvalidJSON
+		return nil, 0, errInvalidJSON
 	}
 	root, _ := document.(map[string]any)
-	latest, rest := splitLatestUserTurn(protocolSegments(protocol, root))
+	segments, turns := protocolSegments(protocol, root)
+	return segments, turns, nil
+}
+
+func scopedSnapshot(segments []promptSegment, scope string) (*promptSnapshot, error) {
+	latest, rest := splitLatestUserTurn(segments)
 	if len(latest) == 0 {
 		return nil, errNoPromptText
 	}
@@ -167,38 +186,52 @@ func userOnly(segments []promptSegment) []promptSegment {
 	return result
 }
 
-func protocolSegments(protocol string, root map[string]any) []promptSegment {
+// protocolSegments returns the texts of the request and the number of
+// messages in its conversation, which is the turn of the last message.
+func protocolSegments(protocol string, root map[string]any) ([]promptSegment, int) {
 	if root == nil {
-		return nil
+		return nil, 0
 	}
 	switch protocol {
 	case ProtocolChat:
-		return messageSegments(root["messages"])
+		return messageSegments(root["messages"]), conversationTurns(root["messages"])
 	case ProtocolClaude:
-		return append(instructionSegments(root["system"]), messageSegments(root["messages"])...)
+		return append(instructionSegments(root["system"]), messageSegments(root["messages"])...), conversationTurns(root["messages"])
 	case ProtocolGemini:
-		return geminiRootSegments(root)
+		return geminiRootSegments(root), conversationTurns(root["contents"])
 	case ProtocolResponses:
-		return append(instructionSegments(root["instructions"]), responsesInputSegments(root["input"])...)
+		return append(instructionSegments(root["instructions"]), responsesInputSegments(root["input"])...), conversationTurns(root["input"])
 	case ProtocolImages:
-		return userSegments(mediaPrompts(root))
+		return userSegments(mediaPrompts(root)), 0
 	}
 	if segments := messageSegments(root["messages"]); len(segments) > 0 {
-		return segments
+		return segments, conversationTurns(root["messages"])
 	}
 	if segments := append(instructionSegments(root["instructions"]), responsesInputSegments(root["input"])...); len(segments) > 0 {
-		return segments
+		return segments, conversationTurns(root["input"])
 	}
 	if segments := geminiRootSegments(root); len(segments) > 0 {
-		return segments
+		return segments, conversationTurns(root["contents"])
 	}
-	return userSegments(mediaPrompts(root))
+	return userSegments(mediaPrompts(root)), 0
+}
+
+// conversationTurns counts the messages of a conversation value: the items
+// of a list, or one for a single message or bare text.
+func conversationTurns(value any) int {
+	switch typed := value.(type) {
+	case nil:
+		return 0
+	case []any:
+		return len(typed)
+	}
+	return 1
 }
 
 func messageSegments(value any) []promptSegment {
 	items, _ := value.([]any)
 	result := make([]promptSegment, 0, len(items))
-	for _, item := range items {
+	for index, item := range items {
 		message, ok := item.(map[string]any)
 		if !ok {
 			continue
@@ -208,7 +241,7 @@ func messageSegments(value any) []promptSegment {
 			continue
 		}
 		for _, text := range contentTexts(message["content"]) {
-			result = append(result, promptSegment{text: text, role: role})
+			result = append(result, promptSegment{text: text, role: role, turn: index + 1})
 		}
 	}
 	return result
@@ -224,22 +257,30 @@ func instructionSegments(value any) []promptSegment {
 func responsesInputSegments(value any) []promptSegment {
 	switch typed := value.(type) {
 	case string:
-		return userSegments([]string{typed})
+		return []promptSegment{{text: typed, role: "user", turn: 1}}
 	case map[string]any:
-		return responsesItemSegments(typed)
+		return inTurn(responsesItemSegments(typed), 1)
 	case []any:
 		result := make([]promptSegment, 0, len(typed))
-		for _, item := range typed {
+		for index, item := range typed {
 			switch entry := item.(type) {
 			case string:
-				result = append(result, promptSegment{text: entry, role: "user"})
+				result = append(result, promptSegment{text: entry, role: "user", turn: index + 1})
 			case map[string]any:
-				result = append(result, responsesItemSegments(entry)...)
+				result = append(result, inTurn(responsesItemSegments(entry), index+1)...)
 			}
 		}
 		return result
 	}
 	return nil
+}
+
+// inTurn sets the conversation position of one message's texts.
+func inTurn(segments []promptSegment, turn int) []promptSegment {
+	for index := range segments {
+		segments[index].turn = turn
+	}
+	return segments
 }
 
 // responsesItemSegments reads a message-like Responses input item. Items with
@@ -269,7 +310,8 @@ func geminiRootSegments(root map[string]any) []promptSegment {
 		for _, item := range requests {
 			if request, ok := item.(map[string]any); ok {
 				result = append(result, geminiSystemSegments(request["systemInstruction"])...)
-				result = append(result, geminiContentSegments(request["contents"])...)
+				// A batch holds several conversations; their texts get no turn.
+				result = append(result, inTurn(geminiContentSegments(request["contents"]), 0)...)
 			}
 		}
 	}
@@ -291,7 +333,7 @@ func geminiContentSegments(value any) []promptSegment {
 		}
 	}
 	result := make([]promptSegment, 0, len(contents))
-	for _, item := range contents {
+	for index, item := range contents {
 		content, ok := item.(map[string]any)
 		if !ok {
 			continue
@@ -303,7 +345,7 @@ func geminiContentSegments(value any) []promptSegment {
 		if role != "" && !slices.Contains(clientTextRoles, role) {
 			continue
 		}
-		result = append(result, roleSegments(geminiPartTexts(content["parts"]), role)...)
+		result = append(result, inTurn(roleSegments(geminiPartTexts(content["parts"]), role), index+1)...)
 	}
 	return result
 }
@@ -397,6 +439,24 @@ func looksLikeMediaPayload(value string) bool {
 // user texts right before it, stepping over agent wrappers) from the rest,
 // which keeps request order. Without any user text the last text leads.
 func splitLatestUserTurn(segments []promptSegment) (latest []promptSegment, rest []promptSegment) {
+	normalized := normalizeSegments(segments)
+	if len(normalized) == 0 {
+		return nil, nil
+	}
+	inLatest := latestUserTurn(normalized)
+	for index, segment := range normalized {
+		if inLatest[index] {
+			latest = append(latest, segment)
+		} else {
+			rest = append(rest, segment)
+		}
+	}
+	return latest, rest
+}
+
+// normalizeSegments trims texts, drops empty ones and marks user texts that
+// are wholly agent wrappers.
+func normalizeSegments(segments []promptSegment) []promptSegment {
 	normalized := make([]promptSegment, 0, len(segments))
 	for _, segment := range segments {
 		segment.text = strings.TrimSpace(segment.text)
@@ -408,9 +468,12 @@ func splitLatestUserTurn(segments []promptSegment) (latest []promptSegment, rest
 		}
 		normalized = append(normalized, segment)
 	}
-	if len(normalized) == 0 {
-		return nil, nil
-	}
+	return normalized
+}
+
+// latestUserTurn marks the normalized texts that form the latest user turn;
+// without any user text it marks the last text.
+func latestUserTurn(normalized []promptSegment) []bool {
 	inLatest := make([]bool, len(normalized))
 	found := false
 	for index := len(normalized) - 1; index >= 0; index-- {
@@ -422,17 +485,10 @@ func splitLatestUserTurn(segments []promptSegment) (latest []promptSegment, rest
 			break
 		}
 	}
-	if !found {
+	if !found && len(normalized) > 0 {
 		inLatest[len(normalized)-1] = true
 	}
-	for index, segment := range normalized {
-		if inLatest[index] {
-			latest = append(latest, segment)
-		} else {
-			rest = append(rest, segment)
-		}
-	}
-	return latest, rest
+	return inLatest
 }
 
 // isAgentContext reports whether a user text is only agent wrappers: one or

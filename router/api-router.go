@@ -230,6 +230,8 @@ func SetApiRouter(router *gin.Engine) {
 			promptAuditRoute.POST("/events/batch-delete", controller.BatchDeletePromptAuditEvents)
 			promptAuditRoute.POST("/events/delete-preview", controller.PreviewPromptAuditEventDeletion)
 			promptAuditRoute.POST("/events/delete-by-filter", controller.DeletePromptAuditEventsByFilter)
+			promptAuditRoute.GET("/structure/fingerprints", controller.GetPromptAuditStructureFingerprints)
+			promptAuditRoute.GET("/structure/signals", controller.GetPromptAuditStructureSignals)
 		}
 		// The audit policy decides which requests are checked, blocked or
 		// rerouted, so the whole group is root-only.

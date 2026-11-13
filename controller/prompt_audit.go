@@ -113,6 +113,7 @@ func UpdatePromptAuditConfig(c *gin.Context) {
 		"store_full_prompt": saved.StoreFullPrompt, "retention_days": saved.RetentionDays,
 		"scan_scope": saved.ScanScope, "strict_jailbreak_mapping": saved.StrictJailbreakMapping,
 		"mode": saved.Mode, "fail_policy": saved.FailPolicy, "store_pass_events": saved.StorePassEvents,
+		"structure_stats_enabled": saved.StructureStatsEnabled, "structure_stats_retention_days": saved.StructureStatsRetentionDays,
 		"config_version": saved.ConfigVersion, "token_changes": strings.Join(tokenChanges, ","),
 	})
 	common.ApiSuccess(c, buildPromptAuditConfigResponse(saved, tokens))
@@ -419,6 +420,65 @@ func DeletePromptAuditEventsByFilter(c *gin.Context) {
 		"start_time": filter.StartTime, "end_time": filter.EndTime,
 	})
 	common.ApiSuccess(c, gin.H{"deleted": deleted})
+}
+
+// promptAuditFingerprintItem is a fingerprint with its capped user count
+// spelled out, so a count at the cap reads as "at least".
+type promptAuditFingerprintItem struct {
+	*model.PromptAuditFingerprint
+	UserCountCapped bool `json:"user_count_capped"`
+}
+
+// GetPromptAuditStructureFingerprints ranks system prompt fingerprints by
+// distinct users (default) or by requests. Rows hold hashes and counts only.
+func GetPromptAuditStructureFingerprints(c *gin.Context) {
+	sort := c.DefaultQuery("sort", model.PromptAuditFingerprintSortUsers)
+	if sort != model.PromptAuditFingerprintSortUsers && sort != model.PromptAuditFingerprintSortRequests {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
+	pageInfo := common.GetPageQuery(c)
+	fingerprints, total, err := model.ListPromptAuditFingerprints(sort, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	items := make([]promptAuditFingerprintItem, 0, len(fingerprints))
+	for _, fingerprint := range fingerprints {
+		items = append(items, promptAuditFingerprintItem{fingerprint, fingerprint.UserCount >= model.PromptAuditFingerprintUserCap})
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(items)
+	common.ApiSuccess(c, pageInfo)
+}
+
+// promptAuditStructureMaxDays bounds the day range of one signal query.
+const promptAuditStructureMaxDays = 366
+
+// GetPromptAuditStructureSignals returns the structural signal counters per
+// day, summed over the request formats and client classes left unfiltered.
+// Without a range it covers the last 30 days.
+func GetPromptAuditStructureSignals(c *gin.Context) {
+	var filter model.PromptAuditStructureFilter
+	if err := c.ShouldBindQuery(&filter); err != nil || filter.StartDay < 0 || filter.EndDay < 0 ||
+		(filter.RequestFormat != "" && !slices.Contains(promptaudit.StructureFormats, filter.RequestFormat)) ||
+		(filter.ClientClass != "" && !slices.Contains(promptaudit.ClientClasses, filter.ClientClass)) {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
+	if filter.StartDay == 0 && filter.EndDay == 0 {
+		start := time.Now().AddDate(0, 0, -29)
+		filter.StartDay = start.Year()*10000 + int(start.Month())*100 + start.Day()
+	}
+	items, err := model.ListPromptAuditStructureDaily(filter)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if len(items) > promptAuditStructureMaxDays {
+		items = items[:promptAuditStructureMaxDays]
+	}
+	common.ApiSuccess(c, gin.H{"items": items, "request_formats": promptaudit.StructureFormats, "client_classes": promptaudit.ClientClasses})
 }
 
 // promptAuditFilterRejected reports a filter refused before any database

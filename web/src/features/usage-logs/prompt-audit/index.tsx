@@ -31,6 +31,7 @@ import {
 import { SectionPageLayout } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { CompactDateTimeRangePicker } from '../components/compact-date-time-range-picker'
@@ -53,6 +54,7 @@ import { usePromptAuditColumns } from './components/prompt-audit-columns'
 import { PromptAuditFilterSummary } from './components/prompt-audit-filter-summary'
 import { PromptAuditKeywordOptions } from './components/prompt-audit-keyword-options'
 import { PromptAuditScanStatus } from './components/prompt-audit-scan-status'
+import { PromptAuditStructureStats } from './components/prompt-audit-structure-stats'
 import { isScannedPromptAuditSearch } from './lib/keyword-search'
 
 const EMPTY_EVENTS: PromptAuditEvent[] = []
@@ -77,6 +79,7 @@ function deletePendingEvents(deletion: PendingDeletion) {
 export function PromptAuditEvents() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const [view, setView] = useState<'events' | 'structure'>('events')
   const [draft, setDraft] = useState<PromptAuditEventFilter>({})
   const [filter, setFilter] = useState<PromptAuditEventFilter>({})
   const [page, setPage] = useState({ pageIndex: 0, pageSize: 20 })
@@ -249,9 +252,35 @@ export function PromptAuditEvents() {
       draft.end_time,
     ].filter((value) => value !== undefined).length
 
+  const viewTabs = (
+    <Tabs
+      value={view}
+      onValueChange={(value) => {
+        if (value === 'events' || value === 'structure') setView(value)
+      }}
+    >
+      <TabsList aria-label={t('Prompt audit view')}>
+        <TabsTrigger value='events'>{t('Events')}</TabsTrigger>
+        <TabsTrigger value='structure'>{t('Structure statistics')}</TabsTrigger>
+      </TabsList>
+    </Tabs>
+  )
+  if (view === 'structure') {
+    return (
+      <SectionPageLayout>
+        <SectionPageLayout.Title>{t('Prompt Audit')}</SectionPageLayout.Title>
+        <SectionPageLayout.Actions>{viewTabs}</SectionPageLayout.Actions>
+        <SectionPageLayout.Content>
+          <PromptAuditStructureStats />
+        </SectionPageLayout.Content>
+      </SectionPageLayout>
+    )
+  }
+
   return (
     <SectionPageLayout fixedContent>
       <SectionPageLayout.Title>{t('Prompt Audit')}</SectionPageLayout.Title>
+      <SectionPageLayout.Actions>{viewTabs}</SectionPageLayout.Actions>
       <SectionPageLayout.Content>
         <div className='flex h-full min-h-0 flex-col'>
           <DataTablePage

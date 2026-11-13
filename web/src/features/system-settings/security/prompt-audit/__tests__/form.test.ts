@@ -42,6 +42,8 @@ const response: PromptAuditConfigResponse = {
     max_chunks_per_request: 8,
     scan_scope: 'all',
     strict_jailbreak_mapping: true,
+    structure_stats_enabled: true,
+    structure_stats_retention_days: 14,
     endpoints: [
       {
         id: 'kept',
@@ -128,6 +130,8 @@ describe('prompt audit settings form', () => {
         store_pass_events: undefined,
         scan_scope: undefined,
         strict_jailbreak_mapping: undefined,
+        structure_stats_enabled: undefined,
+        structure_stats_retention_days: undefined,
       },
     } as unknown as PromptAuditConfigResponse
 
@@ -138,7 +142,49 @@ describe('prompt audit settings form', () => {
     expect(values.mode).toBe('async_audit')
     expect(values.fail_policy).toBe('open')
     expect(values.store_pass_events).toBe(false)
+    expect(values.structure_stats_enabled).toBe(false)
+    expect(values.structure_stats_retention_days).toBe(30)
   })
+
+  it('keeps the saved structure statistics settings and sends edited ones', () => {
+    const values = toPromptAuditFormValues(response)
+    expect(values.structure_stats_enabled).toBe(true)
+    expect(values.structure_stats_retention_days).toBe(14)
+
+    const request = toPromptAuditConfigRequest(
+      {
+        ...values,
+        structure_stats_enabled: false,
+        structure_stats_retention_days: 90,
+      },
+      response.config
+    )
+
+    expect(request.config.structure_stats_enabled).toBe(false)
+    expect(request.config.structure_stats_retention_days).toBe(90)
+  })
+
+  it.each([0, 366, 1.5])(
+    'rejects %s structure statistics retention days',
+    (days) => {
+      const values = {
+        ...toPromptAuditFormValues(response),
+        structure_stats_retention_days: days,
+      }
+      expect(promptAuditFormSchema.safeParse(values).success).toBe(false)
+    }
+  )
+
+  it.each([1, 365])(
+    'accepts %s structure statistics retention days',
+    (days) => {
+      const values = {
+        ...toPromptAuditFormValues(response),
+        structure_stats_retention_days: days,
+      }
+      expect(promptAuditFormSchema.safeParse(values).success).toBe(true)
+    }
+  )
 
   it('accepts a group prefix pattern', () => {
     const values = {

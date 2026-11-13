@@ -148,6 +148,9 @@ type job struct {
 	email      string
 	rule       audit_policy_setting.PromptAudit
 	enqueuedAt time.Time
+	// client is the client class of the request; it is only set while
+	// request structure statistics are on.
+	client string
 }
 
 // DisposalHook receives triggered findings of rules that count toward
@@ -178,6 +181,8 @@ type Service struct {
 	// in the background; synchronous checks never wait to retry.
 	retryDelays []time.Duration
 	now         func() time.Time
+	// structure collects request structure statistics.
+	structure *structureStats
 }
 
 func newService() *Service {
@@ -187,6 +192,7 @@ func newService() *Service {
 		writes:      make(chan *model.PromptAuditEvent, writeBufferSize),
 		retryDelays: []time.Duration{200 * time.Millisecond, time.Second},
 		now:         time.Now,
+		structure:   newStructureStats(),
 	}
 }
 
@@ -203,6 +209,7 @@ func (s *Service) start(ctx context.Context) {
 		}
 		go s.writer(ctx)
 		go s.cleanupLoop(ctx)
+		go s.structureLoop(ctx)
 	})
 }
 
@@ -289,6 +296,9 @@ func (s *Service) enqueue(c *gin.Context, meta Meta, ruleID string, rule audit_p
 	event := meta.event(ModeAsync)
 	event.RuleId = ruleID
 	item := &job{protocol: meta.Protocol, size: size, body: raw, event: event, email: meta.UserEmail, rule: rule, enqueuedAt: s.now()}
+	if snapshot.Config.StructureStatsEnabled {
+		item.client = ClientClassOf(c.Request.UserAgent())
+	}
 	select {
 	case s.queue <- item:
 		s.metrics.enqueued.Add(1)
@@ -342,7 +352,11 @@ func (s *Service) process(ctx context.Context, item *job) {
 		s.metrics.skipped.Add(1)
 		return
 	}
-	prompt, err := s.extract(item.protocol, item.body, snapshot, &item.rule)
+	var subject *structureSubject
+	if snapshot.Config.StructureStatsEnabled {
+		subject = &structureSubject{userID: item.event.UserId, protocol: item.protocol, client: item.client}
+	}
+	prompt, err := s.extract(item.protocol, item.body, snapshot, &item.rule, subject)
 	if err != nil {
 		return
 	}
@@ -374,13 +388,21 @@ func (s *Service) process(ctx context.Context, item *job) {
 }
 
 // extract reads the text the rule's scan scope sends to the Guard and counts
-// requests without any.
-func (s *Service) extract(protocol string, body []byte, snapshot *prompt_audit_setting.Snapshot, rule *audit_policy_setting.PromptAudit) (*promptSnapshot, error) {
+// requests without any. With a subject, every extracted text of the request,
+// whatever the scope, is also handed to request structure statistics.
+func (s *Service) extract(protocol string, body []byte, snapshot *prompt_audit_setting.Snapshot, rule *audit_policy_setting.PromptAudit, subject *structureSubject) (*promptSnapshot, error) {
 	scope := rule.ScanScope
 	if scope == "" {
 		scope = snapshot.Config.ScanScope
 	}
-	prompt, err := extractPromptSnapshot(protocol, body, scope)
+	var prompt *promptSnapshot
+	segments, turns, err := requestSegments(protocol, body)
+	if err == nil {
+		if subject != nil && len(segments) > 0 {
+			s.structure.submit(*subject, segments, turns)
+		}
+		prompt, err = scopedSnapshot(segments, scope)
+	}
 	if errors.Is(err, errAgentContextOnly) {
 		s.metrics.agentContextOnly.Add(1)
 	} else if err != nil {
@@ -521,7 +543,11 @@ func (s *Service) checkSnapshot(ctx context.Context, c *gin.Context, meta Meta, 
 		s.metrics.skipped.Add(1)
 		return Verdict{Outcome: OutcomeSkipped}
 	}
-	prompt, err := s.extract(meta.Protocol, body, snapshot, rule)
+	var subject *structureSubject
+	if snapshot.Config.StructureStatsEnabled {
+		subject = &structureSubject{userID: meta.UserID, protocol: meta.Protocol, client: ClientClassOf(c.Request.UserAgent())}
+	}
+	prompt, err := s.extract(meta.Protocol, body, snapshot, rule, subject)
 	if err != nil {
 		return Verdict{Outcome: OutcomeSkipped}
 	}
@@ -653,11 +679,15 @@ func (s *Service) cleanupLoop(ctx context.Context) {
 	}
 }
 
-// cleanup deletes events older than the retention period in batches. It also
+// cleanup deletes events older than the retention period in batches, and
+// request structure statistics older than their own retention period. It also
 // runs while auditing is off so stored prompts still expire.
 func (s *Service) cleanup() (int64, error) {
-	days := prompt_audit_setting.Current().Config.RetentionDays
-	return model.CleanupPromptAuditEvents(s.now().Add(-time.Duration(days) * 24 * time.Hour).Unix())
+	config := prompt_audit_setting.Current().Config
+	statsCutoff := s.now().Add(-time.Duration(config.StructureStatsRetentionDays) * 24 * time.Hour)
+	_, statsErr := model.CleanupPromptAuditStructureStats(statsCutoff.Unix(), structureDay(statsCutoff))
+	deleted, err := model.CleanupPromptAuditEvents(s.now().Add(-time.Duration(config.RetentionDays) * 24 * time.Hour).Unix())
+	return deleted, errors.Join(err, statsErr)
 }
 
 // RuntimeStatus is the operational view shown to administrators.
@@ -707,6 +737,12 @@ type RuntimeStatus struct {
 	SyncP50MS       int64 `json:"sync_p50_ms"`
 	SyncP95MS       int64 `json:"sync_p95_ms"`
 	SyncP99MS       int64 `json:"sync_p99_ms"`
+	// Structure* describe request structure statistics: requests measured,
+	// requests or fingerprints left out, and failed batch writes.
+	StructureStatsEnabled bool  `json:"structure_stats_enabled"`
+	StructureObserved     int64 `json:"structure_observed"`
+	StructureDropped      int64 `json:"structure_dropped"`
+	StructureWriteFailed  int64 `json:"structure_write_failed"`
 }
 
 func Runtime() RuntimeStatus { return defaultService.runtime() }
@@ -728,6 +764,8 @@ func (s *Service) runtime() RuntimeStatus {
 		ChunksCached: m.chunksCached.Load(), ChunksOverBudget: m.chunksOverBudget.Load(),
 		LatencyMaxMS: m.latencyMaxMS.Load(), SyncChecks: m.syncChecks.Load(), SyncUnavailable: m.syncUnavailable.Load(),
 		SyncInFlight: len(s.syncSlots), SyncConcurrency: cap(s.syncSlots),
+		StructureStatsEnabled: config.StructureStatsEnabled, StructureObserved: s.structure.observed.Load(),
+		StructureDropped: s.structure.dropped.Load(), StructureWriteFailed: s.structure.writeFailed.Load(),
 	}
 	if completed := status.Passed + status.Flagged + status.Critical; completed > 0 {
 		status.LatencyAvgMS = m.latencyTotalMS.Load() / completed

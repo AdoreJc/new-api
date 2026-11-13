@@ -202,3 +202,109 @@ export function deletePromptAuditEventsByFilter(
     t('Failed to delete prompt audit events')
   )
 }
+
+/**
+ * One system prompt fingerprint of the request structure statistics. Only
+ * hashes, counts, lengths, times and categories; never prompt text.
+ */
+export type PromptAuditStructureFingerprint = {
+  /** sha256 hex, or "none" for requests without a system prompt. */
+  fingerprint: string
+  /** sha256 hex of the leading part of the system prompt, or "none". */
+  prefix_hash: string
+  first_seen_at: number
+  last_seen_at: number
+  request_count: number
+  /** Distinct users, counted exactly up to a cap. */
+  user_count: number
+  user_count_capped: boolean
+  system_length: number
+  last_request_format: string
+  last_client_class: string
+}
+
+export type PromptAuditStructureFingerprintSort = 'users' | 'requests'
+
+export type PromptAuditStructureFingerprintsPage = {
+  page: number
+  page_size: number
+  total: number
+  items: PromptAuditStructureFingerprint[]
+}
+
+export function getPromptAuditStructureFingerprints(
+  page: number,
+  pageSize: number,
+  sort: PromptAuditStructureFingerprintSort
+) {
+  return unwrap(
+    api.get<ApiResponse<PromptAuditStructureFingerprintsPage>>(
+      '/api/prompt_audit/structure/fingerprints',
+      { params: { p: page, page_size: pageSize, sort } }
+    ),
+    t('Failed to load structure statistics')
+  )
+}
+
+/** Counters that are request counts; the rate of each is count / requests. */
+export type PromptAuditStructureSignalCounts = {
+  with_system: number
+  with_developer: number
+  with_history_user: number
+  with_history_assistant: number
+  trailing_assistant: number
+  with_agent_context: number
+  with_tool: number
+  assistant_turns_10_plus: number
+  mid_system: number
+  control_tokens: number
+  role_markers: number
+  invisible_requests: number
+  encoded_requests: number
+  system_under_1k: number
+  system_under_4k: number
+  system_under_16k: number
+  system_under_64k: number
+  system_64k_plus: number
+}
+
+/** Counters that are sums over the requests of the day. */
+export type PromptAuditStructureSignalSums = {
+  assistant_turns: number
+  user_turns: number
+  invisible_chars: number
+  encoded_runs: number
+}
+
+/** One day of structure signals, summed over the unfiltered dimensions. */
+export type PromptAuditStructureSignalDay = PromptAuditStructureSignalCounts &
+  PromptAuditStructureSignalSums & {
+    /** Server local date as yyyymmdd, for example 20261113. */
+    stat_day: number
+    requests: number
+  }
+
+export type PromptAuditStructureSignals = {
+  items: PromptAuditStructureSignalDay[]
+  request_formats: string[]
+  client_classes: string[]
+}
+
+export type PromptAuditStructureSignalFilter = {
+  start_day: number
+  end_day: number
+  request_format?: string
+  client_class?: string
+}
+
+export function getPromptAuditStructureSignals(
+  filter: PromptAuditStructureSignalFilter
+) {
+  return unwrap(
+    api.get<ApiResponse<PromptAuditStructureSignals>>(
+      '/api/prompt_audit/structure/signals',
+      { params: filter }
+    ),
+    t('Failed to load structure statistics')
+  )
+}
