@@ -8010,7 +8010,6 @@
     "Pick a time in the future": "Hãy chọn thời điểm trong tương lai",
     "Redeem one of this account's reset credits automatically when the conditions match.": "Tự động dùng một lượt đặt lại của tài khoản này khi điều kiện khớp.",
     "Redeemable credits": "Lượt khả dụng",
-    "Redemptions in the last 7 days": "Số lần dùng trong 7 ngày qua",
     "Remove alarm {{time}}": "Xóa báo thức {{time}}",
     "Remove group": "Xóa nhóm",
     "Safeguards": "Biện pháp bảo vệ",
@@ -8040,6 +8039,15 @@
     "Waiting after a failed attempt": "Đang chờ sau lần thất bại",
     "Weekly limit reached": "Đã đạt giới hạn tuần",
     "Weekly usage at or above": "Mức dùng tuần từ",
-    "{{window}} usage {{value}}% (threshold {{threshold}}%)": "Mức dùng {{window}} {{value}}% (ngưỡng {{threshold}}%)"
+    "{{window}} usage {{value}}% (threshold {{threshold}}%)": "Mức dùng {{window}} {{value}}% (ngưỡng {{threshold}}%)",
+    "A redemption is in progress or was interrupted": "Có một lần dùng đang chạy hoặc đã bị gián đoạn",
+    "The stored setting is invalid": "Cài đặt đã lưu không hợp lệ",
+    "Credentials were rejected or unavailable": "Thông tin xác thực bị từ chối hoặc không khả dụng",
+    "Automatic": "Tự động",
+    "Manual": "Thủ công",
+    "Subscriber": "Người đăng ký",
+    "Last redemption (any source)": "Lần dùng gần nhất (mọi nguồn)",
+    "Redemption in progress": "Lần dùng đang chạy",
+    "Automatic redemptions in the last 7 days": "Số lần dùng tự động trong 7 ngày qua"
   }
 }

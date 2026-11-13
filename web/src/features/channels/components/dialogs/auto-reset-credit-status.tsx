@@ -47,6 +47,15 @@ const REASON_LABELS: Record<string, string> = {
   would_redeem: 'A credit would be redeemed now',
   redeemed: 'Redeemed',
   failed: 'Redemption failed',
+  in_flight: 'A redemption is in progress or was interrupted',
+  invalid_setting: 'The stored setting is invalid',
+  credential_problem: 'Credentials were rejected or unavailable',
+}
+
+const SOURCE_LABELS: Record<string, string> = {
+  auto: 'Automatic',
+  manual: 'Manual',
+  subscription: 'Subscriber',
 }
 
 const WEEKLY_LABELS: Record<string, string> = {
@@ -195,7 +204,17 @@ export function AutoResetStatePanel(props: { view: AutoResetView }) {
           ? dayjs(props.view.next_alarm_at).format('YYYY-MM-DD HH:mm')
           : '-'}
       </Field>
-      <Field label={t('Redemptions in the last 7 days')}>
+      <Field label={t('Last redemption (any source)')}>
+        {state.last_redeem_at
+          ? `${formatUnix(state.last_redeem_at)} · ${t(SOURCE_LABELS[state.last_redeem_source ?? ''] ?? state.last_redeem_source ?? '-')}`
+          : '-'}
+      </Field>
+      {state.in_flight_since ? (
+        <Field label={t('Redemption in progress')}>
+          {`${formatUnix(state.in_flight_since)} · ${t(SOURCE_LABELS[state.in_flight_source ?? ''] ?? state.in_flight_source ?? '-')}`}
+        </Field>
+      ) : null}
+      <Field label={t('Automatic redemptions in the last 7 days')}>
         {state.redeemed_at?.length ?? 0}
       </Field>
       <Field label={t('Consecutive failures')}>{state.fail_count ?? 0}</Field>

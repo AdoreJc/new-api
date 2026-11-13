@@ -22,16 +22,19 @@ import (
 // channels. It runs the same upstream redemption an administrator can start
 // by hand from the usage dialog, when a condition tree on the channel matches.
 //
-// The setting and its runtime state live in the channel's other_info, which
-// the channel edit form never sends back, so alarms the scheduler removes are
-// not restored by a stale form:
+// The setting lives in other_info.auto_reset_credit (ChannelAutoResetConfig).
+// The channel edit form never sends other_info and the generic channel update
+// keeps this key, so only the dedicated endpoint changes it. The engine never
+// writes the setting back except to remove fired or expired alarm times, which
+// it does with a compare-and-swap on the freshly read row.
 //
-//	other_info.auto_reset_credit        ChannelAutoResetConfig
-//	other_info.auto_reset_credit_state  ChannelAutoResetState
+// The runtime state, the redemption lease and the redemption history live in
+// the channel_auto_reset_states table (model.ChannelAutoResetState). Manual
+// and subscriber redemptions take the same lease and record themselves there,
+// so every redemption of a channel counts against the minimum interval.
 
 const (
 	ChannelAutoResetConfigKey = "auto_reset_credit"
-	ChannelAutoResetStateKey  = "auto_reset_credit_state"
 
 	ChannelAutoResetCondFiveHour = "five_hour_used_pct"
 	ChannelAutoResetCondWeekly   = "weekly_used_pct"
@@ -39,9 +42,10 @@ const (
 	ChannelAutoResetCondExpiring = "credit_expires_within"
 
 	// ChannelAutoResetAlarmGrace is how long after its time an alarm can still
-	// fire. The scheduler ticks every minute; an alarm missed for longer (node
-	// down, channel disabled, usage unavailable) is dropped as expired.
-	ChannelAutoResetAlarmGrace = 10 * time.Minute
+	// fire. The scheduler ticks every minute, so an alarm normally fires within
+	// a minute; the rest of the grace rides out a node restart or a usage API
+	// outage. An alarm missed for longer is dropped as expired.
+	ChannelAutoResetAlarmGrace = 30 * time.Minute
 
 	channelAutoResetMaxDepth  = 3
 	channelAutoResetMaxNodes  = 20
@@ -59,14 +63,21 @@ const (
 	// channelAutoResetCreditsMaxAge is the same bound for the reset-credit
 	// list read by credit_expires_within.
 	channelAutoResetCreditsMaxAge = 15 * time.Minute
-	// channelAutoResetNoCreditRecheck pauses a channel whose rule matched but
-	// which holds no redeemable credit.
-	channelAutoResetNoCreditRecheck = 30 * time.Minute
-	channelAutoResetBackoffBase     = 5 * time.Minute
-	channelAutoResetBackoffMax      = 6 * time.Hour
-	// channelAutoResetLeaseTTL outlasts one redemption including the token
-	// refresh, the single reset request and the usage re-read.
-	channelAutoResetLeaseTTL     = 3 * time.Minute
+	// channelAutoResetPause stops evaluation of a channel whose rule matched
+	// but which holds no redeemable credit, or whose credentials upstream
+	// rejected; it is not a failure and does not grow.
+	channelAutoResetPause       = 30 * time.Minute
+	channelAutoResetBackoffBase = 5 * time.Minute
+	channelAutoResetBackoffMax  = 6 * time.Hour
+	// ChannelRedemptionLeaseTTL is the redemption lease. It is renewed right
+	// before the redemption request, which is bounded by
+	// channelAutoResetRedeemTimeout, so it outlasts the request. A holder that
+	// crashes leaves its in-flight record behind, which the guards count.
+	ChannelRedemptionLeaseTTL     = 5 * time.Minute
+	channelAutoResetRedeemTimeout = 150 * time.Second
+	// channelAutoResetReadTimeout bounds the usage and credit reads made while
+	// holding the lease.
+	channelAutoResetReadTimeout  = 90 * time.Second
 	channelAutoResetTickInterval = time.Minute
 	channelAutoResetFiredKeep    = 48 * time.Hour
 	channelAutoResetHistoryKeep  = 7 * 24 * time.Hour
@@ -90,6 +101,9 @@ const (
 	AutoResetReasonWouldRedeem     = "would_redeem"
 	AutoResetReasonRedeemed        = "redeemed"
 	AutoResetReasonFailed          = "failed"
+	AutoResetReasonInFlight        = "in_flight"
+	AutoResetReasonInvalidSetting  = "invalid_setting"
+	AutoResetReasonCredential      = "credential_problem"
 )
 
 var channelAutoResetWeeklyWindows = map[int][]string{
@@ -160,23 +174,25 @@ func (h ChannelAutoResetHit) String() string {
 	return h.Type
 }
 
-// ChannelAutoResetState is the persisted runtime state of one channel.
+// ChannelAutoResetState is the console view of model.ChannelAutoResetState.
 type ChannelAutoResetState struct {
-	// Unix times of redemptions that may have consumed a credit (success or
-	// unknown outcome) within the last 7 days
-	RedeemedAt    []int64               `json:"redeemed_at,omitempty"`
-	LastAttemptAt int64                 `json:"last_attempt_at,omitempty"`
-	LastResult    string                `json:"last_result,omitempty"`
-	LastSuccess   bool                  `json:"last_success,omitempty"`
-	LastHits      []ChannelAutoResetHit `json:"last_hits,omitempty"`
-	FailCount     int                   `json:"fail_count,omitempty"`
-	BackoffUntil  int64                 `json:"backoff_until,omitempty"`
-	// Alarms that already fired, kept for 48 hours so a stale save cannot
-	// make them fire again
-	FiredAlarms []string `json:"fired_alarms,omitempty"`
-	// Last skip reason, written only when it changes
-	LastSkipReason string `json:"last_skip_reason,omitempty"`
-	LastSkipAt     int64  `json:"last_skip_at,omitempty"`
+	// Automatic redemptions that may have used a credit, last 7 days
+	RedeemedAt []int64 `json:"redeemed_at,omitempty"`
+	// Last redemption from any source (auto, manual, subscription) that may
+	// have used a credit; the minimum interval counts from it.
+	LastRedeemAt     int64                 `json:"last_redeem_at,omitempty"`
+	LastRedeemSource string                `json:"last_redeem_source,omitempty"`
+	InFlightSince    int64                 `json:"in_flight_since,omitempty"`
+	InFlightSource   string                `json:"in_flight_source,omitempty"`
+	LastAttemptAt    int64                 `json:"last_attempt_at,omitempty"`
+	LastResult       string                `json:"last_result,omitempty"`
+	LastSuccess      bool                  `json:"last_success,omitempty"`
+	LastHits         []ChannelAutoResetHit `json:"last_hits,omitempty"`
+	FailCount        int                   `json:"fail_count,omitempty"`
+	BackoffUntil     int64                 `json:"backoff_until,omitempty"`
+	FiredAlarms      []string              `json:"fired_alarms,omitempty"`
+	LastSkipReason   string                `json:"last_skip_reason,omitempty"`
+	LastSkipAt       int64                 `json:"last_skip_at,omitempty"`
 }
 
 type ChannelAutoResetWindow struct {
@@ -211,9 +227,19 @@ type ChannelAutoResetRedeemResult struct {
 	// MaybeConsumed is true when upstream may have used a credit without a
 	// definite answer; it counts against the caps like a success.
 	MaybeConsumed bool
+	// CredentialProblem is true when the request was never sent or upstream
+	// rejected the credentials; no credit was used and it is not retried with
+	// backoff, only paused.
+	CredentialProblem bool
 	// RetryAfter, when set, is the earliest time upstream accepts another
 	// redemption (Claude cooldown).
 	RetryAfter time.Time
+
+	// The raw answer, for the manual endpoints that relay it.
+	Err     error
+	Status  int
+	Body    []byte
+	Payload any
 }
 
 // ChannelAutoResetProvider is the upstream side, implemented by the
@@ -274,14 +300,6 @@ func LoadChannelAutoResetConfig(ch *model.Channel) ChannelAutoResetConfig {
 		return DefaultChannelAutoResetConfig()
 	}
 	return cfg
-}
-
-func LoadChannelAutoResetState(ch *model.Channel) ChannelAutoResetState {
-	var state ChannelAutoResetState
-	if !decodeChannelOtherInfoEntry(ch, ChannelAutoResetStateKey, &state) {
-		return ChannelAutoResetState{}
-	}
-	return state
 }
 
 func IsChannelAutoResetSupported(channelType int) bool {
@@ -580,6 +598,52 @@ func pruneChannelAutoResetAlarms(node *ChannelAutoResetRule, fired []string, now
 	return changed
 }
 
+// ---- State ----
+
+func decodeChannelAutoResetJSON[T any](raw string) T {
+	var value T
+	if raw != "" {
+		_ = common.UnmarshalJsonStr(raw, &value)
+	}
+	return value
+}
+
+func encodeChannelAutoResetJSON(value any) string {
+	encoded, err := common.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
+func channelAutoResetStateView(row *model.ChannelAutoResetState) ChannelAutoResetState {
+	return ChannelAutoResetState{
+		RedeemedAt:       decodeChannelAutoResetJSON[[]int64](row.AutoHistory),
+		LastRedeemAt:     row.LastRedeemAt,
+		LastRedeemSource: row.LastRedeemSource,
+		InFlightSince:    row.InFlightSince,
+		InFlightSource:   row.InFlightSource,
+		LastAttemptAt:    row.LastAttemptAt,
+		LastResult:       row.LastResult,
+		LastSuccess:      row.LastSuccess,
+		LastHits:         decodeChannelAutoResetJSON[[]ChannelAutoResetHit](row.LastHits),
+		FailCount:        row.FailCount,
+		BackoffUntil:     row.BackoffUntil,
+		FiredAlarms:      decodeChannelAutoResetJSON[[]string](row.FiredAlarms),
+		LastSkipReason:   row.LastSkipReason,
+		LastSkipAt:       row.LastSkipAt,
+	}
+}
+
+// LoadChannelAutoResetState reads the shared state of a channel.
+func LoadChannelAutoResetState(channelId int) (ChannelAutoResetState, error) {
+	row, err := model.GetChannelAutoResetState(channelId)
+	if err != nil {
+		return ChannelAutoResetState{}, err
+	}
+	return channelAutoResetStateView(row), nil
+}
+
 // ---- Guards ----
 
 func countChannelAutoResetSince(times []int64, since int64) int {
@@ -592,9 +656,10 @@ func countChannelAutoResetSince(times []int64, since int64) int {
 	return n
 }
 
-// ChannelAutoResetNextAllowed returns the earliest time the backoff, the
-// minimum interval and the caps allow another redemption, and the guard that
-// sets it (empty when nothing blocks at now).
+// ChannelAutoResetNextAllowed returns the earliest time an unfinished
+// redemption, the backoff, the minimum interval and the caps allow another
+// automatic redemption, and the guard that sets it (empty when nothing blocks
+// at now). The minimum interval counts from the last redemption of any source.
 func ChannelAutoResetNextAllowed(cfg ChannelAutoResetConfig, state ChannelAutoResetState, now time.Time) (time.Time, string) {
 	next, reason := now, ""
 	push := func(at time.Time, why string) {
@@ -605,8 +670,8 @@ func ChannelAutoResetNextAllowed(cfg ChannelAutoResetConfig, state ChannelAutoRe
 	if state.BackoffUntil > 0 {
 		push(time.Unix(state.BackoffUntil, 0), AutoResetReasonBackoff)
 	}
-	if last := slices.Max(append([]int64{0}, state.RedeemedAt...)); last > 0 {
-		push(time.Unix(last, 0).Add(time.Duration(cfg.MinIntervalMinutes)*time.Minute), AutoResetReasonMinInterval)
+	if state.LastRedeemAt > 0 {
+		push(time.Unix(state.LastRedeemAt, 0).Add(time.Duration(cfg.MinIntervalMinutes)*time.Minute), AutoResetReasonMinInterval)
 	}
 	sorted := slices.Clone(state.RedeemedAt)
 	slices.Sort(sorted)
@@ -622,6 +687,13 @@ func ChannelAutoResetNextAllowed(cfg ChannelAutoResetConfig, state ChannelAutoRe
 		if n := countChannelAutoResetSince(sorted, since); n >= limit {
 			push(time.Unix(sorted[len(sorted)-n], 0).Add(channelAutoResetHistoryKeep), AutoResetReasonWeeklyCap)
 		}
+	}
+	// A redemption whose outcome is not recorded yet blocks while the lease
+	// that wrote it may still be held. After that the minimum interval, which
+	// counts from the same time, keeps blocking; the next lease holder
+	// resolves the marker.
+	if state.InFlightSince > 0 {
+		push(time.Unix(state.InFlightSince, 0).Add(ChannelRedemptionLeaseTTL), AutoResetReasonInFlight)
 	}
 	return next, reason
 }
@@ -673,6 +745,21 @@ func channelAutoResetResetsSoon(cfg ChannelAutoResetConfig, hits []ChannelAutoRe
 	return true
 }
 
+// channelAutoResetNeedsUsage reports whether evaluating cfg needs usage data:
+// for a usage condition, or for the natural-reset check of a condition type
+// that does not override it. A rule of alarms and expiring credits with both
+// overrides on works while the usage API is down.
+func channelAutoResetNeedsUsage(cfg ChannelAutoResetConfig) bool {
+	if channelAutoResetRuleHas(cfg.Rule, ChannelAutoResetCondFiveHour, ChannelAutoResetCondWeekly) {
+		return true
+	}
+	if cfg.SkipIfResetWithinMinutes <= 0 {
+		return false
+	}
+	return (!cfg.AlarmIgnoresResetSoon && channelAutoResetRuleHas(cfg.Rule, ChannelAutoResetCondAtTime)) ||
+		(!cfg.ExpiringIgnoresResetSoon && channelAutoResetRuleHas(cfg.Rule, ChannelAutoResetCondExpiring))
+}
+
 func channelAutoResetBackoff(failures int) time.Duration {
 	d := channelAutoResetBackoffBase
 	for range max(0, failures-1) {
@@ -684,6 +771,125 @@ func channelAutoResetBackoff(failures int) time.Duration {
 	return d
 }
 
+func channelAutoResetRecentAlarms(fired []string, now time.Time) []string {
+	kept := make([]string, 0, len(fired))
+	for _, raw := range fired {
+		if at, err := time.Parse(time.RFC3339, raw); err == nil && now.Sub(at) <= channelAutoResetFiredKeep {
+			kept = append(kept, raw)
+		}
+	}
+	return kept
+}
+
+func collectChannelAutoResetDue(node *ChannelAutoResetRule, f channelAutoResetFacts) []string {
+	var due []string
+	for _, raw := range collectChannelAutoResetAlarms(node, nil) {
+		probe := ChannelAutoResetRule{Type: ChannelAutoResetCondAtTime, Times: []string{raw}}
+		for _, at := range f.dueAlarms(&probe) {
+			formatted := at
+			if parsed, err := time.Parse(time.RFC3339, at); err == nil {
+				formatted = parsed.UTC().Format(time.RFC3339)
+			}
+			if !slices.Contains(due, formatted) {
+				due = append(due, formatted)
+			}
+		}
+	}
+	return due
+}
+
+// ---- Shared redemption lease ----
+
+// ErrChannelRedemptionBusy reports that another redemption of the channel
+// holds the lease.
+var ErrChannelRedemptionBusy = errors.New("another reset credit redemption of this channel is in progress")
+
+// ChannelRedemption is one claimed redemption of a channel's reset credit.
+// Begin records it as in flight (and as the last redemption) before the
+// request is sent, so a node that takes the lease over after a crash or a
+// slow request sees it; Finish records the outcome and releases the lease.
+type ChannelRedemption struct {
+	channelId  int
+	owner      string
+	source     string
+	at         int64
+	prevAt     int64
+	prevSource string
+	history    []int64
+}
+
+// BeginChannelRedemption claims the redemption lease of channelId for a
+// manual ("manual") or subscriber ("subscription") redemption.
+func BeginChannelRedemption(channelId int, source string) (*ChannelRedemption, error) {
+	now := time.Now()
+	owner := source + "_" + common.GetRandomString(12)
+	acquired, err := model.AcquireChannelAutoResetLease(channelId, owner, now, ChannelRedemptionLeaseTTL)
+	if err != nil {
+		return nil, err
+	}
+	if !acquired {
+		return nil, ErrChannelRedemptionBusy
+	}
+	row, err := model.GetChannelAutoResetState(channelId)
+	if err == nil {
+		redemption := &ChannelRedemption{channelId: channelId, owner: owner, source: source, at: now.Unix(), prevAt: row.LastRedeemAt, prevSource: row.LastRedeemSource}
+		err = redemption.markInFlight(now, nil)
+		if err == nil {
+			return redemption, nil
+		}
+	}
+	_ = model.ReleaseChannelAutoResetLease(channelId, owner, nil)
+	return nil, err
+}
+
+func (r *ChannelRedemption) markInFlight(now time.Time, history []int64) error {
+	updates := map[string]any{
+		"in_flight_since":    r.at,
+		"in_flight_source":   r.source,
+		"last_redeem_at":     r.at,
+		"last_redeem_source": r.source,
+		"lease_until":        now.Add(ChannelRedemptionLeaseTTL).Unix(),
+	}
+	if history != nil {
+		r.history = history
+		updates["auto_history"] = encodeChannelAutoResetJSON(history)
+	}
+	return model.UpdateChannelAutoResetStateAsOwner(r.channelId, r.owner, now, updates)
+}
+
+// Finish records the outcome and releases the lease. consumed means a credit
+// was or may have been used; otherwise the redemption is taken back out of
+// the history so it does not count against the guards. updates are written
+// with it (result columns of an automatic redemption).
+func (r *ChannelRedemption) Finish(consumed bool, updates map[string]any) {
+	if updates == nil {
+		updates = map[string]any{}
+	}
+	updates["in_flight_since"] = 0
+	updates["in_flight_source"] = ""
+	if !consumed {
+		updates["last_redeem_at"] = r.prevAt
+		updates["last_redeem_source"] = r.prevSource
+		if r.history != nil {
+			updates["auto_history"] = encodeChannelAutoResetJSON(slices.DeleteFunc(slices.Clone(r.history), func(t int64) bool { return t == r.at }))
+		}
+	}
+	// Written even if the lease ran out meanwhile: a node that took it over
+	// saw the in-flight record and did not redeem.
+	if err := model.UpdateChannelAutoResetStateFields(r.channelId, updates); err != nil {
+		common.SysError(common.LogText("failed to store reset credit redemption outcome: channel_id=%d, error=%v", r.channelId, err))
+	}
+	if err := model.ReleaseChannelAutoResetLease(r.channelId, r.owner, nil); err != nil {
+		common.SysError(common.LogText("failed to release reset credit lease: channel_id=%d, error=%v", r.channelId, err))
+	}
+	if consumed {
+		InvalidateSubscriptionUsage(r.channelId)
+		if engine := DefaultChannelAutoResetEngine(); engine != nil {
+			engine.forgetSnapshots(r.channelId)
+		}
+	}
+}
+
 // ---- Engine ----
 
 type channelAutoResetSnapshot[T any] struct {
@@ -693,7 +899,7 @@ type channelAutoResetSnapshot[T any] struct {
 
 // ChannelAutoResetEngine evaluates and runs automatic redemptions. One
 // engine runs per process; the database lease keeps engines on different
-// nodes from redeeming for the same channel at once.
+// nodes, and manual redemptions, from redeeming for the same channel at once.
 type ChannelAutoResetEngine struct {
 	provider ChannelAutoResetProvider
 	nodeId   string
@@ -737,7 +943,8 @@ func (e *ChannelAutoResetEngine) loadUsage(ctx context.Context, ch *model.Channe
 		return snap.value, nil
 	}
 	// A failed upstream attempt counts too, so a failing usage API is not
-	// asked on every tick.
+	// asked on every tick. A fresh read (after the lease) may always ask; the
+	// usage cache of the existing usage endpoints still applies below it.
 	allowUpstream := fresh || !asked || now.Sub(lastUpstream) >= channelAutoResetUsageMaxAge
 	usage, err := e.provider.LoadUsage(ctx, ch, allowUpstream)
 	e.mu.Lock()
@@ -777,10 +984,20 @@ func (e *ChannelAutoResetEngine) ForgetUsage(channelId int) {
 	e.mu.Unlock()
 }
 
-// Evaluate runs one evaluation of ch. With dryRun nothing is redeemed or
-// written, and cfg (when not nil) replaces the stored setting so an unsaved
-// draft can be tried.
+func (e *ChannelAutoResetEngine) forgetSnapshots(channelId int) {
+	e.mu.Lock()
+	delete(e.usage, channelId)
+	delete(e.credits, channelId)
+	e.mu.Unlock()
+}
+
+// Evaluate runs one evaluation of ch at now. With dryRun nothing is redeemed
+// or written, and draft (when not nil) replaces the stored setting so an
+// unsaved draft can be tried. Times written for a redemption follow the wall
+// clock from now on, so a slow evaluation does not date them in the past.
 func (e *ChannelAutoResetEngine) Evaluate(ctx context.Context, ch *model.Channel, now time.Time, dryRun bool, draft *ChannelAutoResetConfig) ChannelAutoResetDecision {
+	started := time.Now()
+	clock := func() time.Time { return now.Add(time.Since(started)) }
 	decision := ChannelAutoResetDecision{ChannelId: ch.Id, EvaluatedAt: now.Unix(), DryRun: dryRun, Hits: []ChannelAutoResetHit{}}
 	cfg := LoadChannelAutoResetConfig(ch)
 	if draft != nil {
@@ -794,6 +1011,20 @@ func (e *ChannelAutoResetEngine) Evaluate(ctx context.Context, ch *model.Channel
 		decision.Reason = AutoResetReasonUnsupported
 		return decision
 	}
+	// The stored setting may have been written by an older version or by
+	// hand; it is evaluated only after the same validation as a save.
+	normalized, err := NormalizeChannelAutoResetConfig(cfg, ch.Type, now)
+	if err != nil {
+		decision.Reason = AutoResetReasonInvalidSetting
+		decision.Result = err.Error()
+		if !dryRun {
+			if state, loadErr := LoadChannelAutoResetState(ch.Id); loadErr == nil {
+				e.recordSkip(ch.Id, &state, decision)
+			}
+		}
+		return decision
+	}
+	cfg = normalized
 	if !dryRun {
 		e.mu.Lock()
 		if e.running[ch.Id] {
@@ -810,15 +1041,24 @@ func (e *ChannelAutoResetEngine) Evaluate(ctx context.Context, ch *model.Channel
 			e.mu.Unlock()
 		}()
 	}
-	state := LoadChannelAutoResetState(ch)
+	state, err := LoadChannelAutoResetState(ch.Id)
+	if err != nil {
+		decision.Reason = AutoResetReasonBusy
+		decision.Result = err.Error()
+		return decision
+	}
 	state.FiredAlarms = channelAutoResetRecentAlarms(state.FiredAlarms, now)
-
-	if !dryRun && pruneChannelAutoResetAlarms(cfg.Rule, state.FiredAlarms, now) {
-		e.saveConfig(ch.Id, cfg)
+	if !dryRun {
+		if stored := LoadChannelAutoResetConfig(ch); stored.Rule != nil {
+			probe := cloneChannelAutoResetRule(*stored.Rule)
+			if pruneChannelAutoResetAlarms(&probe, state.FiredAlarms, now) {
+				pruneStoredChannelAutoResetAlarms(ch.Id, state.FiredAlarms, now)
+			}
+		}
 	}
 	if ch.Status != common.ChannelStatusEnabled {
 		decision.Reason = AutoResetReasonChannelDisabled
-		e.recordSkip(ch.Id, &state, decision, dryRun)
+		e.recordSkip(ch.Id, &state, decision)
 		return decision
 	}
 	if cfg.Rule == nil {
@@ -827,17 +1067,21 @@ func (e *ChannelAutoResetEngine) Evaluate(ctx context.Context, ch *model.Channel
 	}
 
 	facts := channelAutoResetFacts{now: now, fired: state.FiredAlarms}
-	needUsage := channelAutoResetRuleHas(cfg.Rule, ChannelAutoResetCondFiveHour, ChannelAutoResetCondWeekly) || cfg.SkipIfResetWithinMinutes > 0
-	if needUsage {
+	if channelAutoResetNeedsUsage(cfg) {
 		usage, err := e.loadUsage(ctx, ch, now, false)
 		if err != nil {
 			decision.Reason = AutoResetReasonUsageMissing
 			decision.Result = err.Error()
-			e.recordSkip(ch.Id, &state, decision, dryRun)
+			e.recordSkip(ch.Id, &state, decision)
 			return decision
 		}
 		facts.usage = usage
 		decision.Usage = usage.Windows
+	} else if dryRun {
+		// Shown in the trial result only; the rule does not depend on it.
+		if usage, err := e.loadUsage(ctx, ch, now, false); err == nil {
+			decision.Usage = usage.Windows
+		}
 	}
 	if dryRun || channelAutoResetRuleHas(cfg.Rule, ChannelAutoResetCondExpiring) {
 		// A failed credit query only leaves credit_expires_within unmatched.
@@ -852,13 +1096,16 @@ func (e *ChannelAutoResetEngine) Evaluate(ctx context.Context, ch *model.Channel
 	if hits != nil {
 		decision.Hits = hits
 	}
-	// Alarms due at this evaluation fire once, whatever the outcome below.
-	due := collectChannelAutoResetDue(cfg.Rule, facts)
-	if !dryRun && len(due) > 0 {
-		state.FiredAlarms = append(state.FiredAlarms, due...)
-		pruneChannelAutoResetAlarms(cfg.Rule, state.FiredAlarms, now)
-		e.saveConfig(ch.Id, cfg)
-		e.saveState(ch.Id, state)
+	// Alarms due at this evaluation fire once, whatever the outcome below,
+	// unless the evaluation could not finish (lease busy, usage unavailable
+	// after the lease); they are recorded only afterwards so the re-check
+	// under the lease still sees them in the stored rule.
+	if due := collectChannelAutoResetDue(cfg.Rule, facts); !dryRun && len(due) > 0 {
+		defer func() {
+			if decision.Reason != AutoResetReasonBusy && decision.Reason != AutoResetReasonUsageMissing {
+				e.recordFiredAlarms(ch.Id, append(slices.Clone(state.FiredAlarms), due...), now)
+			}
+		}()
 	}
 
 	nextAllowed, guard := ChannelAutoResetNextAllowed(cfg, state, now)
@@ -879,46 +1126,52 @@ func (e *ChannelAutoResetEngine) Evaluate(ctx context.Context, ch *model.Channel
 		}
 	}
 	if decision.Reason != "" {
-		e.recordSkip(ch.Id, &state, decision, dryRun)
+		if !dryRun {
+			e.recordSkip(ch.Id, &state, decision)
+		}
 		return decision
 	}
-	e.redeem(ctx, ch, cfg, facts, &decision)
+	e.redeem(ctx, ch, facts, clock, &decision)
 	return decision
 }
 
-func channelAutoResetRecentAlarms(fired []string, now time.Time) []string {
-	kept := make([]string, 0, len(fired))
-	for _, raw := range fired {
-		if at, err := time.Parse(time.RFC3339, raw); err == nil && now.Sub(at) <= channelAutoResetFiredKeep {
-			kept = append(kept, raw)
-		}
+// recordFiredAlarms keeps the fired alarms in the shared state (which
+// evaluation filters on) and removes them from the stored setting.
+func (e *ChannelAutoResetEngine) recordFiredAlarms(channelId int, fired []string, now time.Time) {
+	if err := model.UpdateChannelAutoResetStateFields(channelId, map[string]any{"fired_alarms": encodeChannelAutoResetJSON(fired)}); err != nil {
+		common.SysError(common.LogText("failed to store fired alarms: channel_id=%d, error=%v", channelId, err))
 	}
-	return kept
+	pruneStoredChannelAutoResetAlarms(channelId, fired, now)
 }
 
-func collectChannelAutoResetDue(node *ChannelAutoResetRule, f channelAutoResetFacts) []string {
-	var due []string
-	for _, raw := range collectChannelAutoResetAlarms(node, nil) {
-		probe := ChannelAutoResetRule{Type: ChannelAutoResetCondAtTime, Times: []string{raw}}
-		for _, at := range f.dueAlarms(&probe) {
-			formatted := at
-			if parsed, err := time.Parse(time.RFC3339, at); err == nil {
-				formatted = parsed.UTC().Format(time.RFC3339)
-			}
-			if !slices.Contains(due, formatted) {
-				due = append(due, formatted)
-			}
+// pruneStoredChannelAutoResetAlarms removes fired and expired alarm times
+// from the freshly read setting with a compare-and-swap; nothing else of the
+// setting is written, so a concurrent save is never overwritten.
+func pruneStoredChannelAutoResetAlarms(channelId int, fired []string, now time.Time) {
+	err := model.MutateChannelOtherInfo(channelId, func(info map[string]any) bool {
+		raw, ok := info[ChannelAutoResetConfigKey]
+		if !ok {
+			return false
 		}
+		var cfg ChannelAutoResetConfig
+		encoded, err := common.Marshal(raw)
+		if err != nil || common.Unmarshal(encoded, &cfg) != nil || !pruneChannelAutoResetAlarms(cfg.Rule, fired, now) {
+			return false
+		}
+		info[ChannelAutoResetConfigKey] = cfg
+		return true
+	})
+	if err != nil {
+		common.SysError(common.LogText("failed to remove fired alarms: channel_id=%d, error=%v", channelId, err))
 	}
-	return due
 }
 
-// redeem claims the channel lease, re-checks the guards against the state
-// stored in the database, and redeems one credit.
-func (e *ChannelAutoResetEngine) redeem(ctx context.Context, ch *model.Channel, cfg ChannelAutoResetConfig, facts channelAutoResetFacts, decision *ChannelAutoResetDecision) {
-	now := facts.now
-	owner := "autoreset_" + e.nodeId + "_" + common.GetRandomString(8)
-	acquired, err := model.AcquireChannelAutoResetLease(ch.Id, owner, now, channelAutoResetLeaseTTL)
+// redeem claims the lease, re-reads the switch, the rule, the state and the
+// usage, evaluates the rule again on that data, records the redemption as in
+// flight and only then sends it.
+func (e *ChannelAutoResetEngine) redeem(ctx context.Context, ch *model.Channel, facts channelAutoResetFacts, clock func() time.Time, decision *ChannelAutoResetDecision) {
+	owner := "auto_" + e.nodeId + "_" + common.GetRandomString(8)
+	acquired, err := model.AcquireChannelAutoResetLease(ch.Id, owner, clock(), ChannelRedemptionLeaseTTL)
 	if err != nil || !acquired {
 		decision.Reason = AutoResetReasonBusy
 		if err != nil {
@@ -926,20 +1179,18 @@ func (e *ChannelAutoResetEngine) redeem(ctx context.Context, ch *model.Channel, 
 		}
 		return
 	}
-	defer func() {
-		if err := model.ReleaseChannelAutoResetLease(owner); err != nil {
+	released := false
+	release := func(updates map[string]any) {
+		if released {
+			return
+		}
+		released = true
+		if err := model.ReleaseChannelAutoResetLease(ch.Id, owner, updates); err != nil {
 			common.SysError(common.LogText("failed to release auto reset lease: channel_id=%d, error=%v", ch.Id, err))
 		}
-	}()
-	// Subscribers of a bound channel may redeem by hand; share their lock.
-	release, ok, err := AcquireSubscriptionResetLock(ch.Id)
-	if err != nil || !ok {
-		decision.Reason = AutoResetReasonBusy
-		return
 	}
-	defer release()
+	defer release(nil)
 
-	// Another node may have redeemed between the read and the lease.
 	fresh, err := model.GetChannelById(ch.Id, true)
 	if err != nil {
 		decision.Reason = AutoResetReasonBusy
@@ -947,110 +1198,161 @@ func (e *ChannelAutoResetEngine) redeem(ctx context.Context, ch *model.Channel, 
 		return
 	}
 	ch = fresh
-	freshCfg := LoadChannelAutoResetConfig(ch)
-	state := LoadChannelAutoResetState(ch)
-	state.FiredAlarms = channelAutoResetRecentAlarms(state.FiredAlarms, now)
-	if !freshCfg.Enabled || ch.Status != common.ChannelStatusEnabled {
+	cfg, err := NormalizeChannelAutoResetConfig(LoadChannelAutoResetConfig(ch), ch.Type, facts.now)
+	if err != nil || !cfg.Enabled || ch.Status != common.ChannelStatusEnabled || cfg.Rule == nil {
 		decision.Reason = AutoResetReasonDisabled
 		return
 	}
-	if next, guard := ChannelAutoResetNextAllowed(freshCfg, state, now); guard != "" {
+	row, err := model.GetChannelAutoResetState(ch.Id)
+	if err != nil {
+		decision.Reason = AutoResetReasonBusy
+		decision.Result = err.Error()
+		return
+	}
+	state := channelAutoResetStateView(row)
+	if state.InFlightSince > 0 {
+		// The previous holder never recorded its outcome (crash, or its
+		// lease ran out mid-request). The redemption stays counted as the
+		// last redemption; only the marker is resolved.
+		resolved := map[string]any{"in_flight_since": 0, "in_flight_source": "", "last_result": "interrupted", "last_success": false}
+		if err := model.UpdateChannelAutoResetStateAsOwner(ch.Id, owner, clock(), resolved); err != nil {
+			decision.Reason = AutoResetReasonBusy
+			return
+		}
+		state.InFlightSince = 0
+		common.SysLog(common.LogText("auto reset found an unfinished redemption: channel_id=%d, since=%d", ch.Id, row.InFlightSince))
+	}
+	if next, guard := ChannelAutoResetNextAllowed(cfg, state, clock()); guard != "" {
 		decision.Reason = guard
 		decision.NextAllowedAt = next.Unix()
-		e.recordSkip(ch.Id, &state, *decision, false)
+		e.recordSkip(ch.Id, &state, *decision)
 		return
 	}
 
-	credits, err := e.loadCredits(ctx, ch, now, true)
+	// Usage may be minutes old and a manual reset may have happened since:
+	// read it again and evaluate the stored rule on it.
+	recheck := channelAutoResetFacts{now: clock(), fired: facts.fired, credits: facts.credits}
+	if channelAutoResetNeedsUsage(cfg) {
+		readCtx, cancel := context.WithTimeout(ctx, channelAutoResetReadTimeout)
+		usage, err := e.loadUsage(readCtx, ch, clock(), true)
+		cancel()
+		if err != nil {
+			decision.Reason = AutoResetReasonUsageMissing
+			decision.Result = err.Error()
+			e.recordSkip(ch.Id, &state, *decision)
+			return
+		}
+		recheck.usage = usage
+		decision.Usage = usage.Windows
+	}
+	readCtx, cancel := context.WithTimeout(ctx, channelAutoResetReadTimeout)
+	credits, err := e.loadCredits(readCtx, ch, clock(), true)
+	cancel()
 	if err != nil {
-		decision.Reason = AutoResetReasonFailed
-		decision.Result = "credits_unavailable"
-		e.recordFailure(ch, freshCfg, &state, decision, ChannelAutoResetRedeemResult{Result: "credits_unavailable"}, now, facts.usage, nil)
+		decision.Reason = AutoResetReasonCredential
+		decision.Result = err.Error()
+		release(map[string]any{"backoff_until": clock().Add(channelAutoResetPause).Unix(), "last_skip_reason": decision.Reason, "last_skip_at": decision.EvaluatedAt})
+		common.SysLog(common.LogText("auto reset credit skipped: channel_id=%d, reason=%s", ch.Id, decision.Reason))
 		return
 	}
 	decision.Credits = credits
-	if credits.Available <= 0 {
+	recheck.credits = credits
+	matched, hits := evaluateChannelAutoResetRule(cfg.Rule, recheck)
+	decision.Matched = matched
+	decision.Hits = hits
+	if hits == nil {
+		decision.Hits = []ChannelAutoResetHit{}
+	}
+	switch {
+	case !matched:
+		decision.Reason = AutoResetReasonNotMatched
+	case channelAutoResetResetsSoon(cfg, hits, recheck):
+		decision.Reason = AutoResetReasonResetsSoon
+	case credits.Available <= 0:
 		decision.Reason = AutoResetReasonNoCredit
-		state.BackoffUntil = now.Add(channelAutoResetNoCreditRecheck).Unix()
-		e.recordSkip(ch.Id, &state, *decision, false)
-		e.saveState(ch.Id, state)
+		release(map[string]any{"backoff_until": clock().Add(channelAutoResetPause).Unix(), "last_skip_reason": decision.Reason, "last_skip_at": decision.EvaluatedAt})
+		return
+	}
+	if decision.Reason != "" {
+		e.recordSkip(ch.Id, &state, *decision)
 		return
 	}
 
-	result := e.provider.Redeem(ctx, ch)
-	decision.Result = result.Result
-	state.LastAttemptAt = now.Unix()
-	state.LastResult = result.Result
-	state.LastSuccess = result.Success
-	state.LastHits = decision.Hits
-	state.LastSkipReason = ""
-	if result.Success || result.MaybeConsumed {
-		state.RedeemedAt = append(state.RedeemedAt, now.Unix())
+	// Record the redemption before sending it: a node that takes the lease
+	// over, after a crash or a request that outlives the lease, counts it.
+	at := clock()
+	history := slices.DeleteFunc(slices.Clone(state.RedeemedAt), func(t int64) bool { return t <= at.Add(-channelAutoResetHistoryKeep).Unix() })
+	redemption := &ChannelRedemption{channelId: ch.Id, owner: owner, source: "auto", at: at.Unix(), prevAt: state.LastRedeemAt, prevSource: state.LastRedeemSource}
+	if err := redemption.markInFlight(at, append(history, at.Unix())); err != nil {
+		decision.Reason = AutoResetReasonBusy
+		decision.Result = err.Error()
+		return
 	}
-	cutoff := now.Add(-channelAutoResetHistoryKeep).Unix()
-	state.RedeemedAt = slices.DeleteFunc(state.RedeemedAt, func(t int64) bool { return t <= cutoff })
+	released = true // Finish releases the lease
 
+	redeemCtx, cancel := context.WithTimeout(ctx, channelAutoResetRedeemTimeout)
+	result := e.provider.Redeem(redeemCtx, ch)
+	cancel()
+	done := clock()
+	decision.Result = result.Result
+	consumed := result.Success || result.MaybeConsumed
+	outcome := map[string]any{
+		"last_attempt_at":  at.Unix(),
+		"last_result":      result.Result,
+		"last_success":     result.Success,
+		"last_hits":        encodeChannelAutoResetJSON(decision.Hits),
+		"last_skip_reason": "",
+	}
+	switch {
+	case result.Success:
+		decision.Reason = AutoResetReasonRedeemed
+		outcome["fail_count"] = 0
+		outcome["backoff_until"] = 0
+	case result.CredentialProblem:
+		decision.Reason = AutoResetReasonCredential
+		outcome["backoff_until"] = done.Add(channelAutoResetPause).Unix()
+	default:
+		decision.Reason = AutoResetReasonFailed
+		failures := state.FailCount + 1
+		backoff := done.Add(channelAutoResetBackoff(failures))
+		if result.RetryAfter.After(backoff) {
+			backoff = result.RetryAfter
+		}
+		outcome["fail_count"] = failures
+		outcome["backoff_until"] = backoff.Unix()
+		decision.NextAllowedAt = backoff.Unix()
+	}
+	// The outcome is stored before anything else is asked of upstream.
+	redemption.Finish(consumed, outcome)
+
+	if decision.Reason == AutoResetReasonCredential {
+		common.SysLog(common.LogText("auto reset credit skipped: channel_id=%d, reason=%s, result=%s", ch.Id, decision.Reason, result.Result))
+		return
+	}
 	var after *ChannelAutoResetUsage
 	if result.Success {
-		decision.Reason = AutoResetReasonRedeemed
-		state.FailCount = 0
-		state.BackoffUntil = 0
-		InvalidateSubscriptionUsage(ch.Id)
-		e.mu.Lock()
-		delete(e.credits, ch.Id)
-		e.mu.Unlock()
-		after, _ = e.loadUsage(ctx, ch, now, true)
-		e.saveState(ch.Id, state)
 		logger.LogInfo(ctx, common.LogText("auto reset credit redeemed: channel_id=%d, result=%s", ch.Id, result.Result))
-		recordChannelAutoResetAudit(ch, freshCfg, decision, result, facts.usage, after, credits)
-		return
+		afterCtx, cancel := context.WithTimeout(ctx, channelAutoResetReadTimeout)
+		after, _ = e.loadUsage(afterCtx, ch, clock(), true)
+		cancel()
+	} else {
+		common.SysLog(common.LogText("auto reset credit failed: channel_id=%d, result=%s", ch.Id, result.Result))
 	}
-	e.recordFailure(ch, freshCfg, &state, decision, result, now, facts.usage, credits)
+	recordChannelAutoResetAudit(ch, cfg, decision, result, recheck.usage, after, credits)
 }
 
-func (e *ChannelAutoResetEngine) recordFailure(ch *model.Channel, cfg ChannelAutoResetConfig, state *ChannelAutoResetState, decision *ChannelAutoResetDecision, result ChannelAutoResetRedeemResult, now time.Time, before *ChannelAutoResetUsage, credits *ChannelAutoResetCredits) {
-	decision.Reason = AutoResetReasonFailed
-	state.FailCount++
-	state.LastAttemptAt = now.Unix()
-	state.LastResult = result.Result
-	state.LastSuccess = false
-	state.LastHits = decision.Hits
-	backoff := now.Add(channelAutoResetBackoff(state.FailCount))
-	if result.RetryAfter.After(backoff) {
-		backoff = result.RetryAfter
-	}
-	state.BackoffUntil = backoff.Unix()
-	decision.NextAllowedAt = state.BackoffUntil
-	e.saveState(ch.Id, *state)
-	common.SysLog(common.LogText("auto reset credit failed: channel_id=%d, result=%s, failures=%d, backoff_until=%d", ch.Id, result.Result, state.FailCount, state.BackoffUntil))
-	if credits != nil {
-		recordChannelAutoResetAudit(ch, cfg, decision, result, before, nil, credits)
-	}
-}
-
-// recordSkip keeps the skip reason in the persisted state when it changed, so
+// recordSkip keeps the skip reason in the shared state when it changed, so
 // the console shows it from any node without a write on every tick.
-func (e *ChannelAutoResetEngine) recordSkip(channelId int, state *ChannelAutoResetState, decision ChannelAutoResetDecision, dryRun bool) {
-	if dryRun || decision.Reason == "" || decision.Reason == state.LastSkipReason {
+func (e *ChannelAutoResetEngine) recordSkip(channelId int, state *ChannelAutoResetState, decision ChannelAutoResetDecision) {
+	if decision.Reason == "" || decision.Reason == state.LastSkipReason {
 		return
 	}
 	state.LastSkipReason = decision.Reason
-	state.LastSkipAt = decision.EvaluatedAt
-	e.saveState(channelId, *state)
+	if err := model.UpdateChannelAutoResetStateFields(channelId, map[string]any{"last_skip_reason": decision.Reason, "last_skip_at": decision.EvaluatedAt}); err != nil {
+		common.SysError(common.LogText("failed to store auto reset skip: channel_id=%d, error=%v", channelId, err))
+	}
 	if decision.Reason != AutoResetReasonNotMatched {
 		common.SysLog(common.LogText("auto reset credit skipped: channel_id=%d, reason=%s", channelId, decision.Reason))
-	}
-}
-
-func (e *ChannelAutoResetEngine) saveState(channelId int, state ChannelAutoResetState) {
-	if err := model.UpdateChannelOtherInfoEntry(channelId, ChannelAutoResetStateKey, state); err != nil {
-		common.SysError(common.LogText("failed to store auto reset state: channel_id=%d, error=%v", channelId, err))
-	}
-}
-
-func (e *ChannelAutoResetEngine) saveConfig(channelId int, cfg ChannelAutoResetConfig) {
-	if err := model.UpdateChannelOtherInfoEntry(channelId, ChannelAutoResetConfigKey, cfg); err != nil {
-		common.SysError(common.LogText("failed to store auto reset setting: channel_id=%d, error=%v", channelId, err))
 	}
 }
 
@@ -1131,34 +1433,36 @@ func StartChannelAutoResetTask(provider ChannelAutoResetProvider) {
 			ticker := time.NewTicker(channelAutoResetTickInterval)
 			defer ticker.Stop()
 			for range ticker.C {
-				engine.RunOnce(context.Background(), time.Now())
+				engine.RunOnce(context.Background())
 			}
 		})
 	})
 }
 
-// RunOnce evaluates every channel whose switch is on.
-func (e *ChannelAutoResetEngine) RunOnce(ctx context.Context, now time.Time) {
-	candidates, err := model.ListChannelAutoResetCandidates()
+// RunOnce evaluates every channel whose switch is on. The list comes from an
+// indexed query on the small state table; each channel is evaluated at its
+// own wall-clock time.
+func (e *ChannelAutoResetEngine) RunOnce(ctx context.Context) {
+	ids, err := model.ListChannelAutoResetEnabledIds()
 	if err != nil {
 		common.SysError(common.LogText("failed to list auto reset channels: %v", err))
 		return
 	}
-	enabled := map[int]bool{}
-	for _, candidate := range candidates {
-		if LoadChannelAutoResetConfig(candidate).Enabled {
-			enabled[candidate.Id] = true
-		}
+	enabled := make(map[int]bool, len(ids))
+	for _, id := range ids {
+		enabled[id] = true
 	}
 	e.mu.Lock()
 	e.enabled = enabled
 	e.mu.Unlock()
-	for id := range enabled {
+	for _, id := range ids {
 		ch, err := model.GetChannelById(id, true)
 		if err != nil {
+			// The channel was deleted; its state goes with it.
+			_ = model.DeleteChannelAutoResetState(id)
 			continue
 		}
-		e.Evaluate(ctx, ch, now, false, nil)
+		e.Evaluate(ctx, ch, time.Now(), false, nil)
 	}
 }
 
@@ -1186,20 +1490,29 @@ func NotifyChannelAutoResetUsageSample(channelId int) {
 	})
 }
 
-// SetChannelAutoResetEnabled updates the in-memory switch after a save so the
-// sample trigger follows it before the next tick.
-func SetChannelAutoResetEnabled(channelId int, enabled bool) {
-	engine := DefaultChannelAutoResetEngine()
-	if engine == nil {
-		return
+// SaveChannelAutoResetConfig stores a normalized setting (compare-and-swap on
+// other_info) and mirrors its switch into the shared state.
+func SaveChannelAutoResetConfig(channelId int, cfg ChannelAutoResetConfig) error {
+	err := model.MutateChannelOtherInfo(channelId, func(info map[string]any) bool {
+		info[ChannelAutoResetConfigKey] = cfg
+		return true
+	})
+	if err != nil {
+		return err
 	}
-	engine.mu.Lock()
-	defer engine.mu.Unlock()
-	if enabled {
-		engine.enabled[channelId] = true
-	} else {
-		delete(engine.enabled, channelId)
+	if err := model.UpdateChannelAutoResetStateFields(channelId, map[string]any{"auto_enabled": cfg.Enabled}); err != nil {
+		return err
 	}
+	if engine := DefaultChannelAutoResetEngine(); engine != nil {
+		engine.mu.Lock()
+		if cfg.Enabled {
+			engine.enabled[channelId] = true
+		} else {
+			delete(engine.enabled, channelId)
+		}
+		engine.mu.Unlock()
+	}
+	return nil
 }
 
 // ErrChannelAutoResetUnavailable reports that the engine is not installed.

@@ -8010,7 +8010,6 @@
     "Pick a time in the future": "Choisissez une heure future",
     "Redeem one of this account's reset credits automatically when the conditions match.": "Utilise automatiquement un crédit de réinitialisation de ce compte lorsque les conditions sont remplies.",
     "Redeemable credits": "Crédits utilisables",
-    "Redemptions in the last 7 days": "Utilisations sur les 7 derniers jours",
     "Remove alarm {{time}}": "Supprimer l'alarme {{time}}",
     "Remove group": "Supprimer le groupe",
     "Safeguards": "Garde-fous",
@@ -8040,6 +8039,15 @@
     "Waiting after a failed attempt": "Attente après un échec",
     "Weekly limit reached": "Limite hebdomadaire atteinte",
     "Weekly usage at or above": "Utilisation hebdomadaire d'au moins",
-    "{{window}} usage {{value}}% (threshold {{threshold}}%)": "Utilisation {{window}} {{value}} % (seuil {{threshold}} %)"
+    "{{window}} usage {{value}}% (threshold {{threshold}}%)": "Utilisation {{window}} {{value}} % (seuil {{threshold}} %)",
+    "A redemption is in progress or was interrupted": "Une utilisation est en cours ou a été interrompue",
+    "The stored setting is invalid": "Les paramètres enregistrés sont invalides",
+    "Credentials were rejected or unavailable": "Identifiants refusés ou indisponibles",
+    "Automatic": "Automatique",
+    "Manual": "Manuel",
+    "Subscriber": "Abonné",
+    "Last redemption (any source)": "Dernière utilisation (toute source)",
+    "Redemption in progress": "Utilisation en cours",
+    "Automatic redemptions in the last 7 days": "Utilisations automatiques sur les 7 derniers jours"
   }
 }

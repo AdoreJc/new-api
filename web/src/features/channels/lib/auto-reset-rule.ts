@@ -78,7 +78,14 @@ export type AutoResetDecision = {
 }
 
 export type AutoResetState = {
+  /** Automatic redemptions that may have used a credit, last 7 days. */
   redeemed_at?: number[]
+  /** Last redemption from any source; the minimum interval counts from it. */
+  last_redeem_at?: number
+  last_redeem_source?: string
+  /** Set while a redemption request is out, or after one was interrupted. */
+  in_flight_since?: number
+  in_flight_source?: string
   last_attempt_at?: number
   last_result?: string
   last_success?: boolean

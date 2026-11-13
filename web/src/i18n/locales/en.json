@@ -8010,7 +8010,6 @@
     "Pick a time in the future": "Pick a time in the future",
     "Redeem one of this account's reset credits automatically when the conditions match.": "Redeem one of this account's reset credits automatically when the conditions match.",
     "Redeemable credits": "Redeemable credits",
-    "Redemptions in the last 7 days": "Redemptions in the last 7 days",
     "Remove alarm {{time}}": "Remove alarm {{time}}",
     "Remove group": "Remove group",
     "Safeguards": "Safeguards",
@@ -8040,6 +8039,15 @@
     "Waiting after a failed attempt": "Waiting after a failed attempt",
     "Weekly limit reached": "Weekly limit reached",
     "Weekly usage at or above": "Weekly usage at or above",
-    "{{window}} usage {{value}}% (threshold {{threshold}}%)": "{{window}} usage {{value}}% (threshold {{threshold}}%)"
+    "{{window}} usage {{value}}% (threshold {{threshold}}%)": "{{window}} usage {{value}}% (threshold {{threshold}}%)",
+    "A redemption is in progress or was interrupted": "A redemption is in progress or was interrupted",
+    "The stored setting is invalid": "The stored setting is invalid",
+    "Credentials were rejected or unavailable": "Credentials were rejected or unavailable",
+    "Automatic": "Automatic",
+    "Manual": "Manual",
+    "Subscriber": "Subscriber",
+    "Last redemption (any source)": "Last redemption (any source)",
+    "Redemption in progress": "Redemption in progress",
+    "Automatic redemptions in the last 7 days": "Automatic redemptions in the last 7 days"
   }
 }

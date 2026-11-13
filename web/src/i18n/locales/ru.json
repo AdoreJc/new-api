@@ -8010,7 +8010,6 @@
     "Pick a time in the future": "Выберите время в будущем",
     "Redeem one of this account's reset credits automatically when the conditions match.": "Автоматически использует один кредит сброса этого аккаунта, когда условия выполнены.",
     "Redeemable credits": "Доступные кредиты",
-    "Redemptions in the last 7 days": "Использований за 7 дней",
     "Remove alarm {{time}}": "Удалить будильник {{time}}",
     "Remove group": "Удалить группу",
     "Safeguards": "Ограничения",
@@ -8040,6 +8039,15 @@
     "Waiting after a failed attempt": "Ожидание после неудачи",
     "Weekly limit reached": "Достигнут недельный лимит",
     "Weekly usage at or above": "Недельное использование не менее",
-    "{{window}} usage {{value}}% (threshold {{threshold}}%)": "Использование {{window}} {{value}}% (порог {{threshold}}%)"
+    "{{window}} usage {{value}}% (threshold {{threshold}}%)": "Использование {{window}} {{value}}% (порог {{threshold}}%)",
+    "A redemption is in progress or was interrupted": "Использование выполняется или было прервано",
+    "The stored setting is invalid": "Сохранённые настройки недействительны",
+    "Credentials were rejected or unavailable": "Учётные данные отклонены или недоступны",
+    "Automatic": "Автоматически",
+    "Manual": "Вручную",
+    "Subscriber": "Подписчик",
+    "Last redemption (any source)": "Последнее использование (любой источник)",
+    "Redemption in progress": "Использование в процессе",
+    "Automatic redemptions in the last 7 days": "Автоиспользований за 7 дней"
   }
 }

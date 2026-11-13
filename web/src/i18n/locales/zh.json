@@ -8010,7 +8010,6 @@
     "Pick a time in the future": "请选择将来的时间",
     "Redeem one of this account's reset credits automatically when the conditions match.": "条件满足时自动使用该账号的一张重置卡。",
     "Redeemable credits": "可兑换的卡",
-    "Redemptions in the last 7 days": "最近 7 天兑换次数",
     "Remove alarm {{time}}": "删除闹钟 {{time}}",
     "Remove group": "删除分组",
     "Safeguards": "防护",
@@ -8040,6 +8039,15 @@
     "Waiting after a failed attempt": "失败后退避等待中",
     "Weekly limit reached": "已达每周上限",
     "Weekly usage at or above": "周用量达到",
-    "{{window}} usage {{value}}% (threshold {{threshold}}%)": "{{window}}用量 {{value}}%（阈值 {{threshold}}%）"
+    "{{window}} usage {{value}}% (threshold {{threshold}}%)": "{{window}}用量 {{value}}%（阈值 {{threshold}}%）",
+    "A redemption is in progress or was interrupted": "有一次兑换正在进行或被中断",
+    "The stored setting is invalid": "已保存的设置无效",
+    "Credentials were rejected or unavailable": "凭据被拒绝或不可用",
+    "Automatic": "自动",
+    "Manual": "手动",
+    "Subscriber": "订阅用户",
+    "Last redemption (any source)": "上次兑换（任意来源）",
+    "Redemption in progress": "进行中的兑换",
+    "Automatic redemptions in the last 7 days": "最近 7 天自动兑换次数"
   }
 }

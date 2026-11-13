@@ -65,19 +65,28 @@ func GetClaudeChannelResetCredits(c *gin.Context) {
 }
 
 func ResetClaudeChannelUsage(c *gin.Context) {
-	fetchClaudeChannelOAuthData(
-		c,
-		func(ctx context.Context, client *http.Client, ch *model.Channel, accessToken string) (int, any, error) {
-			status, outcome, err := service.RedeemClaudeResetCredit(ctx, client, ch.GetBaseURL(), accessToken)
-			if err != nil || outcome == nil {
-				return status, nil, err
-			}
-			return status, outcome, nil
-		},
-		claudeResetRequestTimeout,
-		common.LogText("failed to reset claude usage"),
-		"Failed to reset usage. Please try again later",
-	)
+	ch, ok := resolveClaudeOAuthChannel(c)
+	if !ok {
+		return
+	}
+	// The manual reset shares the redemption lease with the automatic reset
+	// and subscriber resets, and is recorded before it is sent.
+	redemption, err := service.BeginChannelRedemption(ch.Id, "manual")
+	if errors.Is(err, service.ErrChannelRedemptionBusy) {
+		common.ApiErrorT(c, "Another reset for this account is still in progress. Refresh the reset credits after it finishes")
+		return
+	}
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	result := redeemClaudeChannelCredit(c.Request.Context(), ch, common.LogText("failed to reset claude usage"))
+	redemption.Finish(result.Success || result.MaybeConsumed, nil)
+	if result.Err != nil {
+		common.ApiError(c, result.Err)
+		return
+	}
+	writeClaudeChannelOAuthResult(c, result.Status, result.Payload)
 }
 
 type claudeOAuthFetchFunc func(ctx context.Context, client *http.Client, ch *model.Channel, accessToken string) (statusCode int, payload any, err error)
@@ -86,36 +95,47 @@ type claudeOAuthFetchFunc func(ctx context.Context, client *http.Client, ch *mod
 // retries once after a forced refresh when upstream answers 401. A 403 (scope
 // or plan) is reported as is.
 func fetchClaudeChannelOAuthData(c *gin.Context, fetch claudeOAuthFetchFunc, timeout time.Duration, logPrefix string, userMessage string) {
-	channelId, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		common.ApiError(c, fmt.Errorf("invalid channel id: %w", err))
+	ch, ok := resolveClaudeOAuthChannel(c)
+	if !ok {
 		return
 	}
-
-	ch, err := model.GetChannelById(channelId, true)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if ch == nil {
-		common.ApiErrorT(c, "Channel not found")
-		return
-	}
-	if ch.Type != constant.ChannelTypeClaudeOAuth {
-		common.ApiErrorT(c, "This channel is not a Claude Subscription (OAuth) channel")
-		return
-	}
-	if ch.ChannelInfo.IsMultiKey {
-		common.ApiErrorT(c, "Multi-key channels are not supported")
-		return
-	}
-
 	statusCode, payload, err := claudeChannelOAuthFetch(c.Request.Context(), ch, fetch, timeout, logPrefix, userMessage, false)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	writeClaudeChannelOAuthResult(c, statusCode, payload)
+}
 
+// resolveClaudeOAuthChannel loads the :id Claude OAuth channel. On failure
+// the error response has been written.
+func resolveClaudeOAuthChannel(c *gin.Context) (*model.Channel, bool) {
+	channelId, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, fmt.Errorf("invalid channel id: %w", err))
+		return nil, false
+	}
+	ch, err := model.GetChannelById(channelId, true)
+	if err != nil {
+		common.ApiError(c, err)
+		return nil, false
+	}
+	if ch == nil {
+		common.ApiErrorT(c, "Channel not found")
+		return nil, false
+	}
+	if ch.Type != constant.ChannelTypeClaudeOAuth {
+		common.ApiErrorT(c, "This channel is not a Claude Subscription (OAuth) channel")
+		return nil, false
+	}
+	if ch.ChannelInfo.IsMultiKey {
+		common.ApiErrorT(c, "Multi-key channels are not supported")
+		return nil, false
+	}
+	return ch, true
+}
+
+func writeClaudeChannelOAuthResult(c *gin.Context, statusCode int, payload any) {
 	if statusCode < 200 || statusCode >= 300 {
 		common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("Upstream returned status {{status}}", map[string]any{"status": statusCode}), gin.H{
 			"upstream_status": statusCode,

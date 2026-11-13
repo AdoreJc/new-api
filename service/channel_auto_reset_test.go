@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"sync"
 	"testing"
@@ -89,20 +90,32 @@ func fiveHourAtLeast(pct float64) ChannelAutoResetRule {
 // seedAutoResetChannel stores a Claude OAuth channel with cfg and state.
 func seedAutoResetChannel(t *testing.T, cfg ChannelAutoResetConfig, state *ChannelAutoResetState) *model.Channel {
 	t.Helper()
-	require.NoError(t, model.DB.AutoMigrate(&model.AuditLog{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.AuditLog{}, &model.ChannelAutoResetState{}))
 	t.Cleanup(func() {
 		model.DB.Exec("DELETE FROM channels")
-		model.DB.Exec("DELETE FROM system_task_locks")
+		model.DB.Exec("DELETE FROM channel_auto_reset_states")
 		model.DB.Exec("DELETE FROM audit_logs")
 	})
 	ch := &model.Channel{Type: constant.ChannelTypeClaudeOAuth, Name: "auto-reset-test", Key: "{}", Status: common.ChannelStatusEnabled}
-	info := map[string]any{ChannelAutoResetConfigKey: cfg}
-	if state != nil {
-		info[ChannelAutoResetStateKey] = *state
-	}
-	ch.SetOtherInfo(info)
+	ch.SetOtherInfo(map[string]any{ChannelAutoResetConfigKey: cfg})
 	require.NoError(t, model.DB.Create(ch).Error)
+	row := &model.ChannelAutoResetState{ChannelId: ch.Id, AutoEnabled: cfg.Enabled}
+	if state != nil {
+		row.AutoHistory = encodeChannelAutoResetJSON(state.RedeemedAt)
+		row.LastRedeemAt = state.LastRedeemAt
+		row.FailCount = state.FailCount
+		row.BackoffUntil = state.BackoffUntil
+		row.InFlightSince = state.InFlightSince
+	}
+	require.NoError(t, model.DB.Create(row).Error)
 	return reloadAutoResetChannel(t, ch.Id)
+}
+
+func loadAutoResetState(t *testing.T, id int) ChannelAutoResetState {
+	t.Helper()
+	state, err := LoadChannelAutoResetState(id)
+	require.NoError(t, err)
+	return state
 }
 
 func reloadAutoResetChannel(t *testing.T, id int) *model.Channel {
@@ -157,7 +170,7 @@ func TestEvaluateChannelAutoResetRule(t *testing.T) {
 		{"expiring beyond window", expiring(4.9), false, 0},
 		{"alarm due within grace", alarm("2026-11-12T07:55:00Z"), true, 1},
 		{"alarm in the future", alarm("2026-11-12T08:01:00Z"), false, 0},
-		{"alarm past grace", alarm("2026-11-12T07:49:00Z"), false, 0},
+		{"alarm past grace", alarm("2026-11-12T07:29:00Z"), false, 0},
 		{"alarm already fired", alarm("2026-11-12T07:58:00Z"), false, 0},
 	}
 	for _, tc := range cases {
@@ -218,7 +231,7 @@ func TestChannelAutoResetAlarmFiresOnceAndExpires(t *testing.T) {
 	now := autoResetTestNow
 	cfg := autoResetTestConfig(ChannelAutoResetRule{Type: ChannelAutoResetCondAtTime, Times: []string{
 		"2026-11-12T07:59:00Z", // due
-		"2026-11-12T07:40:00Z", // missed by more than the grace
+		"2026-11-12T07:20:00Z", // missed by more than the grace
 		"2026-11-13T07:00:00Z", // tomorrow
 	}})
 	ch := seedAutoResetChannel(t, cfg, nil)
@@ -230,7 +243,7 @@ func TestChannelAutoResetAlarmFiresOnceAndExpires(t *testing.T) {
 
 	ch = reloadAutoResetChannel(t, ch.Id)
 	assert.Equal(t, []string{"2026-11-13T07:00:00Z"}, LoadChannelAutoResetConfig(ch).Rule.Times)
-	assert.Equal(t, []string{"2026-11-12T07:59:00Z"}, LoadChannelAutoResetState(ch).FiredAlarms)
+	assert.Equal(t, []string{"2026-11-12T07:59:00Z"}, loadAutoResetState(t, ch.Id).FiredAlarms)
 
 	// A stale save that brings the fired alarm back does not fire it again.
 	stale := LoadChannelAutoResetConfig(ch)
@@ -274,9 +287,9 @@ func TestChannelAutoResetGuards(t *testing.T) {
 		usage  map[string]ChannelAutoResetWindow
 		reason string
 	}{
-		{name: "min interval", rule: fiveHourAtLeast(90), state: ChannelAutoResetState{RedeemedAt: []int64{ago(30 * time.Minute)}}, usage: resetsLater, reason: AutoResetReasonMinInterval},
-		{name: "interval elapsed", rule: fiveHourAtLeast(90), state: ChannelAutoResetState{RedeemedAt: []int64{ago(61 * time.Minute)}}, usage: resetsLater, reason: AutoResetReasonRedeemed},
-		{name: "daily cap", rule: fiveHourAtLeast(90), state: ChannelAutoResetState{RedeemedAt: []int64{ago(20 * time.Hour), ago(2 * time.Hour)}}, usage: resetsLater, reason: AutoResetReasonDailyCap},
+		{name: "min interval", rule: fiveHourAtLeast(90), state: ChannelAutoResetState{LastRedeemAt: ago(30 * time.Minute)}, usage: resetsLater, reason: AutoResetReasonMinInterval},
+		{name: "interval elapsed", rule: fiveHourAtLeast(90), state: ChannelAutoResetState{RedeemedAt: []int64{ago(61 * time.Minute)}, LastRedeemAt: ago(61 * time.Minute)}, usage: resetsLater, reason: AutoResetReasonRedeemed},
+		{name: "daily cap", rule: fiveHourAtLeast(90), state: ChannelAutoResetState{RedeemedAt: []int64{ago(20 * time.Hour), ago(2 * time.Hour)}, LastRedeemAt: ago(2 * time.Hour)}, usage: resetsLater, reason: AutoResetReasonDailyCap},
 		{name: "weekly cap", rule: fiveHourAtLeast(90), mutate: func(c *ChannelAutoResetConfig) { c.MaxPerWeek = 2 }, state: ChannelAutoResetState{RedeemedAt: []int64{ago(6 * 24 * time.Hour), ago(3 * 24 * time.Hour)}}, usage: resetsLater, reason: AutoResetReasonWeeklyCap},
 		{name: "backoff", rule: fiveHourAtLeast(90), state: ChannelAutoResetState{FailCount: 1, BackoffUntil: now.Add(time.Minute).Unix()}, usage: resetsLater, reason: AutoResetReasonBackoff},
 		{name: "window resets soon", rule: fiveHourAtLeast(90), usage: resetsSoon, reason: AutoResetReasonResetsSoon},
@@ -313,8 +326,8 @@ func TestChannelAutoResetNoCreditWaits(t *testing.T) {
 	assert.Equal(t, AutoResetReasonNoCredit, decision.Reason)
 	_, _, redeems := provider.calls()
 	assert.Zero(t, redeems)
-	state := LoadChannelAutoResetState(reloadAutoResetChannel(t, ch.Id))
-	assert.Equal(t, now.Add(channelAutoResetNoCreditRecheck).Unix(), state.BackoffUntil)
+	state := loadAutoResetState(t, ch.Id)
+	assert.Equal(t, now.Add(channelAutoResetPause).Unix(), state.BackoffUntil)
 	assert.Zero(t, state.FailCount)
 }
 
@@ -342,7 +355,7 @@ func TestChannelAutoResetRedeemsOnceAcrossNodes(t *testing.T) {
 	assert.Equal(t, 1, redeems)
 	reasons := []string{decisions[0].Reason, decisions[1].Reason}
 	assert.Contains(t, reasons, AutoResetReasonRedeemed)
-	assert.Subset(t, []string{AutoResetReasonRedeemed, AutoResetReasonBusy, AutoResetReasonMinInterval}, reasons)
+	assert.Subset(t, []string{AutoResetReasonRedeemed, AutoResetReasonBusy, AutoResetReasonMinInterval, AutoResetReasonInFlight}, reasons)
 
 	// A later evaluation from either node sees the stored redemption.
 	decision := nodes[1].Evaluate(context.Background(), reloadAutoResetChannel(t, ch.Id), now.Add(time.Minute), false, nil)
@@ -368,7 +381,7 @@ func TestChannelAutoResetFailureBacksOff(t *testing.T) {
 	}
 
 	assert.Equal(t, AutoResetReasonFailed, run(now).Reason)
-	state := LoadChannelAutoResetState(reloadAutoResetChannel(t, ch.Id))
+	state := loadAutoResetState(t, ch.Id)
 	assert.Equal(t, 1, state.FailCount)
 	assert.Equal(t, now.Add(5*time.Minute).Unix(), state.BackoffUntil)
 	assert.Empty(t, state.RedeemedAt, "a definite rejection used no credit")
@@ -377,7 +390,7 @@ func TestChannelAutoResetFailureBacksOff(t *testing.T) {
 
 	second := now.Add(6 * time.Minute)
 	assert.Equal(t, AutoResetReasonFailed, run(second).Reason)
-	state = LoadChannelAutoResetState(reloadAutoResetChannel(t, ch.Id))
+	state = loadAutoResetState(t, ch.Id)
 	assert.Equal(t, 2, state.FailCount)
 	assert.Equal(t, second.Add(10*time.Minute).Unix(), state.BackoffUntil)
 	assert.Equal(t, []int64{second.Unix()}, state.RedeemedAt, "an unknown outcome counts against the caps")
@@ -395,7 +408,7 @@ func TestChannelAutoResetDisabledDoesNothing(t *testing.T) {
 
 	decision := engine.Evaluate(context.Background(), ch, autoResetTestNow, false, nil)
 	assert.Equal(t, AutoResetReasonDisabled, decision.Reason)
-	engine.RunOnce(context.Background(), autoResetTestNow)
+	engine.RunOnce(context.Background())
 
 	usage, credits, redeems := provider.calls()
 	assert.Zero(t, usage+credits+redeems)
@@ -458,4 +471,179 @@ func TestChannelAutoResetAudit(t *testing.T) {
 		"usage_after": {"five_hour": 93.2, "seven_day": 40},
 		"credits_available_before": 2
 	}`, string(encoded))
+}
+
+// gatedAutoResetProvider blocks the first LoadUsage or Redeem call until the
+// test releases it.
+type gatedAutoResetProvider struct {
+	*fakeAutoResetProvider
+	usageGate  chan struct{}
+	usageIn    chan struct{}
+	redeemGate chan struct{}
+	redeemIn   chan struct{}
+	usageOnce  sync.Once
+	redeemOnce sync.Once
+}
+
+func (p *gatedAutoResetProvider) LoadUsage(ctx context.Context, ch *model.Channel, allowUpstream bool) (*ChannelAutoResetUsage, error) {
+	if p.usageGate != nil {
+		p.usageOnce.Do(func() { close(p.usageIn); <-p.usageGate })
+	}
+	return p.fakeAutoResetProvider.LoadUsage(ctx, ch, allowUpstream)
+}
+
+func (p *gatedAutoResetProvider) Redeem(ctx context.Context, ch *model.Channel) ChannelAutoResetRedeemResult {
+	if p.redeemGate != nil {
+		first := false
+		p.redeemOnce.Do(func() { first = true })
+		if first {
+			close(p.redeemIn)
+			<-p.redeemGate
+		}
+	}
+	return p.fakeAutoResetProvider.Redeem(ctx, ch)
+}
+
+// An administrator switches automatic reset off while a tick is evaluating a
+// due alarm: the tick neither redeems nor writes the old setting back.
+func TestChannelAutoResetAdminDisableDuringEvaluation(t *testing.T) {
+	now := autoResetTestNow
+	cfg := autoResetTestConfig(ChannelAutoResetRule{Type: ChannelAutoResetCondAtTime, Times: []string{"2026-11-12T07:59:00Z", "2026-11-13T07:00:00Z"}})
+	cfg.AlarmIgnoresResetSoon = false // the evaluation reads usage, where the test pauses it
+	ch := seedAutoResetChannel(t, cfg, nil)
+	provider := &gatedAutoResetProvider{
+		fakeAutoResetProvider: &fakeAutoResetProvider{usage: map[string]ChannelAutoResetWindow{"five_hour": {Utilization: 40}}, credits: ChannelAutoResetCredits{Available: 1}},
+		usageGate:             make(chan struct{}),
+		usageIn:               make(chan struct{}),
+	}
+	engine := NewChannelAutoResetEngine(provider)
+	done := make(chan ChannelAutoResetDecision)
+	go func() { done <- engine.Evaluate(context.Background(), ch, now, false, nil) }()
+	<-provider.usageIn
+	off := LoadChannelAutoResetConfig(ch)
+	off.Enabled = false
+	require.NoError(t, model.UpdateChannelOtherInfoEntry(ch.Id, ChannelAutoResetConfigKey, off))
+	close(provider.usageGate)
+	<-done
+
+	_, _, redeems := provider.calls()
+	assert.Zero(t, redeems)
+	assert.False(t, LoadChannelAutoResetConfig(reloadAutoResetChannel(t, ch.Id)).Enabled)
+}
+
+// Node A is still waiting for the redemption answer when its lease runs out
+// and node B takes the lease over: B must see A's redemption and not redeem.
+func TestChannelAutoResetLeaseTakeoverDoesNotRedeemAgain(t *testing.T) {
+	now := autoResetTestNow
+	ch := seedAutoResetChannel(t, autoResetTestConfig(fiveHourAtLeast(90)), nil)
+	base := &fakeAutoResetProvider{usage: map[string]ChannelAutoResetWindow{"five_hour": {Utilization: 100, ResetsAt: now.Add(4 * time.Hour)}}, credits: ChannelAutoResetCredits{Available: 3}}
+	providerA := &gatedAutoResetProvider{fakeAutoResetProvider: base, redeemGate: make(chan struct{}), redeemIn: make(chan struct{})}
+	nodeA, nodeB := NewChannelAutoResetEngine(providerA), NewChannelAutoResetEngine(base)
+	done := make(chan ChannelAutoResetDecision)
+	go func() { done <- nodeA.Evaluate(context.Background(), ch, now, false, nil) }()
+	<-providerA.redeemIn
+
+	decisionB := nodeB.Evaluate(context.Background(), reloadAutoResetChannel(t, ch.Id), now.Add(6*time.Minute), false, nil)
+	close(providerA.redeemGate)
+	<-done
+
+	_, _, redeems := base.calls()
+	assert.Equal(t, 1, redeems)
+	assert.NotEqual(t, AutoResetReasonRedeemed, decisionB.Reason)
+}
+
+// A cached usage snapshot still matches, but usage read after the lease no
+// longer does (for example after a manual reset elsewhere): nothing is redeemed.
+func TestChannelAutoResetRechecksConditionsWithFreshUsage(t *testing.T) {
+	now := autoResetTestNow
+	ch := seedAutoResetChannel(t, autoResetTestConfig(fiveHourAtLeast(90)), nil)
+	provider := &fakeAutoResetProvider{usage: map[string]ChannelAutoResetWindow{"five_hour": {Utilization: 95, ResetsAt: now.Add(4 * time.Hour)}}, credits: ChannelAutoResetCredits{Available: 1}}
+	engine := NewChannelAutoResetEngine(provider)
+	require.Equal(t, AutoResetReasonWouldRedeem, engine.Evaluate(context.Background(), ch, now, true, nil).Reason)
+
+	provider.mu.Lock()
+	provider.usage = map[string]ChannelAutoResetWindow{"five_hour": {Utilization: 3, ResetsAt: now.Add(5 * time.Hour)}}
+	provider.mu.Unlock()
+	decision := engine.Evaluate(context.Background(), ch, now.Add(time.Minute), false, nil)
+
+	assert.Equal(t, AutoResetReasonNotMatched, decision.Reason)
+	_, _, redeems := provider.calls()
+	assert.Zero(t, redeems)
+}
+
+// A manual or subscriber redemption holds the same lease while it runs and
+// then counts against the minimum interval; one that used no credit does not.
+func TestChannelAutoResetSharesLeaseWithManualRedemption(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	ch := seedAutoResetChannel(t, autoResetTestConfig(fiveHourAtLeast(90)), nil)
+	provider := &fakeAutoResetProvider{usage: map[string]ChannelAutoResetWindow{"five_hour": {Utilization: 100, ResetsAt: now.Add(4 * time.Hour)}}, credits: ChannelAutoResetCredits{Available: 2}}
+	engine := NewChannelAutoResetEngine(provider)
+
+	manual, err := BeginChannelRedemption(ch.Id, "manual")
+	require.NoError(t, err)
+	_, err = BeginChannelRedemption(ch.Id, "subscription")
+	assert.ErrorIs(t, err, ErrChannelRedemptionBusy)
+	assert.Contains(t, []string{AutoResetReasonInFlight, AutoResetReasonMinInterval}, engine.Evaluate(context.Background(), ch, now, false, nil).Reason)
+	manual.Finish(true, nil)
+
+	assert.Equal(t, AutoResetReasonMinInterval, engine.Evaluate(context.Background(), ch, now.Add(time.Minute), false, nil).Reason)
+	state := loadAutoResetState(t, ch.Id)
+	assert.Equal(t, "manual", state.LastRedeemSource)
+	assert.Zero(t, state.InFlightSince)
+
+	rejected, err := BeginChannelRedemption(ch.Id, "manual")
+	require.NoError(t, err)
+	rejected.Finish(false, nil)
+	assert.Equal(t, now.Unix(), loadAutoResetState(t, ch.Id).LastRedeemAt, "a rejected redemption restores the previous record")
+	_, _, redeems := provider.calls()
+	assert.Zero(t, redeems)
+}
+
+// A node crashed after recording a redemption as in flight: it counts as a
+// redemption, and the next lease holder resolves it once the interval passed.
+func TestChannelAutoResetResolvesInterruptedRedemption(t *testing.T) {
+	now := autoResetTestNow
+	crashedAt := now.Add(-20 * time.Minute).Unix()
+	ch := seedAutoResetChannel(t, autoResetTestConfig(fiveHourAtLeast(90)), &ChannelAutoResetState{RedeemedAt: []int64{crashedAt}, LastRedeemAt: crashedAt, InFlightSince: crashedAt})
+	provider := &fakeAutoResetProvider{usage: map[string]ChannelAutoResetWindow{"five_hour": {Utilization: 100, ResetsAt: now.Add(4 * time.Hour)}}, credits: ChannelAutoResetCredits{Available: 2}}
+	engine := NewChannelAutoResetEngine(provider)
+
+	assert.Equal(t, AutoResetReasonMinInterval, engine.Evaluate(context.Background(), ch, now, false, nil).Reason)
+	later := now.Add(45 * time.Minute)
+	assert.Equal(t, AutoResetReasonRedeemed, engine.Evaluate(context.Background(), reloadAutoResetChannel(t, ch.Id), later, false, nil).Reason)
+
+	state := loadAutoResetState(t, ch.Id)
+	assert.Zero(t, state.InFlightSince)
+	assert.Len(t, state.RedeemedAt, 2, "the interrupted redemption stays counted")
+	_, _, redeems := provider.calls()
+	assert.Equal(t, 1, redeems)
+}
+
+// A setting written around the dedicated endpoint is validated before use.
+func TestChannelAutoResetSkipsInvalidStoredSetting(t *testing.T) {
+	cfg := autoResetTestConfig(fiveHourAtLeast(500))
+	ch := seedAutoResetChannel(t, cfg, nil)
+	provider := &fakeAutoResetProvider{usage: map[string]ChannelAutoResetWindow{"five_hour": {Utilization: 100}}, credits: ChannelAutoResetCredits{Available: 1}}
+
+	decision := NewChannelAutoResetEngine(provider).Evaluate(context.Background(), ch, autoResetTestNow, false, nil)
+
+	assert.Equal(t, AutoResetReasonInvalidSetting, decision.Reason)
+	usage, credits, redeems := provider.calls()
+	assert.Zero(t, usage+credits+redeems)
+	assert.Equal(t, AutoResetReasonInvalidSetting, loadAutoResetState(t, ch.Id).LastSkipReason)
+}
+
+// An alarm rule with the natural-reset override does not depend on usage, so
+// it still fires while the usage API is down.
+func TestChannelAutoResetAlarmFiresWithoutUsage(t *testing.T) {
+	now := autoResetTestNow
+	ch := seedAutoResetChannel(t, autoResetTestConfig(ChannelAutoResetRule{Type: ChannelAutoResetCondAtTime, Times: []string{"2026-11-12T07:58:00Z"}}), nil)
+	provider := &fakeAutoResetProvider{usageErr: errors.New("usage API down"), credits: ChannelAutoResetCredits{Available: 1}}
+
+	decision := NewChannelAutoResetEngine(provider).Evaluate(context.Background(), ch, now, false, nil)
+
+	assert.Equal(t, AutoResetReasonRedeemed, decision.Reason)
+	usage, _, redeems := provider.calls()
+	assert.Equal(t, 1, redeems)
+	assert.Equal(t, 1, usage, "only the after-redemption read for the audit")
 }

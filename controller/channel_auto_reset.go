@@ -175,62 +175,92 @@ func (channelAutoResetUpstream) LoadCredits(ctx context.Context, ch *model.Chann
 func (channelAutoResetUpstream) Redeem(ctx context.Context, ch *model.Channel) service.ChannelAutoResetRedeemResult {
 	switch ch.Type {
 	case constant.ChannelTypeClaudeOAuth:
-		var redeemErr error
-		status, payload, err := claudeChannelOAuthFetch(ctx, ch,
-			func(ctx context.Context, client *http.Client, ch *model.Channel, accessToken string) (int, any, error) {
-				status, outcome, err := service.RedeemClaudeResetCredit(ctx, client, ch.GetBaseURL(), accessToken)
-				redeemErr = err
-				if err != nil || outcome == nil {
-					return status, nil, err
-				}
-				return status, outcome, nil
-			},
-			claudeResetRequestTimeout,
-			common.LogText("failed to auto reset claude usage"),
-			"Failed to reset usage. Please try again later",
-			false,
-		)
-		outcome, _ := payload.(*service.ClaudeResetOutcome)
-		switch {
-		case errors.Is(redeemErr, service.ErrClaudeResetNotAvailable):
-			return service.ChannelAutoResetRedeemResult{Result: "not_available"}
-		case errors.Is(redeemErr, service.ErrClaudeResetOutcomeUnknown):
-			return service.ChannelAutoResetRedeemResult{Result: "outcome_unknown", MaybeConsumed: true}
-		case err != nil:
-			return service.ChannelAutoResetRedeemResult{Result: "error"}
-		case status < 200 || status >= 300:
-			return service.ChannelAutoResetRedeemResult{Result: fmt.Sprintf("upstream_status_%d", status)}
-		case outcome == nil:
-			return service.ChannelAutoResetRedeemResult{Result: "outcome_unknown", MaybeConsumed: true}
-		}
-		result := service.ChannelAutoResetRedeemResult{Result: outcome.Outcome, Success: outcome.Outcome == "reset"}
-		if outcome.Outcome == "unknown" {
-			result.MaybeConsumed = true
-		}
+		return redeemClaudeChannelCredit(ctx, ch, common.LogText("failed to auto reset claude usage"))
+	case constant.ChannelTypeCodex:
+		return redeemCodexChannelCredit(ctx, ch, common.LogText("failed to auto reset codex usage"))
+	}
+	return service.ChannelAutoResetRedeemResult{Result: "unsupported_channel"}
+}
+
+// redeemCodexChannelCredit sends one Codex consume request and classifies the
+// answer. An error before the request was sent (credentials, proxy client)
+// used no credit; an error after it may have.
+func redeemCodexChannelCredit(ctx context.Context, ch *model.Channel, logPrefix string) service.ChannelAutoResetRedeemResult {
+	sent := false
+	status, body, err := codexChannelWhamFetch(ctx, ch,
+		func(ctx context.Context, client *http.Client, baseURL string, accessToken string, accountID string) (int, []byte, error) {
+			sent = true
+			return service.ConsumeCodexWhamRateLimitResetCredit(ctx, client, baseURL, accessToken, accountID)
+		},
+		logPrefix,
+		"Failed to reset usage. Please try again later",
+	)
+	result := service.ChannelAutoResetRedeemResult{Err: err, Status: status, Body: body}
+	switch {
+	case err != nil && !sent:
+		result.Result, result.CredentialProblem = "not_sent", true
+	case err != nil:
+		result.Result, result.MaybeConsumed = "outcome_unknown", true
+	case status >= 200 && status < 300:
+		model.ClearCodexChannelCooldown(ch.Id)
+		result.Result, result.Success = "consumed", true
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		result.Result, result.CredentialProblem = fmt.Sprintf("upstream_status_%d", status), true
+	case status >= 500:
+		result.Result, result.MaybeConsumed = fmt.Sprintf("upstream_status_%d", status), true
+	default:
+		result.Result = fmt.Sprintf("upstream_status_%d", status)
+	}
+	return result
+}
+
+// redeemClaudeChannelCredit redeems the upstream next grant once and
+// classifies the answer. Only an interrupted or unparseable reset request
+// leaves the outcome unknown; failures before the reset POST used no credit.
+func redeemClaudeChannelCredit(ctx context.Context, ch *model.Channel, logPrefix string) service.ChannelAutoResetRedeemResult {
+	sent := false
+	var redeemErr error
+	status, payload, err := claudeChannelOAuthFetch(ctx, ch,
+		func(ctx context.Context, client *http.Client, ch *model.Channel, accessToken string) (int, any, error) {
+			sent = true
+			status, outcome, err := service.RedeemClaudeResetCredit(ctx, client, ch.GetBaseURL(), accessToken)
+			redeemErr = err
+			if err != nil || outcome == nil {
+				return status, nil, err
+			}
+			return status, outcome, nil
+		},
+		claudeResetRequestTimeout,
+		logPrefix,
+		"Failed to reset usage. Please try again later",
+		false,
+	)
+	result := service.ChannelAutoResetRedeemResult{Err: err, Status: status, Payload: payload}
+	outcome, _ := payload.(*service.ClaudeResetOutcome)
+	switch {
+	case err != nil && !sent:
+		result.Result, result.CredentialProblem = "not_sent", true
+	case errors.Is(redeemErr, service.ErrClaudeResetNotAvailable):
+		result.Result = "not_available"
+	case errors.Is(redeemErr, service.ErrClaudeResetOutcomeUnknown):
+		result.Result, result.MaybeConsumed = "outcome_unknown", true
+	case err != nil:
+		result.Result = "error"
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		result.Result, result.CredentialProblem = fmt.Sprintf("upstream_status_%d", status), true
+	case status < 200 || status >= 300:
+		result.Result = fmt.Sprintf("upstream_status_%d", status)
+	case outcome == nil:
+		result.Result, result.MaybeConsumed = "outcome_unknown", true
+	default:
+		result.Result = outcome.Outcome
+		result.Success = outcome.Outcome == "reset"
+		result.MaybeConsumed = outcome.Outcome == "unknown"
 		if outcome.CooldownUntil != nil {
 			result.RetryAfter = *outcome.CooldownUntil
 		}
-		return result
-	case constant.ChannelTypeCodex:
-		status, _, err := codexChannelWhamFetch(ctx, ch,
-			service.ConsumeCodexWhamRateLimitResetCredit,
-			common.LogText("failed to auto reset codex usage"),
-			"Failed to reset usage. Please try again later",
-		)
-		switch {
-		case err != nil:
-			// The consume request may have reached upstream.
-			return service.ChannelAutoResetRedeemResult{Result: "outcome_unknown", MaybeConsumed: true}
-		case status >= 200 && status < 300:
-			model.ClearCodexChannelCooldown(ch.Id)
-			return service.ChannelAutoResetRedeemResult{Result: "consumed", Success: true}
-		case status >= 500:
-			return service.ChannelAutoResetRedeemResult{Result: fmt.Sprintf("upstream_status_%d", status), MaybeConsumed: true}
-		default:
-			return service.ChannelAutoResetRedeemResult{Result: fmt.Sprintf("upstream_status_%d", status)}
-		}
 	}
-	return service.ChannelAutoResetRedeemResult{Result: "unsupported_channel"}
+	return result
 }
 
 // ---- Admin API ----
@@ -270,12 +300,16 @@ type channelAutoResetView struct {
 	WeeklyWindows     []string                          `json:"weekly_windows"`
 }
 
-func buildChannelAutoResetView(ch *model.Channel) channelAutoResetView {
+func buildChannelAutoResetView(ch *model.Channel) (channelAutoResetView, error) {
 	now := time.Now()
 	cfg := service.LoadChannelAutoResetConfig(ch)
+	state, err := service.LoadChannelAutoResetState(ch.Id)
+	if err != nil {
+		return channelAutoResetView{}, err
+	}
 	view := channelAutoResetView{
 		Config:            cfg,
-		State:             service.LoadChannelAutoResetState(ch),
+		State:             state,
 		AlarmGraceMinutes: int(service.ChannelAutoResetAlarmGrace / time.Minute),
 		WeeklyWindows:     service.ChannelAutoResetWeeklyWindows(ch.Type),
 	}
@@ -289,7 +323,7 @@ func buildChannelAutoResetView(ch *model.Channel) channelAutoResetView {
 			view.LastDecision = &decision
 		}
 	}
-	return view
+	return view, nil
 }
 
 func GetChannelAutoResetCredit(c *gin.Context) {
@@ -297,7 +331,12 @@ func GetChannelAutoResetCredit(c *gin.Context) {
 	if !ok {
 		return
 	}
-	common.ApiSuccess(c, buildChannelAutoResetView(ch))
+	view, err := buildChannelAutoResetView(ch)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, view)
 }
 
 func UpdateChannelAutoResetCredit(c *gin.Context) {
@@ -318,11 +357,10 @@ func UpdateChannelAutoResetCredit(c *gin.Context) {
 	cfg.UpdatedBy = c.GetInt("id")
 	cfg.UpdatedByRole = c.GetInt("role")
 	cfg.UpdatedAt = common.GetTimestamp()
-	if err := model.UpdateChannelOtherInfoEntry(ch.Id, service.ChannelAutoResetConfigKey, cfg); err != nil {
+	if err := service.SaveChannelAutoResetConfig(ch.Id, cfg); err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	service.SetChannelAutoResetEnabled(ch.Id, cfg.Enabled)
 	recordManageAudit(c, "channel.auto_reset_credit_update", map[string]any{
 		"id":      ch.Id,
 		"name":    ch.Name,
@@ -333,7 +371,12 @@ func UpdateChannelAutoResetCredit(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, buildChannelAutoResetView(fresh))
+	view, err := buildChannelAutoResetView(fresh)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, view)
 }
 
 // DryRunChannelAutoResetCredit evaluates the stored setting, or the draft in
