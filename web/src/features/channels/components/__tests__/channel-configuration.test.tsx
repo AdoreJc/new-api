@@ -1395,7 +1395,8 @@ test('editing opens the shared configuration and omits an unchanged key on updat
   expect(await screen.findByDisplayValue('Existing channel')).toBeVisible()
   expect(screen.queryByLabelText('Type *')).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Change provider' })).toBeVisible()
-  expect(screen.getAllByRole('tab')).toHaveLength(4)
+  expect(screen.getAllByRole('tab')).toHaveLength(5)
+  expect(screen.getByRole('tab', { name: /Billing & Cost/ })).toBeVisible()
   expect(
     screen.getByRole('tab', { name: /Connection & Models/ })
   ).toHaveAccessibleName(/Ready/)
@@ -1406,7 +1407,15 @@ test('editing opens the shared configuration and omits an unchanged key on updat
   await waitFor(() =>
     expect(put).toHaveBeenCalledWith(
       '/api/channel/',
-      expect.objectContaining({ id: 42, name: 'Renamed channel' }),
+      // Cost settings are always sent, so cleared values are stored as null.
+      expect.objectContaining({
+        id: 42,
+        name: 'Renamed channel',
+        cost_mode: null,
+        monthly_cost_usd: null,
+        cost_effective_from: null,
+        cost_effective_to: null,
+      }),
       expect.anything()
     )
   )

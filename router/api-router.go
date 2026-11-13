@@ -416,6 +416,9 @@ func SetApiRouter(router *gin.Engine) {
 		dataRoute.GET("/self", middleware.UserAuth(), controller.GetUserQuotaDates)
 		dataRoute.GET("/flow", middleware.AdminAuth(), controller.GetAllFlowQuotaDates)
 		dataRoute.GET("/flow/self", middleware.UserAuth(), controller.GetUserFlowQuotaDates)
+		dataRoute.GET("/cost", middleware.AdminAuth(), controller.GetCostSummary)
+		dataRoute.GET("/cost/backfill", middleware.AdminAuth(), controller.GetCostBackfillStatus)
+		dataRoute.POST("/cost/backfill", middleware.RootAuth(), controller.StartCostBackfill)
 
 		logRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
 		{

@@ -56,8 +56,87 @@ type Channel struct {
 
 	OtherSettings string `json:"settings" gorm:"column:settings"` // 其他设置，存储azure版本等不需要检索的信息，详见dto.ChannelOtherSettings
 
+	// CostRatio is what this channel costs relative to the list price
+	// (standard_quota). Consume logs snapshot it into cost_quota; nil or
+	// out-of-range values count as 1.
+	CostRatio *float64 `json:"cost_ratio" gorm:"default:1"`
+	// CostMode is "ratio" (cost = list price x CostRatio) or "fixed_monthly"
+	// (subscription accounts: a monthly cost amortized per day on the
+	// dashboard). Empty means the default for the channel type.
+	CostMode *string `json:"cost_mode" gorm:"type:varchar(16)"`
+	// MonthlyCostUSD is nil until an administrator enters it.
+	MonthlyCostUSD *float64 `json:"monthly_cost_usd"`
+	// CostEffectiveFrom / CostEffectiveTo are manual bounds of the fixed
+	// cost; nil falls back to the subscription window below.
+	CostEffectiveFrom *int64 `json:"cost_effective_from" gorm:"bigint"`
+	CostEffectiveTo   *int64 `json:"cost_effective_to" gorm:"bigint"`
+	// Subscription* are read-only values parsed from the Codex id_token when
+	// the account is authorized, saved or refreshed.
+	SubscriptionPlanType    string `json:"subscription_plan_type" gorm:"type:varchar(32);default:''"`
+	SubscriptionActiveStart *int64 `json:"subscription_active_start" gorm:"bigint"`
+	SubscriptionActiveUntil *int64 `json:"subscription_active_until" gorm:"bigint"`
+	SubscriptionSyncedAt    *int64 `json:"subscription_synced_at" gorm:"bigint"`
+
 	// cache info
 	Keys []string `json:"-" gorm:"-"`
+}
+
+// MaxChannelCostRatio bounds the administrator-entered channel cost ratio.
+const MaxChannelCostRatio = 10.0
+
+const (
+	ChannelCostModeRatio        = "ratio"
+	ChannelCostModeFixedMonthly = "fixed_monthly"
+	// MaxChannelMonthlyCostUSD bounds the administrator-entered monthly cost.
+	MaxChannelMonthlyCostUSD = 1_000_000.0
+)
+
+// DefaultChannelCostMode is fixed_monthly for subscription (OAuth) accounts
+// and ratio for everything else.
+func DefaultChannelCostMode(channelType int) string {
+	switch channelType {
+	case constant.ChannelTypeCodex, constant.ChannelTypeClaudeOAuth:
+		return ChannelCostModeFixedMonthly
+	default:
+		return ChannelCostModeRatio
+	}
+}
+
+func IsValidChannelCostMode(mode string) bool {
+	return mode == ChannelCostModeRatio || mode == ChannelCostModeFixedMonthly
+}
+
+// GetCostMode returns the stored cost mode, or the type default when unset.
+func (channel *Channel) GetCostMode() string {
+	if channel.CostMode != nil && IsValidChannelCostMode(*channel.CostMode) {
+		return *channel.CostMode
+	}
+	return DefaultChannelCostMode(channel.Type)
+}
+
+// FixedCostWindow returns the bounds of the fixed monthly cost: a manual
+// value wins, otherwise the subscription window parsed from the account.
+func (channel *Channel) FixedCostWindow() (from *int64, fromAuto bool, to *int64, toAuto bool) {
+	from, to = channel.CostEffectiveFrom, channel.CostEffectiveTo
+	if from == nil && channel.SubscriptionActiveStart != nil {
+		from, fromAuto = channel.SubscriptionActiveStart, true
+	}
+	if to == nil && channel.SubscriptionActiveUntil != nil {
+		to, toAuto = channel.SubscriptionActiveUntil, true
+	}
+	return from, fromAuto, to, toAuto
+}
+
+// GetCostRatio returns the channel cost ratio used for cost accounting.
+func (channel *Channel) GetCostRatio() float64 {
+	if channel == nil || channel.CostRatio == nil {
+		return 1
+	}
+	ratio := *channel.CostRatio
+	if !(ratio > 0 && ratio <= MaxChannelCostRatio) {
+		return 1
+	}
+	return ratio
 }
 
 const ChannelStatusReasonAllKeysDisabled = "All keys are disabled"

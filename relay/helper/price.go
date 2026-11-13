@@ -237,6 +237,7 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hostt
 	}
 
 	var quota int
+	var standardQuota int
 	freeModel := false
 
 	if usePrice {
@@ -245,6 +246,7 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hostt
 		if err != nil {
 			return hosttypes.PriceData{}, err
 		}
+		standardQuota = common.QuotaFromFloat(modelPrice * common.QuotaPerUnit)
 		if !operation_setting.GetQuotaSetting().EnableFreeModelPreConsume {
 			if groupRatioInfo.GroupRatio == 0 || modelPrice == 0 {
 				quota = 0
@@ -258,6 +260,7 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hostt
 		if err != nil {
 			return hosttypes.PriceData{}, err
 		}
+		standardQuota = common.QuotaFromFloat(modelRatio / 2 * common.QuotaPerUnit)
 		modelPrice = -1
 		if !operation_setting.GetQuotaSetting().EnableFreeModelPreConsume {
 			if groupRatioInfo.GroupRatio == 0 || modelRatio == 0 {
@@ -273,6 +276,7 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hostt
 		ModelRatio:     modelRatio,
 		UsePrice:       usePrice,
 		Quota:          quota,
+		StandardQuota:  standardQuota,
 		GroupRatioInfo: groupRatioInfo,
 	}
 	return priceData, nil

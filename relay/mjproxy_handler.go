@@ -285,14 +285,15 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 		other := service.GenerateMjOtherInfo(info, priceData)
 		service.AppendRelayLogAdminInfo(c, info, other)
 		model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
-			ChannelId: billingChannelId,
-			ModelName: modelName,
-			TokenName: tokenName,
-			Quota:     midjourneyTask.Quota,
-			Content:   logContent,
-			TokenId:   midjourneyTask.TokenId,
-			Group:     info.UsingGroup,
-			Other:     other,
+			ChannelId:     billingChannelId,
+			ModelName:     modelName,
+			TokenName:     tokenName,
+			Quota:         midjourneyTask.Quota,
+			Content:       logContent,
+			TokenId:       midjourneyTask.TokenId,
+			StandardQuota: priceData.StandardQuota,
+			Group:         info.UsingGroup,
+			Other:         other,
 		})
 		model.UpdateUserUsedQuotaAndRequestCount(info.UserId, midjourneyTask.Quota)
 		model.UpdateChannelUsedQuota(billingChannelId, midjourneyTask.Quota)
@@ -664,14 +665,15 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		other := service.GenerateMjOtherInfo(relayInfo, priceData)
 		service.AppendRelayLogAdminInfo(c, relayInfo, other)
 		model.RecordConsumeLog(c, relayInfo.UserId, model.RecordConsumeLogParams{
-			ChannelId: billingChannelId,
-			ModelName: modelName,
-			TokenName: tokenName,
-			Quota:     midjourneyTask.Quota,
-			Content:   logContent,
-			TokenId:   midjourneyTask.TokenId,
-			Group:     relayInfo.UsingGroup,
-			Other:     other,
+			ChannelId:     billingChannelId,
+			ModelName:     modelName,
+			TokenName:     tokenName,
+			Quota:         midjourneyTask.Quota,
+			Content:       logContent,
+			TokenId:       midjourneyTask.TokenId,
+			StandardQuota: priceData.StandardQuota,
+			Group:         relayInfo.UsingGroup,
+			Other:         other,
 		})
 		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, midjourneyTask.Quota)
 		model.UpdateChannelUsedQuota(billingChannelId, midjourneyTask.Quota)

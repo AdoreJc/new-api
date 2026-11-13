@@ -1705,3 +1705,199 @@ func TestPostTextConsumeQuotaLogsMissingUsageAsStructuredContent(t *testing.T) {
 		map[string]any{"key": "Upstream returned no usage, so nothing was charged (possibly an upstream timeout)"},
 	}, other["content_parts"])
 }
+
+const (
+	costUserId    = 61
+	costTokenId   = 61
+	costTokenKey  = "sk-cost-accounting"
+	costChannelId = 61
+	costSubId     = 61
+)
+
+type costSettlementCase struct {
+	name      string
+	priceData hosttypes.PriceData
+	usage     *dto.Usage
+	format    types.RelayFormat
+	expr      string
+	tool      bool
+	path      string // text (default), audio or realtime
+}
+
+func newCostAccountingFixture(t *testing.T, costRatio float64) {
+	t.Helper()
+	truncate(t)
+	seedUser(t, costUserId, 100_000_000)
+	seedToken(t, costTokenId, costUserId, costTokenKey, 100_000_000)
+	channel := &model.Channel{Id: costChannelId, Name: "cost_channel", Key: "sk-test", Status: common.ChannelStatusEnabled, CostRatio: &costRatio}
+	require.NoError(t, model.DB.Create(channel).Error)
+}
+
+// settleCostCase runs one request through the real settlement path and
+// returns the consume log it wrote.
+func settleCostCase(t *testing.T, tc costSettlementCase, groupRatio float64, preference string) model.Log {
+	t.Helper()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	priceData := tc.priceData
+	special := tc.priceData.GroupRatioInfo.HasSpecialRatio
+	priceData.GroupRatioInfo = hosttypes.GroupRatioInfo{GroupRatio: groupRatio, GroupSpecialRatio: -1}
+	if special && groupRatio != 1 {
+		// A user's exclusive group ratio is the effective GroupRatio.
+		priceData.GroupRatioInfo = hosttypes.GroupRatioInfo{GroupRatio: groupRatio, GroupSpecialRatio: groupRatio, HasSpecialRatio: true}
+	}
+	format := tc.format
+	if format == "" {
+		format = types.RelayFormatOpenAI
+	}
+	info := &relaycommon.RelayInfo{
+		UserId: costUserId, TokenId: costTokenId, TokenKey: costTokenKey,
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: costChannelId},
+		OriginModelName: "cost-test-model", UsingGroup: "default", UserGroup: "default",
+		UserSetting: dto.UserSetting{BillingPreference: preference},
+		StartTime:   time.Now(), RelayFormat: format, PriceData: priceData,
+	}
+	if tc.expr != "" {
+		info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{
+			BillingMode: "tiered_expr", ExprString: tc.expr, ExprHash: billingexpr.ExprHashString(tc.expr),
+			QuotaPerUnit: common.QuotaPerUnit, GroupRatio: groupRatio,
+		}
+	}
+	if tc.tool {
+		info.ResponsesUsageInfo = &relaycommon.ResponsesUsageInfo{BuiltInTools: map[string]*relaycommon.BuildInToolInfo{"cost_test_tool": {CallCount: 2}}}
+	}
+	if preference != "wallet_only" {
+		info.ForcePreConsume = true
+		info.RequestId = common.GetRandomString(12)
+		apiErr := PreConsumeBilling(ctx, 10, info)
+		require.Nil(t, apiErr, "%v", apiErr)
+	}
+	switch tc.path {
+	case "audio":
+		PostAudioConsumeQuota(ctx, info, tc.usage, nil)
+	case "realtime":
+		PostWssConsumeQuota(ctx, info, info.OriginModelName, &dto.RealtimeUsage{
+			InputTokens: tc.usage.PromptTokens, OutputTokens: tc.usage.CompletionTokens, TotalTokens: tc.usage.TotalTokens,
+		}, nil)
+	default:
+		PostTextConsumeQuota(ctx, info, tc.usage, nil)
+	}
+	var log model.Log
+	require.NoError(t, model.LOG_DB.Where("user_id = ? AND type = ?", costUserId, model.LogTypeConsume).Order("id desc").Take(&log).Error)
+	require.NotNil(t, log.StandardQuota)
+	require.NotNil(t, log.CostQuota)
+	return log
+}
+
+// standard_quota must equal what the same request is charged when the group
+// ratio is 1, for every settlement mode, including free (ratio 0) groups.
+func TestStandardQuotaMatchesGroupRatioOneCharge(t *testing.T) {
+	operation_setting.SetToolPriceForTest("cost_test_tool", 7)
+	t.Cleanup(func() { operation_setting.DeleteToolPriceForTest("cost_test_tool") })
+	const costRatio = 0.6
+	tokens := &dto.Usage{PromptTokens: 1234, CompletionTokens: 567, TotalTokens: 1801}
+	cases := []costSettlementCase{
+		{name: "token billing with completion ratio", priceData: hosttypes.PriceData{ModelRatio: 1.5, CompletionRatio: 4}, usage: tokens},
+		{name: "user exclusive group ratio", priceData: hosttypes.PriceData{ModelRatio: 1.5, CompletionRatio: 4, GroupRatioInfo: hosttypes.GroupRatioInfo{HasSpecialRatio: true}}, usage: tokens},
+		{name: "cache read and split cache writes", format: types.RelayFormatClaude, priceData: hosttypes.PriceData{
+			ModelRatio: 1.5, CompletionRatio: 5, CacheRatio: 0.1, CacheCreationRatio: 1.25, CacheCreation5mRatio: 1.25, CacheCreation1hRatio: 2,
+		}, usage: &dto.Usage{PromptTokens: 800, CompletionTokens: 300, TotalTokens: 1100, ClaudeCacheCreation5mTokens: 200, ClaudeCacheCreation1hTokens: 100,
+			PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 3000, CachedCreationTokens: 300}}},
+		{name: "openai cache read and write", priceData: hosttypes.PriceData{
+			ModelRatio: 1.25, CompletionRatio: 8, CacheRatio: 0.1, CacheCreationRatio: 1.25, CacheCreation12hRatio: 2.5,
+		}, usage: &dto.Usage{PromptTokens: 5000, CompletionTokens: 200, TotalTokens: 5200,
+			PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 2000, CachedCreationTokens: 1000}}},
+		{name: "per request price", priceData: hosttypes.PriceData{UsePrice: true, ModelPrice: 0.037}, usage: tokens},
+		{name: "tool call surcharge", priceData: hosttypes.PriceData{ModelRatio: 1, CompletionRatio: 1}, usage: tokens, tool: true},
+		{name: "tiered expression", expr: `len <= 1000 ? tier("short", p * 2 + c * 8) : tier("long", p * 3 + c * 12)`, usage: tokens},
+		{name: "tiered fixed price", expr: `tier("request", fixed(0.013))`, usage: tokens},
+		{name: "audio settlement", path: "audio", priceData: hosttypes.PriceData{ModelRatio: 2.5}, usage: tokens},
+		{name: "realtime settlement", path: "realtime", priceData: hosttypes.PriceData{ModelRatio: 2.5}, usage: tokens},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			newCostAccountingFixture(t, costRatio)
+			reference := settleCostCase(t, tc, 1, "wallet_only")
+			require.Positive(t, reference.Quota)
+			assert.Equal(t, reference.Quota, *reference.StandardQuota)
+			for _, groupRatio := range []float64{2.5, 0.37, 0} {
+				log := settleCostCase(t, tc, groupRatio, "wallet_only")
+				assert.Equal(t, reference.Quota, *log.StandardQuota, "group ratio %v", groupRatio)
+				assert.Equal(t, common.QuotaRound(float64(reference.Quota)*costRatio), *log.CostQuota, "group ratio %v", groupRatio)
+				if groupRatio == 0 {
+					assert.Zero(t, log.Quota, "a free group is charged nothing")
+				}
+			}
+		})
+	}
+}
+
+// The channel cost ratio is a snapshot: changing it only affects new logs.
+func TestConsumeLogSnapshotsChannelCostRatio(t *testing.T) {
+	newCostAccountingFixture(t, 0.5)
+	tc := costSettlementCase{priceData: hosttypes.PriceData{ModelRatio: 1, CompletionRatio: 1}, usage: &dto.Usage{PromptTokens: 1000, TotalTokens: 1000}}
+
+	before := settleCostCase(t, tc, 2, "wallet_only")
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", costChannelId).Update("cost_ratio", 3).Error)
+	after := settleCostCase(t, tc, 2, "wallet_only")
+
+	var stored model.Log
+	require.NoError(t, model.LOG_DB.First(&stored, before.Id).Error)
+	assert.Equal(t, 1000, *stored.StandardQuota)
+	assert.Equal(t, 500, *stored.CostQuota, "an earlier log keeps its cost after the ratio changes")
+	assert.Equal(t, 3000, *after.CostQuota)
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(stored.Other, &other))
+	adminInfo, ok := other["admin_info"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, 0.5, adminInfo["channel_cost_ratio"])
+}
+
+// Subscription-funded requests record the same three amounts; quota is the
+// subscription allowance consumed, not wallet money.
+func TestSubscriptionFundedRequestRecordsCostAccounting(t *testing.T) {
+	require.NoError(t, model.DB.AutoMigrate(&model.SubscriptionPlan{}, &model.SubscriptionPreConsumeRecord{}))
+	t.Cleanup(func() {
+		model.DB.Exec("DELETE FROM subscription_plans")
+		model.DB.Exec("DELETE FROM subscription_pre_consume_records")
+		model.InvalidateSubscriptionPlanCache(costSubId)
+	})
+	newCostAccountingFixture(t, 0.8)
+	plan := &model.SubscriptionPlan{Id: costSubId, Title: "Cost", PriceAmount: 1, TotalAmount: 1_000_000}
+	plan.NormalizeDefaults()
+	require.NoError(t, model.DB.Create(plan).Error)
+	model.InvalidateSubscriptionPlanCache(plan.Id)
+	seedSubscription(t, costSubId, costUserId, 1_000_000, 0)
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", costSubId).Update("plan_id", plan.Id).Error)
+	tc := costSettlementCase{priceData: hosttypes.PriceData{ModelRatio: 1, CompletionRatio: 2}, usage: &dto.Usage{PromptTokens: 1000, CompletionTokens: 500, TotalTokens: 1500}}
+
+	log := settleCostCase(t, tc, 1.5, "subscription_only")
+
+	assert.Equal(t, 3000, log.Quota)
+	assert.Equal(t, 2000, *log.StandardQuota)
+	assert.Equal(t, 1600, *log.CostQuota)
+	var sub model.UserSubscription
+	require.NoError(t, model.DB.First(&sub, costSubId).Error)
+	assert.Equal(t, int64(3000), sub.AmountUsed)
+	var user model.User
+	require.NoError(t, model.DB.First(&user, costUserId).Error)
+	assert.Equal(t, 100_000_000, user.Quota, "the wallet is not charged")
+}
+
+// Async task settlement only knows the frozen group ratio, so its adjustment
+// log records the delta in list-price units.
+func TestTaskSettlementDeltaRecordsStandardQuota(t *testing.T) {
+	newCostAccountingFixture(t, 1.5)
+	task := &model.Task{TaskID: "cost-task", UserId: costUserId, ChannelId: costChannelId, Quota: 1000, Group: "default"}
+	task.PrivateData.BillingContext = &model.TaskBillingContext{GroupRatio: 2, OriginModelName: "cost-task-model"}
+	task.PrivateData.TokenId = costTokenId
+	require.NoError(t, model.DB.Create(task).Error)
+
+	RecalculateTaskQuota(t.Context(), task, 1600, common.NewMessage("Settled by the task usage expression"))
+
+	var log model.Log
+	require.NoError(t, model.LOG_DB.Where("user_id = ? AND type = ?", costUserId, model.LogTypeConsume).Take(&log).Error)
+	assert.Equal(t, 600, log.Quota)
+	assert.Equal(t, 300, *log.StandardQuota)
+	assert.Equal(t, 450, *log.CostQuota)
+}

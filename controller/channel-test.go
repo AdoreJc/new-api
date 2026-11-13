@@ -503,6 +503,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	milliseconds := tok.Sub(tik).Milliseconds()
 	consumedTime := float64(milliseconds) / 1000.0
 	other := buildTestLogOther(c, info, priceData, usage, tieredResult)
+	// The list price re-runs the same settlement with the group ratio as 1,
+	// including the reservation fallback of a failed tiered evaluation.
+	standardQuota, _ := settleTestQuota(service.StandardPricingRelayInfo(info), priceData, usage)
 	model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
 		ChannelId:        channel.Id,
 		PromptTokens:     usage.PromptTokens,
@@ -515,6 +518,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		IsStream:         info.IsStream,
 		Group:            info.UsingGroup,
 		Other:            other,
+		StandardQuota:    standardQuota,
 	})
 	common.SysLog(common.LogText("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
 	return testResult{

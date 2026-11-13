@@ -802,3 +802,42 @@ func (s *priceTestReservation) GetPreConsumedQuota() int { return s.held }
 func (s *priceTestReservation) Reserve(quota int) error  { s.held = max(s.held, quota); return nil }
 
 func (s *priceTestReservation) ReserveBeforeSubmit(quota int) error { return s.Reserve(quota) }
+
+// Per-call prices (Midjourney and task submissions) carry the list price next
+// to the charge: the same price with the group ratio, or a user's exclusive
+// group ratio, treated as 1.
+func TestModelPriceHelperPerCallStandardQuota(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	savedPrices := ratio_setting.ModelPrice2JSONString()
+	savedGroups, err := common.Marshal(ratio_setting.GetGroupRatioCopy())
+	require.NoError(t, err)
+	savedGroupGroups := ratio_setting.GroupGroupRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(string(savedGroups)))
+		require.NoError(t, ratio_setting.UpdateGroupGroupRatioByJSONString(savedGroupGroups))
+	})
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"mj_imagine":0.1}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":2.5}`))
+	require.NoError(t, ratio_setting.UpdateGroupGroupRatioByJSONString(`{"svip":{"vip":1.5}}`))
+
+	for _, tc := range []struct {
+		name, userGroup string
+		wantQuota       int
+		special         bool
+	}{
+		{name: "group ratio", userGroup: "vip", wantQuota: 125000},
+		{name: "exclusive group ratio", userGroup: "svip", wantQuota: 75000, special: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/mj/submit/imagine", nil)
+			info := &relaycommon.RelayInfo{OriginModelName: "mj_imagine", UserGroup: tc.userGroup, UsingGroup: "vip"}
+			priceData, err := ModelPriceHelperPerCall(ctx, info)
+			require.NoError(t, err)
+			assert.Equal(t, tc.special, priceData.GroupRatioInfo.HasSpecialRatio)
+			assert.Equal(t, tc.wantQuota, priceData.Quota)
+			assert.Equal(t, 50000, priceData.StandardQuota)
+		})
+	}
+}

@@ -780,12 +780,29 @@ export function useCommonLogsColumns(
 
           const quota = row.getValue('quota') as number
           const other = parseLogOther(log.other)
-          return (
+          const display = (
             <LogCostDisplay
               quota={quota}
               other={other}
               showBillingSource={showBillingSource}
             />
+          )
+          if (!isAdmin || log.standard_quota == null) return display
+          const costRatio = other?.admin_info?.channel_cost_ratio
+          return (
+            <div className='flex flex-col gap-0.5'>
+              {display}
+              <span className='text-muted-foreground text-xs whitespace-nowrap tabular-nums'>
+                {t('List price')} {formatLogQuota(log.standard_quota)}
+                {log.cost_quota != null && (
+                  <>
+                    {' · '}
+                    {t('Channel cost')} {formatLogQuota(log.cost_quota)}
+                    {costRatio != null && ` (${costRatio}x)`}
+                  </>
+                )}
+              </span>
+            </div>
           )
         },
       },

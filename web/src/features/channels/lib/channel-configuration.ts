@@ -36,6 +36,7 @@ export type ChannelConfigurationSection =
   | 'connection'
   | 'routing'
   | 'request'
+  | 'billing'
   | 'other'
 
 export type ChannelConfigurationStatus =
@@ -97,6 +98,16 @@ const CONFIGURATION_BLOCKS = {
     ],
   },
   internalNotes: { section: 'other', fields: ['tag', 'remark'] },
+  costAccounting: {
+    section: 'billing',
+    fields: [
+      'cost_mode',
+      'cost_ratio',
+      'monthly_cost_usd',
+      'cost_effective_from',
+      'cost_effective_to',
+    ],
+  },
 } as const satisfies Record<
   string,
   {
@@ -187,6 +198,13 @@ export function getChannelConfigurationState(
         values.upstream_model_update_ignored_models?.trim()
       ),
     internalNotes: Boolean(values.tag?.trim() || values.remark?.trim()),
+    costAccounting: Boolean(
+      values.cost_mode ||
+      values.cost_ratio !== 1 ||
+      values.monthly_cost_usd.trim() ||
+      values.cost_effective_from ||
+      values.cost_effective_to
+    ),
   }
   const blocks = {} as Record<
     ChannelConfigurationBlock,
@@ -199,6 +217,7 @@ export function getChannelConfigurationState(
     connection: 'idle',
     routing: 'idle',
     request: 'idle',
+    billing: 'idle',
     other: 'idle',
   }
   for (const id of Object.keys(

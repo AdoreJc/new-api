@@ -109,6 +109,12 @@ const LazyUserCharts = lazy(() =>
   }))
 )
 
+const LazyCostAccounting = lazy(() =>
+  import('./components/cost/cost-accounting').then((m) => ({
+    default: m.CostAccounting,
+  }))
+)
+
 const LazyFlowCharts = lazy(() =>
   import('./components/flow/flow-charts').then((m) => ({
     default: m.FlowCharts,
@@ -194,6 +200,9 @@ const SECTION_META: Record<DashboardSectionId, { titleKey: string }> = {
   users: {
     titleKey: 'User Analytics',
   },
+  cost: {
+    titleKey: 'Cost Accounting',
+  },
 }
 
 export function Dashboard() {
@@ -253,7 +262,9 @@ export function Dashboard() {
   const visibleSections = useMemo(
     () =>
       DASHBOARD_SECTION_IDS.filter(
-        (section) => section !== 'overview' && (section !== 'users' || isAdmin)
+        (section) =>
+          section !== 'overview' &&
+          ((section !== 'users' && section !== 'cost') || isAdmin)
       ),
     [isAdmin]
   )
@@ -320,7 +331,18 @@ export function Dashboard() {
         />
       </>
     ) : null
-  const sectionActions = modelActions ?? flowActions
+  const costActions =
+    activeSection === 'cost' ? (
+      <ModelsFilter
+        preferences={chartPreferences}
+        currentFilters={modelFilters}
+        onFilterChange={handleFilterChange}
+        onReset={handleResetFilters}
+        titleKey='Cost Filters'
+        descriptionKey='Filter cost accounting by time range and user.'
+      />
+    ) : null
+  const sectionActions = modelActions ?? flowActions ?? costActions
 
   if (activeSection === 'overview') {
     return <OverviewDashboard />
@@ -403,6 +425,13 @@ export function Dashboard() {
                   filters={userChartsFilters}
                   onFiltersChange={setUserChartsFilters}
                 />
+              </Suspense>
+            </FadeIn>
+          )}
+          {activeSection === 'cost' && isAdmin && (
+            <FadeIn>
+              <Suspense fallback={<ModelChartsFallback />}>
+                <LazyCostAccounting filters={modelFilters} />
               </Suspense>
             </FadeIn>
           )}

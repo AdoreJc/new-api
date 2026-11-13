@@ -108,7 +108,7 @@ func TestRecalcQuotaFromRatiosIgnoresInvalidMultipliers(t *testing.T) {
 	}
 	info.PriceData.AddOtherRatio("duration", 2)
 
-	quota, ok := recalcQuotaFromRatios(info, map[string]float64{
+	quota, _, ok := recalcQuotaFromRatios(info, info.PriceData.Quota, map[string]float64{
 		"duration": 3,
 		"zero":     0,
 		"negative": -1,
@@ -129,7 +129,7 @@ func TestRecalcQuotaFromRatiosRejectsAllInvalidAdjustedRatios(t *testing.T) {
 	}
 	info.PriceData.AddOtherRatio("duration", 2)
 
-	quota, ok := recalcQuotaFromRatios(info, map[string]float64{
+	quota, _, ok := recalcQuotaFromRatios(info, info.PriceData.Quota, map[string]float64{
 		"zero":     0,
 		"negative": -1,
 		"nan":      math.NaN(),

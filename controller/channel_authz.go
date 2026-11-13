@@ -88,6 +88,11 @@ var channelReadOnlyFields = map[string]struct{}{
 	"balance":              {},
 	"balance_updated_time": {},
 	"used_quota":           {},
+	// Parsed from the subscription account; validateChannel drops them.
+	"subscription_plan_type":    {},
+	"subscription_active_start": {},
+	"subscription_active_until": {},
+	"subscription_synced_at":    {},
 }
 
 func clearChannelReadOnlyFields(channel *PatchChannel, requestData map[string]any) {
@@ -131,6 +136,13 @@ var channelNonSensitiveFields = map[string]struct{}{
 	"other_info":          {},
 	"tag":                 {},
 	"remark":              {},
+	// cost_ratio only feeds admin cost accounting; it never changes routing,
+	// credentials or what users are charged.
+	"cost_ratio":          {},
+	"cost_mode":           {},
+	"monthly_cost_usd":    {},
+	"cost_effective_from": {},
+	"cost_effective_to":   {},
 	"channel_info":        {},
 	"multi_key_mode":      {},
 }

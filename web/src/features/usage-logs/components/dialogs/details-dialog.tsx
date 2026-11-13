@@ -354,6 +354,26 @@ function BillingBreakdown(props: {
     })
   }
 
+  if (isAdmin && log.standard_quota != null) {
+    rows.push({
+      label: t('List price'),
+      value: formatLogQuota(log.standard_quota),
+    })
+    if (log.cost_quota != null) {
+      rows.push({
+        label: t('Channel cost'),
+        value: formatLogQuota(log.cost_quota),
+      })
+    }
+    rows.push({
+      label: t('Channel cost ratio'),
+      value:
+        other.admin_info?.channel_cost_ratio != null
+          ? `${formatRatio(other.admin_info.channel_cost_ratio)}x`
+          : t('Estimated from history'),
+    })
+  }
+
   const usageFacts =
     other.usage_facts != null &&
     typeof other.usage_facts === 'object' &&

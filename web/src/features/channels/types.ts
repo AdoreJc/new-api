@@ -43,6 +43,17 @@ export const channelSchema = z.object({
   status: z.number(), // 1: enabled, 0: manual disabled, 2: auto disabled
   name: z.string(),
   weight: z.number().nullish(),
+  // Channel cost relative to list price, used for admin cost accounting.
+  cost_ratio: z.number().nullish(),
+  cost_mode: z.string().nullish(),
+  monthly_cost_usd: z.number().nullish(),
+  cost_effective_from: z.number().nullish(),
+  cost_effective_to: z.number().nullish(),
+  // Read-only, parsed from the Codex account on save and refresh.
+  subscription_plan_type: z.string().nullish(),
+  subscription_active_start: z.number().nullish(),
+  subscription_active_until: z.number().nullish(),
+  subscription_synced_at: z.number().nullish(),
   created_time: z.number(),
   test_time: z.number(),
   response_time: z.number(), // in milliseconds
