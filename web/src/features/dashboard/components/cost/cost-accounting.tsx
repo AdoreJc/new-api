@@ -57,8 +57,7 @@ import { ROLE } from '@/lib/roles'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import {
   serverTimeZoneLabel,
-  zonedDateString,
-  zonedMidnightUnix,
+  toServerDayRange,
   type ServerTimeZone,
 } from '@/lib/server-time-zone'
 import { computeTimeRange, formatDate } from '@/lib/time'
@@ -122,36 +121,6 @@ function dimensionLabel(
       return row.model_name || '-'
     case 'user':
       return row.username || `#${row.user_id ?? 0}`
-  }
-}
-
-/**
- * Re-reads a range picked in the browser's time zone as the same calendar
- * days in the server's zone: the start becomes server midnight of its date,
- * and an end before now becomes the end of its date in the server's zone.
- */
-function toServerDayRange(
-  range: { start_timestamp: number; end_timestamp: number },
-  zone: ServerTimeZone
-): { start_timestamp: number; end_timestamp: number } {
-  const localDate = (unix: number) => {
-    const date = new Date(unix * 1000)
-    return [date.getFullYear(), date.getMonth() + 1, date.getDate()] as const
-  }
-  const [sy, sm, sd] = localDate(range.start_timestamp)
-  const start = zonedMidnightUnix(sy, sm, sd, zone)
-  const now = Math.floor(Date.now() / 1000)
-  if (range.end_timestamp >= now - 60) {
-    return { start_timestamp: start, end_timestamp: range.end_timestamp }
-  }
-  const [ey, em, ed] = localDate(range.end_timestamp)
-  const end = zonedMidnightUnix(ey, em, ed + 1, zone) - 1
-  // Keep the server's view of "today" when the picked end is today.
-  const serverToday = zonedDateString(now, zone)
-  const endDate = zonedDateString(end, zone)
-  return {
-    start_timestamp: start,
-    end_timestamp: endDate >= serverToday ? now : end,
   }
 }
 

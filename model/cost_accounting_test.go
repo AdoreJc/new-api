@@ -357,6 +357,18 @@ func runCostAccountingMatrix(t *testing.T, kind common.DatabaseType, db, logDB *
 	codex := Channel{Name: "codex-fixed", Key: "k", Type: constant.ChannelTypeCodex, MonthlyCostUSD: new(30.0), SubscriptionActiveUntil: &until}
 	require.NoError(t, db.Create(&codex).Error)
 	require.NoError(t, UpdateChannelSubscriptionWindow(codex.Id, "plus", nil, &until, hour))
+	// The automatic start only moves earlier: 10 days ago, then 30, then 10
+	// again keeps 30 days ago.
+	for _, daysAgo := range []int64{10, 30, 10} {
+		start := hour - daysAgo*86400
+		require.NoError(t, UpdateChannelSubscriptionWindow(codex.Id, "", &start, nil, hour))
+	}
+	var windowed Channel
+	require.NoError(t, db.First(&windowed, codex.Id).Error)
+	require.NotNil(t, windowed.SubscriptionActiveStart)
+	assert.Equal(t, hour-30*86400, *windowed.SubscriptionActiveStart)
+	assert.Equal(t, until, *windowed.SubscriptionActiveUntil)
+	assert.Equal(t, "plus", windowed.SubscriptionPlanType, "an empty plan keeps the stored one")
 	withFixed, err := GetCostSummary(hour-7200, hour+3600, "", CostDimensionChannel)
 	require.NoError(t, err)
 	var codexInfo *FixedCostChannel

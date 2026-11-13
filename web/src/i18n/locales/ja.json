@@ -8201,7 +8201,8 @@
     "Incomplete: {{count}} monthly costs not entered": "不完全：{{count}} 件の月額コストが未入力",
     "Not shown until every monthly cost is entered": "すべての月額コストを入力すると表示されます",
     "History is estimated with the current channel settings: channels now on a fixed monthly cost record no usage cost, and their monthly cost is amortized as usual.": "過去データは現在のチャネル設定で推定します：月額固定コストのチャネルは従量コストを 0 とし、月額コストは通常どおり日割りします。",
-    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "売上は請求されたクォータで、サブスクリプションから差し引かれた分も含みます。日付はサーバーのタイムゾーン（{{zone}}）で区切ります。"
+    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "売上は請求されたクォータで、サブスクリプションから差し引かれた分も含みます。日付はサーバーのタイムゾーン（{{zone}}）で区切ります。",
+    "The start date only ever moves earlier. If the subscription was cancelled and later renewed, the gap is counted as cost too; enter the dates by hand to leave it out.": "開始日は前にしか動きません。解約後に再契約した場合、その間の空白期間もコストに含まれます。除外するには期間を手動で入力してください。"
   },
   "Requested groups": "リクエストグループ",
   "Group the token asked for, for example auto": "トークン自身のグループ（例：auto）",

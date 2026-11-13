@@ -8201,7 +8201,8 @@
     "Incomplete: {{count}} monthly costs not entered": "Incomplete: {{count}} monthly costs not entered",
     "Not shown until every monthly cost is entered": "Not shown until every monthly cost is entered",
     "History is estimated with the current channel settings: channels now on a fixed monthly cost record no usage cost, and their monthly cost is amortized as usual.": "History is estimated with the current channel settings: channels now on a fixed monthly cost record no usage cost, and their monthly cost is amortized as usual.",
-    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}})."
+    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).",
+    "The start date only ever moves earlier. If the subscription was cancelled and later renewed, the gap is counted as cost too; enter the dates by hand to leave it out.": "The start date only ever moves earlier. If the subscription was cancelled and later renewed, the gap is counted as cost too; enter the dates by hand to leave it out."
   },
   "Requested groups": "Requested groups",
   "Group the token asked for, for example auto": "Group the token asked for, for example auto",

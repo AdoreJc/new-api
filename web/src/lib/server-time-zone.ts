@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-
 /**
  * The server's time zone, which splits calendar days for cost accounting.
  * `name` is an IANA zone (from the server's TZ); when the server reports
@@ -96,4 +95,36 @@ export function serverTimeZoneLabel(zone: ServerTimeZone): string {
   const minutes = Math.abs(offset) / 60
   const pad = (n: number) => String(Math.floor(n)).padStart(2, '0')
   return `UTC${sign}${pad(minutes / 60)}:${pad(minutes % 60)}`
+}
+
+/**
+ * Maps a range picked in the browser's calendar onto the server's calendar.
+ * Days are matched by their distance from today, so the browser's "today" is
+ * the server's "today" even when the two zones are on different dates: the
+ * start becomes server midnight of the same day back, and an end before now
+ * becomes the end of that server day (never later than now).
+ */
+export function toServerDayRange(
+  range: { start_timestamp: number; end_timestamp: number },
+  zone: ServerTimeZone,
+  now: number = Math.floor(Date.now() / 1000)
+): { start_timestamp: number; end_timestamp: number } {
+  const browserDay = (unix: number) => {
+    const date = new Date(unix * 1000)
+    return Math.round(
+      Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000
+    )
+  }
+  const today = browserDay(now)
+  const [year, month, day] = zonedDateString(now, zone).split('-').map(Number)
+  const serverMidnight = (daysBack: number) =>
+    zonedMidnightUnix(year, month, day - daysBack, zone)
+
+  const start = serverMidnight(today - browserDay(range.start_timestamp))
+  if (range.end_timestamp >= now - 60) {
+    return { start_timestamp: start, end_timestamp: range.end_timestamp }
+  }
+  const endDaysBack = today - browserDay(range.end_timestamp)
+  const end = endDaysBack <= 0 ? now : serverMidnight(endDaysBack - 1) - 1
+  return { start_timestamp: start, end_timestamp: Math.min(end, now) }
 }

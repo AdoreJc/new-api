@@ -8201,7 +8201,8 @@
     "Incomplete: {{count}} monthly costs not entered": "Chưa đầy đủ: {{count}} chi phí hằng tháng chưa nhập",
     "Not shown until every monthly cost is entered": "Chỉ hiển thị khi đã nhập đủ mọi chi phí hằng tháng",
     "History is estimated with the current channel settings: channels now on a fixed monthly cost record no usage cost, and their monthly cost is amortized as usual.": "Lịch sử được ước tính theo cài đặt hiện tại của kênh: kênh đang tính chi phí cố định hằng tháng có chi phí theo lượng dùng bằng 0, chi phí tháng vẫn được phân bổ theo ngày.",
-    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "Doanh thu là hạn mức đã tính phí, bao gồm cả phần trừ từ gói đăng ký. Ngày được chia theo múi giờ máy chủ ({{zone}})."
+    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "Doanh thu là hạn mức đã tính phí, bao gồm cả phần trừ từ gói đăng ký. Ngày được chia theo múi giờ máy chủ ({{zone}}).",
+    "The start date only ever moves earlier. If the subscription was cancelled and later renewed, the gap is counted as cost too; enter the dates by hand to leave it out.": "Ngày bắt đầu chỉ có thể lùi về trước. Nếu gói bị hủy rồi gia hạn lại, khoảng trống ở giữa cũng được tính là chi phí; hãy nhập ngày thủ công để loại trừ."
   },
   "Requested groups": "Nhóm được yêu cầu",
   "Group the token asked for, for example auto": "Nhóm mà token yêu cầu, ví dụ auto",

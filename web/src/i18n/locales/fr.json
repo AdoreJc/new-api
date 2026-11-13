@@ -8201,7 +8201,8 @@
     "Incomplete: {{count}} monthly costs not entered": "Incomplet : {{count}} coûts mensuels non renseignés",
     "Not shown until every monthly cost is entered": "Affiché une fois tous les coûts mensuels renseignés",
     "History is estimated with the current channel settings: channels now on a fixed monthly cost record no usage cost, and their monthly cost is amortized as usual.": "L’historique est estimé avec les réglages actuels des canaux : les canaux désormais au coût mensuel fixe n’ont pas de coût à l’usage, et leur coût mensuel est amorti normalement.",
-    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "Le revenu est le quota facturé, y compris le quota prélevé sur les abonnements. Les jours suivent le fuseau horaire du serveur ({{zone}})."
+    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "Le revenu est le quota facturé, y compris le quota prélevé sur les abonnements. Les jours suivent le fuseau horaire du serveur ({{zone}}).",
+    "The start date only ever moves earlier. If the subscription was cancelled and later renewed, the gap is counted as cost too; enter the dates by hand to leave it out.": "La date de début ne peut qu’avancer dans le passé. Si l’abonnement a été résilié puis renouvelé, l’intervalle est aussi compté comme coût ; saisissez les dates à la main pour l’exclure."
   },
   "Requested groups": "Groupes demandés",
   "Group the token asked for, for example auto": "Groupe demandé par le jeton, par exemple auto",

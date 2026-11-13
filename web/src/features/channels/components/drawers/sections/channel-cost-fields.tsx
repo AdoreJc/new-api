@@ -246,6 +246,13 @@ export function ChannelCostFields(props: ChannelCostFieldsProps) {
           </p>
           {isCodex && (
             <p className='text-muted-foreground text-xs'>
+              {t(
+                'The start date only ever moves earlier. If the subscription was cancelled and later renewed, the gap is counted as cost too; enter the dates by hand to leave it out.'
+              )}
+            </p>
+          )}
+          {isCodex && (
+            <p className='text-muted-foreground text-xs'>
               {subscription?.subscription_synced_at
                 ? t(
                     'Plan {{plan}}. Subscription dates are read from the account when it is saved or its credential is refreshed (last read {{time}}). Manual dates take priority.',

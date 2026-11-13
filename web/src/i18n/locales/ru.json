@@ -8201,7 +8201,8 @@
     "Incomplete: {{count}} monthly costs not entered": "Неполно: не указано месячных затрат — {{count}}",
     "Not shown until every monthly cost is entered": "Появится после ввода всех месячных затрат",
     "History is estimated with the current channel settings: channels now on a fixed monthly cost record no usage cost, and their monthly cost is amortized as usual.": "История оценивается по текущим настройкам каналов: у каналов с фиксированной месячной стоимостью затраты по использованию равны 0, а месячная стоимость распределяется как обычно.",
-    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "Выручка — списанная квота, включая квоту из подписок. Дни считаются по часовому поясу сервера ({{zone}})."
+    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "Выручка — списанная квота, включая квоту из подписок. Дни считаются по часовому поясу сервера ({{zone}}).",
+    "The start date only ever moves earlier. If the subscription was cancelled and later renewed, the gap is counted as cost too; enter the dates by hand to leave it out.": "Дата начала может сдвигаться только на более раннюю. Если подписку отменили, а потом продлили, промежуток тоже считается затратами; чтобы исключить его, введите даты вручную."
   },
   "Requested groups": "Запрошенные группы",
   "Group the token asked for, for example auto": "Группа, указанная в токене, например auto",

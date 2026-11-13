@@ -20,6 +20,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   serverTimeZoneLabel,
+  toServerDayRange,
   zonedDateString,
   zonedMidnightUnix,
 } from './server-time-zone'
@@ -53,5 +54,46 @@ describe('server time zone dates', () => {
     )
     expect(serverTimeZoneLabel(zone)).toBe('UTC+08:00')
     expect(serverTimeZoneLabel(indianapolis)).toBe(indianapolis.name)
+  })
+})
+
+describe('toServerDayRange', () => {
+  // Zones a day apart from most browsers, ahead of and behind UTC.
+  const zones = [{ name: 'Pacific/Kiritimati' }, { name: 'Pacific/Pago_Pago' }]
+  const now = Date.UTC(2026, 10, 13, 2, 30) / 1000
+
+  it('maps the browser\'s today onto the server\'s today', () => {
+    const local = new Date(now * 1000)
+    const browserMidnight =
+      new Date(local.getFullYear(), local.getMonth(), local.getDate()).getTime() / 1000
+    for (const zone of zones) {
+      const range = toServerDayRange(
+        { start_timestamp: browserMidnight, end_timestamp: now },
+        zone,
+        now
+      )
+      expect(range.start_timestamp).toBeLessThanOrEqual(now)
+      expect(zonedDateString(range.start_timestamp, zone)).toBe(
+        zonedDateString(now, zone)
+      )
+      expect(range.end_timestamp).toBe(now)
+    }
+  })
+
+  it('keeps past days as whole server days and never ends in the future', () => {
+    const local = new Date(now * 1000)
+    const day = (back: number) =>
+      new Date(local.getFullYear(), local.getMonth(), local.getDate() - back).getTime() / 1000
+    for (const zone of zones) {
+      const range = toServerDayRange(
+        { start_timestamp: day(3), end_timestamp: day(1) - 1 },
+        zone,
+        now
+      )
+      const [y, m, d] = zonedDateString(now, zone).split('-').map(Number)
+      expect(range.start_timestamp).toBe(zonedMidnightUnix(y, m, d - 3, zone))
+      expect(range.end_timestamp).toBe(zonedMidnightUnix(y, m, d - 1, zone) - 1)
+      expect(range.end_timestamp).toBeLessThanOrEqual(now)
+    }
   })
 })

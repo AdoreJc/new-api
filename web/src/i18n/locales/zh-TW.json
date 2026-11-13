@@ -8201,7 +8201,8 @@
     "Incomplete: {{count}} monthly costs not entered": "不完整：{{count}} 個渠道未錄入月成本",
     "Not shown until every monthly cost is entered": "所有月成本錄入後才顯示",
     "History is estimated with the current channel settings: channels now on a fixed monthly cost record no usage cost, and their monthly cost is amortized as usual.": "歷史資料按渠道目前的成本設定估算：目前走月固定成本的渠道，按量成本記 0，月成本照常按天攤銷。",
-    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "實收是實際扣費的額度，包含從訂閱額度中扣除的部分。按伺服器時區（{{zone}}）劃分自然日。"
+    "Revenue is the quota charged, including quota drawn from subscriptions. Days follow the server time zone ({{zone}}).": "實收是實際扣費的額度，包含從訂閱額度中扣除的部分。按伺服器時區（{{zone}}）劃分自然日。",
+    "The start date only ever moves earlier. If the subscription was cancelled and later renewed, the gap is counted as cost too; enter the dates by hand to leave it out.": "開始日只會往前推，退訂後再續訂，中間的空檔期也會計入成本；需要排除時請手動填寫區間。"
   },
   "Requested groups": "請求分組",
   "Group the token asked for, for example auto": "令牌本身的分組，例如 auto",
