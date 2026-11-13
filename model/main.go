@@ -380,6 +380,7 @@ func migrateDB() error {
 		&ContentModerationEvent{},
 		&ContentModerationFlaggedHash{},
 		&ContentModerationKeywordList{},
+		&ChannelAutoResetState{},
 	)
 	if err != nil {
 		return err

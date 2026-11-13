@@ -1301,6 +1301,7 @@ func UpdateChannel(c *gin.Context) {
 			// 覆盖模式：直接使用新密钥（默认行为，不需要特殊处理）
 		}
 	}
+	keepChannelAutoResetConfig(&channel.Channel, originChannel)
 	err = channel.Update()
 	if err != nil {
 		common.ApiError(c, err)
@@ -1668,6 +1669,9 @@ func CopyChannel(c *gin.Context) {
 		clone.Balance = 0
 		clone.UsedQuota = 0
 	}
+	// A copy starts with automatic reset-credit redemption off; its runtime
+	// state is keyed by channel id and is not copied either.
+	keepChannelAutoResetConfig(&clone, nil)
 	// A copy usually points at the same subscription account; carrying the
 	// monthly cost over would amortize it twice. The cost mode and ratio stay,
 	// the monthly cost and its window must be entered again.
@@ -2420,4 +2424,22 @@ func OllamaVersion(c *gin.Context) {
 			"version": version,
 		},
 	})
+}
+
+// keepChannelAutoResetConfig puts the automatic reset-credit setting of
+// stored (none when stored is nil) into target's other_info. That setting is
+// changed only through its own endpoint (validation, ChannelOperate, audit),
+// so a generic update or a copy cannot write or carry it.
+func keepChannelAutoResetConfig(target *model.Channel, stored *model.Channel) {
+	if target.OtherInfo == "" {
+		return
+	}
+	info := target.GetOtherInfo()
+	delete(info, service.ChannelAutoResetConfigKey)
+	if stored != nil {
+		if value, ok := stored.GetOtherInfo()[service.ChannelAutoResetConfigKey]; ok {
+			info[service.ChannelAutoResetConfigKey] = value
+		}
+	}
+	target.SetOtherInfo(info)
 }

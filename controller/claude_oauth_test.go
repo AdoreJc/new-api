@@ -48,7 +48,7 @@ func setupClaudeOAuthChannelDB(t *testing.T) {
 	sqlDB, err := database.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, database.AutoMigrate(&model.Channel{}))
+	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.ChannelAutoResetState{}))
 	model.DB = database
 	t.Cleanup(func() { model.DB = originalDB })
 }

@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -220,5 +221,77 @@ describe('ClaudeUsageDialog reset credits', () => {
       expect(screen.getByText('Upstream returned status 503')).toBeVisible()
     )
     expect(applyResetButton()).toBeDisabled()
+  })
+})
+
+describe('ClaudeUsageDialog automatic reset', () => {
+  const view = {
+    config: {
+      enabled: false,
+      rule: { type: 'five_hour_used_pct', threshold: 90 },
+      min_interval_minutes: 60,
+      max_per_day: 2,
+      max_per_week: 5,
+      skip_if_reset_within_minutes: 15,
+      alarm_ignores_reset_soon: true,
+      expiring_ignores_reset_soon: true,
+    },
+    state: {},
+    alarm_grace_minutes: 10,
+    weekly_windows: [
+      'seven_day',
+      'seven_day_sonnet',
+      'seven_day_overage_included',
+    ],
+  }
+
+  test('a trial run shows the decision and neither saves nor redeems', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: view },
+    })
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      data: {
+        success: true,
+        data: {
+          channel_id: 7,
+          evaluated_at: 1_800_000_000,
+          dry_run: true,
+          matched: true,
+          hits: [{ type: 'five_hour_used_pct', threshold: 90, value: 95 }],
+          reason: 'would_redeem',
+          credits: { available: 1 },
+        },
+      },
+    })
+    const put = vi.spyOn(api, 'put')
+    const user = userEvent.setup()
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ClaudeUsageDialog
+          open
+          onOpenChange={() => {}}
+          channelId={7}
+          response={usageResponse}
+        />
+      </QueryClientProvider>
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Automatic reset' }))
+    expect(
+      await screen.findByRole('switch', {
+        name: /Use reset credits automatically/,
+      })
+    ).not.toBeChecked()
+    await user.click(screen.getByRole('button', { name: 'Trial run' }))
+
+    expect(
+      await screen.findByText('A credit would be redeemed now')
+    ).toBeVisible()
+    expect(screen.getByText('5-hour usage 95% (threshold 90%)')).toBeVisible()
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(post.mock.calls[0][0]).toBe(
+      '/api/channel/7/auto-reset-credit/dry-run'
+    )
+    expect(put).not.toHaveBeenCalled()
   })
 })

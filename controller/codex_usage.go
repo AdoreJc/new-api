@@ -89,10 +89,34 @@ func fetchCodexChannelWhamData(
 		return
 	}
 
-	statusCode, body, err := codexChannelWhamFetch(c.Request.Context(), ch, fetch, logPrefix, userMessage)
-	if err != nil {
-		common.ApiError(c, err)
-		return
+	var statusCode int
+	var body []byte
+	if resetsUsage {
+		// The manual reset shares the redemption lease with the automatic
+		// reset and subscriber resets, and is recorded before it is sent.
+		redemption, err := service.BeginChannelRedemption(ch.Id, "manual")
+		if errors.Is(err, service.ErrChannelRedemptionBusy) {
+			common.ApiErrorT(c, "Another reset for this account is still in progress. Refresh the reset credits after it finishes")
+			return
+		}
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		result := redeemCodexChannelCredit(c.Request.Context(), ch, logPrefix)
+		redemption.Finish(result.Success || result.MaybeConsumed, nil)
+		statusCode, body, err = result.Status, result.Body, result.Err
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	} else {
+		var err error
+		statusCode, body, err = codexChannelWhamFetch(c.Request.Context(), ch, fetch, logPrefix, userMessage)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
 
 	var payload any
@@ -109,9 +133,6 @@ func fetchCodexChannelWhamData(
 	}
 	if !ok {
 		resp["message"] = fmt.Sprintf("upstream status: %d", statusCode)
-	}
-	if ok && resetsUsage {
-		model.ClearCodexChannelCooldown(ch.Id)
 	}
 	// While the channel is skipped by channel selection after a usage-limit
 	// answer, cooldown_until (unix seconds) says until when.

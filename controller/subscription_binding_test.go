@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -32,7 +33,7 @@ func setupSubscriptionUsageDB(t *testing.T) {
 	sqlDB, err := database.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.UserSubscription{}, &model.User{}, &model.AuditLog{}, &model.Token{}))
+	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.UserSubscription{}, &model.User{}, &model.AuditLog{}, &model.Token{}, &model.ChannelAutoResetState{}))
 	originalLogDB, originalRedisEnabled := model.LOG_DB, common.RedisEnabled
 	model.DB, model.LOG_DB = database, database
 	common.RedisEnabled = false
@@ -460,14 +461,14 @@ func TestResetSubscriptionSelfUsageAllowsOneRedemptionPerAccount(t *testing.T) {
 	user := newResetCreditUser(t, "double-click", true)
 	sub := newSubscriptionUsageSub(t, user.Id, channel.Id, time.Hour)
 
-	release, acquired, err := service.AcquireSubscriptionResetLock(channel.Id)
+	// An administrator's manual reset of the same account holds the lease.
+	manual, err := service.BeginChannelRedemption(channel.Id, "manual")
 	require.NoError(t, err)
-	require.True(t, acquired)
 	envelope := postSelfReset(t, user.Id, sub.Id)
 	assert.False(t, envelope.Success)
 	assert.Equal(t, "Another reset for this account is still in progress. Refresh the reset credits after it finishes", envelope.Message)
 	assert.Zero(t, hits.Load(), "the second redemption never reaches upstream")
-	release()
+	manual.Finish(false, nil)
 
 	envelope = postSelfReset(t, user.Id, sub.Id)
 	require.True(t, envelope.Success, envelope.Message)
@@ -846,4 +847,33 @@ func TestSubscriptionUsageForcesACredentialRefreshAtMostOncePerCooldown(t *testi
 		service.InvalidateSubscriptionUsage(channel.Id)
 	}
 	assert.Equal(t, int32(1), tokenCalls.Load(), "one forced refresh per cooldown and channel")
+}
+
+// A Codex consume that was never sent used no credit and is a credential
+// problem; one sent but answered with 5xx may have used a credit.
+func TestRedeemCodexChannelCreditClassifiesOutcome(t *testing.T) {
+	setupSubscriptionUsageDB(t)
+	status := http.StatusInternalServerError
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+	}))
+	defer upstream.Close()
+
+	broken := newCodexSubscriptionTestChannel(t, upstream.URL)
+	broken.Key = "not a credential"
+	result := redeemCodexChannelCredit(context.Background(), broken, "test")
+	assert.Equal(t, "not_sent", result.Result)
+	assert.True(t, result.CredentialProblem)
+	assert.False(t, result.MaybeConsumed)
+
+	channel := newCodexSubscriptionTestChannel(t, upstream.URL)
+	result = redeemCodexChannelCredit(context.Background(), channel, "test")
+	assert.True(t, result.MaybeConsumed)
+	assert.False(t, result.CredentialProblem)
+
+	status = http.StatusUnauthorized
+	result = redeemCodexChannelCredit(context.Background(), channel, "test")
+	assert.Equal(t, "upstream_status_401", result.Result)
+	assert.True(t, result.CredentialProblem)
+	assert.False(t, result.MaybeConsumed)
 }

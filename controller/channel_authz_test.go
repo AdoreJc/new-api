@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -201,4 +202,28 @@ func TestChannelFieldsAreClassified(t *testing.T) {
 		assert.Truef(t, classified(name),
 			"channel field %q is not classified; add it to channelSensitiveFields, channelNonSensitiveFields, channelOperationalFields, or channelReadOnlyFields in channel_authz.go", name)
 	}
+}
+
+// The automatic reset-credit setting changes only through its own endpoint:
+// a generic update keeps the stored value whatever other_info it carries, and
+// a copy starts without it.
+func TestKeepChannelAutoResetConfig(t *testing.T) {
+	stored := &model.Channel{}
+	stored.SetOtherInfo(map[string]any{service.ChannelAutoResetConfigKey: map[string]any{"enabled": true, "max_per_day": 2}, "status_reason": "old"})
+
+	update := &model.Channel{}
+	update.SetOtherInfo(map[string]any{service.ChannelAutoResetConfigKey: map[string]any{"enabled": true, "max_per_day": 20}, "status_reason": "new"})
+	keepChannelAutoResetConfig(update, stored)
+	assert.Equal(t, map[string]any{"enabled": true, "max_per_day": float64(2)}, update.GetOtherInfo()[service.ChannelAutoResetConfigKey])
+	assert.Equal(t, "new", update.GetOtherInfo()["status_reason"])
+
+	clearing := &model.Channel{}
+	clearing.SetOtherInfo(map[string]any{"status_reason": "new"})
+	keepChannelAutoResetConfig(clearing, stored)
+	assert.Contains(t, clearing.GetOtherInfo(), service.ChannelAutoResetConfigKey, "omitting the key does not clear it")
+
+	clone := &model.Channel{OtherInfo: stored.OtherInfo}
+	keepChannelAutoResetConfig(clone, nil)
+	assert.NotContains(t, clone.GetOtherInfo(), service.ChannelAutoResetConfigKey)
+	assert.Equal(t, "old", clone.GetOtherInfo()["status_reason"])
 }

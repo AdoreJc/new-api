@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
@@ -131,82 +130,46 @@ func ResetSubscriptionSelfUsage(c *gin.Context) {
 	if !ok {
 		return
 	}
-	release, acquired, err := service.AcquireSubscriptionResetLock(ch.Id)
+	// Subscriber, manual and automatic redemptions of the bound account share
+	// one database lease, so only one runs at a time on any node.
+	redemption, err := service.BeginChannelRedemption(ch.Id, "subscription")
+	if errors.Is(err, service.ErrChannelRedemptionBusy) {
+		common.ApiErrorT(c, "Another reset for this account is still in progress. Refresh the reset credits after it finishes")
+		return
+	}
 	if err != nil {
 		common.SysError(common.LogText("failed to lock subscription reset: %s", err.Error()))
 		common.ApiErrorT(c, "Failed to reset usage. Please try again later")
 		return
 	}
-	if !acquired {
-		common.ApiErrorT(c, "Another reset for this account is still in progress. Refresh the reset credits after it finishes")
-		return
-	}
-	defer release()
 
-	var provider, result string
+	var provider string
+	var outcome service.ChannelAutoResetRedeemResult
 	switch ch.Type {
 	case constant.ChannelTypeClaudeOAuth:
 		provider = "claude"
-		var redeemErr error
-		statusCode, payload, fetchErr := claudeChannelOAuthFetch(
-			c.Request.Context(), ch,
-			func(ctx context.Context, client *http.Client, ch *model.Channel, accessToken string) (int, any, error) {
-				status, outcome, err := service.RedeemClaudeResetCredit(ctx, client, ch.GetBaseURL(), accessToken)
-				redeemErr = err
-				if err != nil || outcome == nil {
-					return status, nil, err
-				}
-				return status, outcome, nil
-			},
-			claudeResetRequestTimeout,
-			common.LogText("failed to reset claude usage for subscription"),
-			"Failed to reset usage. Please try again later",
-			false,
-		)
-		outcome, _ := payload.(*service.ClaudeResetOutcome)
-		switch {
-		case errors.Is(redeemErr, service.ErrClaudeResetNotAvailable):
-			result = "not_available"
-		case errors.Is(redeemErr, service.ErrClaudeResetOutcomeUnknown):
-			result = "outcome_unknown"
-		case fetchErr != nil:
-			result = "error"
-		case statusCode < 200 || statusCode >= 300:
-			result = fmt.Sprintf("upstream_status_%d", statusCode)
-		case outcome != nil:
-			result = outcome.Outcome
-		default:
-			result = "outcome_unknown"
-		}
-		if fetchErr != nil {
-			common.ApiError(c, fetchErr)
+		outcome = redeemClaudeChannelCredit(c.Request.Context(), ch, common.LogText("failed to reset claude usage for subscription"))
+		redemption.Finish(outcome.Success || outcome.MaybeConsumed, nil)
+		if outcome.Err != nil {
+			common.ApiError(c, outcome.Err)
 		} else {
-			writeSubscriptionUpstreamResult(c, statusCode, payload)
+			writeSubscriptionUpstreamResult(c, outcome.Status, outcome.Payload)
 		}
 	case constant.ChannelTypeCodex:
 		provider = "codex"
-		statusCode, body, fetchErr := codexChannelWhamFetch(
-			c.Request.Context(), ch,
-			service.ConsumeCodexWhamRateLimitResetCredit,
-			common.LogText("failed to reset codex usage for subscription"),
-			"Failed to reset usage. Please try again later",
-		)
-		switch {
-		case fetchErr != nil:
-			result = "error"
-		case statusCode < 200 || statusCode >= 300:
-			result = fmt.Sprintf("upstream_status_%d", statusCode)
-		default:
-			result = "consumed"
-		}
-		if fetchErr != nil {
-			common.ApiError(c, fetchErr)
+		outcome = redeemCodexChannelCredit(c.Request.Context(), ch, common.LogText("failed to reset codex usage for subscription"))
+		redemption.Finish(outcome.Success || outcome.MaybeConsumed, nil)
+		if outcome.Err != nil {
+			common.ApiError(c, outcome.Err)
 		} else {
-			var outcome SubscriptionCodexResetOutcome
-			_ = common.Unmarshal(body, &outcome)
-			writeSubscriptionUpstreamResult(c, statusCode, outcome)
+			var trimmed SubscriptionCodexResetOutcome
+			_ = common.Unmarshal(outcome.Body, &trimmed)
+			writeSubscriptionUpstreamResult(c, outcome.Status, trimmed)
 		}
+	default:
+		redemption.Finish(false, nil)
 	}
+	result := outcome.Result
 	// A redemption changes the windows; the next usage query asks upstream.
 	service.InvalidateSubscriptionUsage(ch.Id)
 
@@ -215,6 +178,6 @@ func ResetSubscriptionSelfUsage(c *gin.Context) {
 		"channel_id":      ch.Id,
 		"provider":        provider,
 		"result":          result,
-		"success":         result == "reset" || result == "consumed",
+		"success":         outcome.Success,
 	})
 }
