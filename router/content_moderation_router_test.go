@@ -326,6 +326,7 @@ func newAuditRelayFixture(t *testing.T, policy audit_policy_setting.Config, mode
 
 	fixture.engine = gin.New()
 	SetRelayRouter(fixture.engine)
+	SetTaskPluginProtocolRouter(fixture.engine)
 	return fixture
 }
 
@@ -410,4 +411,92 @@ func TestAuditRerouteBillsAndLogsTheActualModel(t *testing.T) {
 	fallback := fixture.send("/v1/chat/completions", `{"model":"gpt-4o-mini","messages":[{"role":"user","content":"something forbidden"}]}`)
 	assert.Equal(t, http.StatusForbidden, fallback.Code, "a user who is not verified cannot be rerouted: %s", fallback.Body.String())
 	assert.Equal(t, calls, fixture.upstreamCalls.Load())
+}
+
+func verifiedReroutePolicy(target audit_policy_setting.RerouteTarget) audit_policy_setting.Config {
+	return audit_policy_setting.Config{
+		Rules: []audit_policy_setting.Rule{{
+			ID: "reroute-listed", Enabled: true, Match: audit_policy_setting.Match{List: audit_policy_setting.ListVerified},
+			PromptAudit:     audit_policy_setting.PromptAudit{Enabled: true, Action: audit_policy_setting.ActionReroute},
+			Reroute:         target,
+			RerouteFallback: audit_policy_setting.ActionBlock,
+		}},
+		// UserID 0 is filled with the fixture user.
+		Allowlist: []audit_policy_setting.ListEntry{{Verified: true}},
+	}
+}
+
+// addAuditChannel adds a channel answering from its own mock upstream and
+// returns that upstream's call counter.
+func addAuditChannel(t *testing.T, name, models, group string, priority int64, status int, setting string) *atomic.Int64 {
+	t.Helper()
+	calls := &atomic.Int64{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`{"id":"c1","object":"chat.completion","model":"safe-model","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`))
+	}))
+	t.Cleanup(upstream.Close)
+	baseURL := upstream.URL
+	channel := model.Channel{Type: constant.ChannelTypeOpenAI, Key: "upstream-key", Status: common.ChannelStatusEnabled,
+		Name: name, Models: models, Group: group, BaseURL: &baseURL, Priority: &priority}
+	if setting != "" {
+		channel.Setting = &setting
+	}
+	require.NoError(t, channel.Insert())
+	return calls
+}
+
+// TestAuditRerouteRetriesNeverUsePassThroughChannels reroutes to a model
+// whose preferred channel fails and whose only other channel forwards the
+// client body unchanged: the retry never sends the original body there.
+func TestAuditRerouteRetriesNeverUsePassThroughChannels(t *testing.T) {
+	fixture := newAuditRelayFixture(t, verifiedReroutePolicy(audit_policy_setting.RerouteTarget{Model: "safe-model"}), "gpt-4o-mini")
+	previousRetries := common.RetryTimes
+	common.RetryTimes = 3
+	t.Cleanup(func() { common.RetryTimes = previousRetries })
+	failing := addAuditChannel(t, "safe-failing", "safe-model", "default", 10, http.StatusInternalServerError, "")
+	passThrough := addAuditChannel(t, "safe-pass-through", "safe-model", "default", 0, http.StatusOK, `{"pass_through_body_enabled":true}`)
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-4o-mini":0.075,"safe-model":0.075}`))
+
+	response := fixture.send("/v1/chat/completions", `{"model":"gpt-4o-mini","messages":[{"role":"user","content":"something forbidden"}]}`)
+	assert.NotEqual(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Positive(t, failing.Load(), "the rerouted request went to the target's channel")
+	assert.Zero(t, passThrough.Load(), "no attempt used a channel that forwards the original body")
+	assert.Zero(t, fixture.upstreamCalls.Load(), "nothing reached the original model")
+}
+
+// TestAuditRerouteToAnotherGroupBillsThatGroup reroutes an "auto" token's
+// flagged request to a concrete group: the request runs and is logged in
+// that group, not the one the distributor chose.
+func TestAuditRerouteToAnotherGroupBillsThatGroup(t *testing.T) {
+	fixture := newAuditRelayFixture(t, verifiedReroutePolicy(audit_policy_setting.RerouteTarget{Group: "vip"}), "gpt-4o-mini")
+	vip := addAuditChannel(t, "vip", "gpt-4o-mini", "vip", 0, http.StatusOK, "")
+
+	response := fixture.send("/v1/chat/completions", `{"model":"gpt-4o-mini","messages":[{"role":"user","content":"something forbidden"}]}`)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, int64(1), vip.Load())
+	assert.Zero(t, fixture.upstreamCalls.Load())
+	var log model.Log
+	require.NoError(t, model.DB.Where("type = ?", model.LogTypeConsume).Order("id desc").First(&log).Error)
+	assert.Equal(t, "vip", log.Group, "the request is billed and logged in the target group")
+	assert.Contains(t, log.Other, `"to_group":"vip"`)
+}
+
+// TestAuditRerouteCoversEveryPromptFormat reroutes flagged Claude,
+// Responses and Gemini requests: upstream receives the target model each
+// time.
+func TestAuditRerouteCoversEveryPromptFormat(t *testing.T) {
+	fixture := newAuditRelayFixture(t, verifiedReroutePolicy(audit_policy_setting.RerouteTarget{Model: "safe-model"}), "gpt-4o-mini", "safe-model")
+	requests := []struct{ name, path, body string }{
+		{"claude", "/v1/messages", `{"model":"gpt-4o-mini","max_tokens":16,"messages":[{"role":"user","content":"something forbidden"}]}`},
+		{"responses", "/v1/responses", `{"model":"gpt-4o-mini","input":"something forbidden"}`},
+		{"gemini", "/v1beta/models/gpt-4o-mini:generateContent", `{"contents":[{"role":"user","parts":[{"text":"something forbidden"}]}]}`},
+	}
+	for _, request := range requests {
+		fixture.lastModel.Store("")
+		response := fixture.send(request.path, request.body)
+		assert.Equal(t, "safe-model", fixture.lastModel.Load(), "%s: upstream receives the target model (%d %s)", request.name, response.Code, response.Body.String())
+	}
 }

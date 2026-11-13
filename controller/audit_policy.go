@@ -20,6 +20,10 @@ type auditPolicyResponse struct {
 	Config audit_policy_setting.Config `json:"config"`
 	// Saved is false while the rules are derived from the engine settings.
 	Saved bool `json:"saved"`
+	// Degraded is set when the stored table failed validation; Problems
+	// lists what was dropped or kept degraded.
+	Degraded bool     `json:"degraded"`
+	Problems []string `json:"problems"`
 	// Engine modes are the master switches the rules work under.
 	PromptAuditEnabled    bool     `json:"prompt_audit_enabled"`
 	PromptAuditMode       string   `json:"prompt_audit_mode"`
@@ -31,10 +35,13 @@ type auditPolicyResponse struct {
 	ContentKeywordModes   []string `json:"content_moderation_keyword_modes"`
 }
 
-func buildAuditPolicyResponse(config audit_policy_setting.Config, saved bool) auditPolicyResponse {
+func buildAuditPolicyResponse(config audit_policy_setting.Config, saved bool, problems []string) auditPolicyResponse {
 	pa := prompt_audit_setting.Current().Config
+	if problems == nil {
+		problems = []string{}
+	}
 	return auditPolicyResponse{
-		Config: config, Saved: saved,
+		Config: config, Saved: saved, Degraded: len(problems) > 0, Problems: problems,
 		PromptAuditEnabled: pa.Enabled, PromptAuditMode: pa.Mode,
 		ContentModerationMode: content_moderation_setting.Current().Config.Mode,
 		PromptAuditCategories: prompt_audit_setting.ScannerIDs,
@@ -47,12 +54,12 @@ func buildAuditPolicyResponse(config audit_policy_setting.Config, saved bool) au
 }
 
 func GetAuditPolicy(c *gin.Context) {
-	config, saved, err := model.AuditPolicyStoredConfig()
+	config, saved, problems, err := model.AuditPolicyStoredConfig()
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, buildAuditPolicyResponse(config, saved))
+	common.ApiSuccess(c, buildAuditPolicyResponse(config, saved, problems))
 }
 
 type auditPolicyRequest struct {
@@ -93,7 +100,7 @@ func UpdateAuditPolicy(c *gin.Context) {
 		"config_version": saved.ConfigVersion, "rules": strings.Join(ids, ","),
 		"allowlist": len(saved.Allowlist), "verified": verified, "blocklist": len(saved.Blocklist),
 	})
-	common.ApiSuccess(c, buildAuditPolicyResponse(saved, true))
+	common.ApiSuccess(c, buildAuditPolicyResponse(saved, true, nil))
 }
 
 // ResetAuditPolicy removes the saved table, so the rules are derived from
@@ -110,7 +117,7 @@ func ResetAuditPolicy(c *gin.Context) {
 		return
 	}
 	recordManageAudit(c, "audit_policy.reset", map[string]any{"previous_config_version": request.ExpectedConfigVersion})
-	common.ApiSuccess(c, buildAuditPolicyResponse(audit_policy_setting.Current().Config, false))
+	common.ApiSuccess(c, buildAuditPolicyResponse(audit_policy_setting.Current().Config, false, nil))
 }
 
 func respondAuditPolicySaveError(c *gin.Context, err error) bool {

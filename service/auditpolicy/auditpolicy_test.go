@@ -1,6 +1,7 @@
 package auditpolicy
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -184,6 +185,14 @@ func TestDerivedRulesKeepLegacyScopes(t *testing.T) {
 			cm.ModelFilter = content_moderation_setting.ModelFilter{Type: content_moderation_setting.ModelFilterExclude, Models: []string{"free"}}
 			cm.AllowlistUserIDs = []int{9}
 		}},
+		{"prompt audit scoped to auto, moderation to a concrete group", func() {
+			pa.AllGroups, pa.Groups = false, []string{"auto"}
+			cm.Groups = []string{"vip"}
+		}},
+		{"moderation scoped to auto, prompt audit to a prefix", func() {
+			pa.Groups = []string{"claude-*"}
+			cm.Groups = []string{"auto", "codex-ch1"}
+		}},
 		{"moderation observing an include list, prompt audit off", func() {
 			pa.Enabled = false
 			cm.Mode, cm.AllGroups = content_moderation_setting.ModeObserve, true
@@ -200,21 +209,28 @@ func TestDerivedRulesKeepLegacyScopes(t *testing.T) {
 		useContentModeration(t, cm, []string{"k"})
 		config := audit_policy_setting.Current().Config
 		for _, group := range groups {
-			for _, model := range models {
-				for _, user := range []int{1, 9} {
-					subject := audit_policy_setting.Subject{UserID: user, Group: group, Model: model}
-					resolution := config.Resolve(subject)
-					legacyPA := pa.Enabled && pa.IncludesGroup(group)
-					assert.Equal(t, legacyPA, resolution.Rule.PromptAudit.Enabled, "%s: prompt audit for %+v", scope.name, subject)
-					if legacyPA {
-						assert.Equal(t, audit_policy_setting.ActionObserve, resolution.Rule.PromptAudit.Action)
+			for _, requested := range []string{"", "auto"} {
+				for _, model := range models {
+					for _, user := range []int{1, 9} {
+						subject := audit_policy_setting.Subject{UserID: user, Group: group, RequestedGroup: requested, Model: model, Format: "openai"}
+						resolution := config.Resolve(subject)
+						legacyPA := pa.Enabled && (pa.IncludesGroup(group) || requested != "" && pa.IncludesGroup(requested))
+						assert.Equal(t, legacyPA, resolution.Rule.PromptAudit.Enabled, "%s: prompt audit for %+v", scope.name, subject)
+						if legacyPA {
+							assert.Equal(t, audit_policy_setting.ActionObserve, resolution.Rule.PromptAudit.Action)
+						}
+						legacyCM := contentmoderation.ConfigScopePolicy{}.Decide(contentmoderation.Subject{UserID: user, Group: group, RequestedGroup: requested, Model: model})
+						derivedCM := contentDecision(resolution.Rule, resolution.Listing, cm.Mode)
+						assert.Equal(t, legacyCM.Moderate, derivedCM.Moderate, "%s: moderation for %+v", scope.name, subject)
+						assert.Equal(t, legacyCM.Action, derivedCM.Action, "%s: moderation action for %+v", scope.name, subject)
+						assert.Equal(t, legacyCM.Dispose, derivedCM.Dispose, "%s: disposal for %+v", scope.name, subject)
+						assert.Equal(t, legacyCM.SampleRate, derivedCM.SampleRate)
+
+						// Neither engine checked Responses WebSocket turns before.
+						subject.Format = FormatResponsesWebSocket
+						websocket := config.Resolve(subject).Rule
+						assert.False(t, websocket.PromptAudit.Enabled || websocket.ContentModeration.Enabled, "%s: WebSocket turn %+v", scope.name, subject)
 					}
-					legacyCM := contentmoderation.ConfigScopePolicy{}.Decide(contentmoderation.Subject{UserID: user, Group: group, Model: model})
-					derivedCM := contentDecision(resolution.Rule, resolution.Listing, cm.Mode)
-					assert.Equal(t, legacyCM.Moderate, derivedCM.Moderate, "%s: moderation for %+v", scope.name, subject)
-					assert.Equal(t, legacyCM.Action, derivedCM.Action, "%s: moderation action for %+v", scope.name, subject)
-					assert.Equal(t, legacyCM.Dispose, derivedCM.Dispose, "%s: disposal for %+v", scope.name, subject)
-					assert.Equal(t, legacyCM.SampleRate, derivedCM.SampleRate)
 				}
 			}
 		}
@@ -360,4 +376,81 @@ func TestEvaluateChecksEachWebSocketTurn(t *testing.T) {
 	assert.Equal(t, int64(1), calls.Load(), "a repeated turn is checked once")
 	assert.NotNil(t, Evaluate(c, info, FormatResponsesWebSocket, "turn-2").Err)
 	assert.Equal(t, int64(2), calls.Load(), "the next turn is checked again")
+}
+
+// TestDegradedPolicyTable stores a table with one valid rule and one rule
+// whose engine settings are invalid: the valid rule still applies, the
+// broken one runs no check, and its blocking intent falls to its failure
+// policy. An unreadable table keeps a blocking intent found in its text.
+func TestDegradedPolicyTable(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	endpoint, calls := guardEndpoint(t, "Safety: Unsafe\nCategories: Violent", 0)
+	usePromptAudit(t, blockingConfig(endpoint))
+	t.Cleanup(func() { audit_policy_setting.ApplyOption(audit_policy_setting.OptionKey, "") })
+
+	audit_policy_setting.ApplyOption(audit_policy_setting.OptionKey, `{"config_version":4,"rules":[
+		{"id":"good","enabled":true,"match":{"groups":["good"]},"prompt_audit":{"enabled":true,"action":"block"}},
+		{"id":"broken","enabled":true,"match":{"groups":["vip"]},"prompt_audit":{"enabled":true,"action":"block","fail_policy":"closed","category_levels":{"nope":"unsafe"}}}]}`)
+	snapshot := audit_policy_setting.Current()
+	require.True(t, snapshot.Saved)
+	assert.True(t, snapshot.Degraded)
+	assert.NotEmpty(t, snapshot.Problems)
+	assert.Equal(t, int64(4), snapshot.Config.ConfigVersion)
+	require.Len(t, snapshot.Config.Rules, 2)
+	assert.False(t, snapshot.Config.Rules[0].Degraded)
+	assert.True(t, snapshot.Config.Rules[1].Degraded)
+
+	c, info := relayRequest("attack", 1)
+	info.UsingGroup = "good"
+	result := Evaluate(c, info, "", "")
+	require.NotNil(t, result.Err, "a valid rule keeps working")
+	assert.Equal(t, ErrorCodePromptAuditBlocked, result.Err.GetErrorCode())
+	checked := calls.Load()
+
+	c, info = relayRequest("attack", 1)
+	result = Evaluate(c, info, "", "")
+	require.NotNil(t, result.Err, "the broken rule asked to block and fails closed")
+	assert.Equal(t, ErrorCodePromptAuditUnavailable, result.Err.GetErrorCode())
+	assert.Equal(t, checked, calls.Load(), "a degraded rule runs no check")
+
+	audit_policy_setting.ApplyOption(audit_policy_setting.OptionKey, `{"rules":[{"prompt_audit":{"action": "block", "fail_policy": "closed"`)
+	require.True(t, audit_policy_setting.Current().Degraded)
+	c, info = relayRequest("hello", 1)
+	result = Evaluate(c, info, "", "")
+	require.NotNil(t, result.Err, "an unreadable table keeps its blocking intent")
+	assert.Equal(t, ErrorCodePromptAuditUnavailable, result.Err.GetErrorCode())
+}
+
+// TestEvaluateUnreadableSettingsFailOpen stores a blocking prompt audit
+// setting that cannot be read and names no failure policy: the derived rule
+// fails open and the request continues.
+func TestEvaluateUnreadableSettingsFailOpen(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	usePromptAudit(t, prompt_audit_setting.DefaultConfig())
+	prompt_audit_setting.ApplyOption(prompt_audit_setting.OptionKey, `{"enabled":true,"mode":"blocking","worker_count":0}`)
+	require.True(t, prompt_audit_setting.Current().Degraded)
+	c, info := relayRequest("hello", 1)
+	assert.Nil(t, Evaluate(c, info, "", "").Err)
+}
+
+type countingBody struct {
+	io.Reader
+	reads atomic.Int64
+}
+
+func (b *countingBody) Read(p []byte) (int, error) {
+	b.reads.Add(1)
+	return b.Reader.Read(p)
+}
+
+// TestEvaluateReadsNoBodyWhileOff leaves both engines off: the request body
+// is never read.
+func TestEvaluateReadsNoBodyWhileOff(t *testing.T) {
+	usePromptAudit(t, prompt_audit_setting.DefaultConfig())
+	useContentModeration(t, content_moderation_setting.DefaultConfig(), nil)
+	c, info := relayRequest("hello", 1)
+	body := &countingBody{Reader: c.Request.Body}
+	c.Request.Body = io.NopCloser(body)
+	assert.Equal(t, Result{}, Evaluate(c, info, "", ""))
+	assert.Zero(t, body.reads.Load())
 }

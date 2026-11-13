@@ -61,6 +61,7 @@ const ruleFormObject = z.object({
   enabled: z.boolean(),
   match: z.object({
     groups: patternList,
+    requested_groups: patternList,
     models: patternList,
     exclude_models: patternList,
     user_ids: idList,
@@ -203,6 +204,7 @@ export function toRuleFormValues(rule: AuditPolicyRule): RuleFormValues {
     enabled: rule.enabled,
     match: {
       groups: rule.match.groups ?? [],
+      requested_groups: rule.match.requested_groups ?? [],
       models: rule.match.models ?? [],
       exclude_models: rule.match.exclude_models ?? [],
       user_ids: (rule.match.user_ids ?? []).map(String),
@@ -258,6 +260,7 @@ export function toRule(values: RuleFormValues): AuditPolicyRule {
     enabled: values.enabled,
     match: {
       groups: cleanList(values.match.groups),
+      requested_groups: cleanList(values.match.requested_groups),
       models: cleanList(values.match.models),
       exclude_models: cleanList(values.match.exclude_models),
       user_ids: cleanList(values.match.user_ids).map(Number),
@@ -319,6 +322,7 @@ export function createRule(existingIds: string[]): AuditPolicyRule {
     enabled: true,
     match: {
       groups: [],
+      requested_groups: [],
       models: [],
       exclude_models: [],
       user_ids: [],

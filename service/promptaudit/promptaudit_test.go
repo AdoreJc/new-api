@@ -366,7 +366,7 @@ func legacyRule(config *prompt_audit_setting.Config) *audit_policy_setting.Promp
 // enqueueRelay queues a request as the policy coordinator does under the
 // rules derived from the current settings.
 func (s *Service) enqueueRelay(c *gin.Context, info *relaycommon.RelayInfo) {
-	subject := audit_policy_setting.Subject{UserID: info.UserId, TokenID: info.TokenId, Group: info.UsingGroup, Model: info.OriginModelName}
+	subject := audit_policy_setting.Subject{UserID: info.UserId, TokenID: info.TokenId, Group: info.UsingGroup, Model: info.OriginModelName, Format: string(info.RelayFormat)}
 	if subject.Group == "auto" {
 		if selected := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); selected != "" {
 			subject.Group, subject.RequestedGroup = selected, "auto"

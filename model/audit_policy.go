@@ -16,17 +16,22 @@ var (
 )
 
 // AuditPolicyStoredConfig reads the saved rule table. saved is false when no
-// table is stored and the rules are derived from the engine settings.
-func AuditPolicyStoredConfig() (config audit_policy_setting.Config, saved bool, err error) {
+// table is stored and the rules are derived from the engine settings. A
+// stored table that fails validation is read as far as possible and its
+// problems are returned, so an administrator can see and fix it.
+func AuditPolicyStoredConfig() (config audit_policy_setting.Config, saved bool, problems []string, err error) {
 	var option Option
 	if err := DB.Where(&Option{Key: audit_policy_setting.OptionKey}).Limit(1).Find(&option).Error; err != nil {
-		return config, false, err
+		return config, false, nil, err
 	}
 	if option.Value == "" {
-		return audit_policy_setting.Current().Config.Clone(), false, nil
+		return audit_policy_setting.Current().Config.Clone(), false, nil, nil
 	}
 	config, err = audit_policy_setting.ParseConfig(option.Value)
-	return config, err == nil, err
+	if err != nil {
+		config, problems = audit_policy_setting.ParseDegraded(option.Value)
+	}
+	return config, true, problems, nil
 }
 
 // SaveAuditPolicy stores a validated table when the stored version still
@@ -53,9 +58,10 @@ func SaveAuditPolicy(config *audit_policy_setting.Config, expectedVersion int64)
 		}
 		storedVersion := int64(0)
 		if stored.Value != "" {
-			if storedConfig, err := audit_policy_setting.ParseConfig(stored.Value); err == nil {
-				storedVersion = storedConfig.ConfigVersion
-			}
+			// ParseDegraded also reads the version of a table that fails
+			// validation, so it can still be replaced.
+			storedConfig, _ := audit_policy_setting.ParseDegraded(stored.Value)
+			storedVersion = storedConfig.ConfigVersion
 		}
 		if storedVersion != expectedVersion {
 			return ErrAuditPolicyConflict

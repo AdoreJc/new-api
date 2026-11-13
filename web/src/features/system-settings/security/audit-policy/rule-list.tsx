@@ -69,6 +69,13 @@ function useRuleSummaries() {
     if (match.groups?.length) {
       parts.push(t('Groups: {{value}}', { value: match.groups.join(', ') }))
     }
+    if (match.requested_groups?.length) {
+      parts.push(
+        t('Requested groups: {{value}}', {
+          value: match.requested_groups.join(', '),
+        })
+      )
+    }
     if (match.models?.length) {
       parts.push(t('Models: {{value}}', { value: match.models.join(', ') }))
     }

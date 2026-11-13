@@ -456,6 +456,19 @@ func scanWith(ctx context.Context, client *http.Client, endpoint prompt_audit_se
 	return result, nil
 }
 
+// scanInSlot scans while holding one of the endpoint's synchronous call
+// slots, released however the scan ends. A full endpoint is reported like a
+// network error, so the next endpoint is tried.
+func (g *guardClient) scanInSlot(ctx context.Context, endpoint prompt_audit_setting.Endpoint, token, chunk string, rule *audit_policy_setting.PromptAudit, metrics *Metrics) (*guardResult, error) {
+	release, acquired := g.acquireEndpoint(endpoint.ID)
+	if !acquired {
+		metrics.bulkheadFull.Add(1)
+		return nil, errBulkheadFull
+	}
+	defer release()
+	return g.scan(ctx, endpoint, token, chunk, rule)
+}
+
 // scanRequest is what one evaluation needs besides the text.
 type scanRequest struct {
 	snapshot    *prompt_audit_setting.Snapshot
@@ -475,13 +488,7 @@ func (g *guardClient) scanChunk(ctx context.Context, request scanRequest, endpoi
 			var result *guardResult
 			var err error
 			if request.synchronous {
-				if release, acquired := g.acquireEndpoint(endpoint.ID); acquired {
-					result, err = g.scan(ctx, endpoint, request.snapshot.Tokens[endpoint.ID], chunk, request.rule)
-					release()
-				} else {
-					metrics.bulkheadFull.Add(1)
-					err = errBulkheadFull
-				}
+				result, err = g.scanInSlot(ctx, endpoint, request.snapshot.Tokens[endpoint.ID], chunk, request.rule, metrics)
 			} else {
 				result, err = g.scan(ctx, endpoint, request.snapshot.Tokens[endpoint.ID], chunk, request.rule)
 			}

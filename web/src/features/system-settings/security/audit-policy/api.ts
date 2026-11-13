@@ -37,6 +37,8 @@ export type AuditPolicyListCondition =
 
 export type AuditPolicyMatch = {
   groups: string[]
+  /** Matched against the token's own group only, e.g. "auto". */
+  requested_groups?: string[]
   models: string[]
   exclude_models: string[]
   user_ids: number[]
@@ -103,6 +105,10 @@ export type AuditPolicyResponse = {
   config: AuditPolicyConfig
   /** False while the rules are derived from the engine settings. */
   saved: boolean
+  /** True when the stored table failed validation and is read degraded. */
+  degraded?: boolean
+  /** What was dropped or kept degraded, as server log sentences. */
+  problems?: string[]
   prompt_audit_enabled: boolean
   prompt_audit_mode: string
   content_moderation_mode: string

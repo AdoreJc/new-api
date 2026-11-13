@@ -38,7 +38,7 @@ const (
 
 // FormatResponsesWebSocket is the relay format rules use for Responses API
 // turns over WebSocket.
-const FormatResponsesWebSocket = "responses_websocket"
+const FormatResponsesWebSocket = audit_policy_setting.FormatResponsesWebSocket
 
 // evaluatedKey holds the result for the gin context, so a request is
 // checked once whatever calls Evaluate again (retries never do).
@@ -107,6 +107,10 @@ func plan(snapshot *audit_policy_setting.Snapshot, resolution audit_policy_setti
 		RuleID: rule.ID, RuleName: rule.Name, RuleIndex: resolution.Index, Saved: snapshot.Saved,
 		Allowlisted: resolution.Listing.Allowlisted, Verified: resolution.Listing.Verified, Blocklisted: resolution.Listing.Blocklisted,
 		PromptAudit: engineOff, ContentModeration: engineOff, Notes: []string{},
+	}
+	if rule.Degraded {
+		result.Notes = append(result.Notes, "this rule could not be read; no check runs and its failure policy decides where it asked to block")
+		return result
 	}
 	pa := prompt_audit_setting.Current()
 	if rule.PromptAudit.Enabled {
@@ -288,9 +292,12 @@ func evaluate(c *gin.Context, info *relaycommon.RelayInfo, format string) Result
 	resolution := snapshot.Config.Resolve(subject)
 	rule := resolution.Rule
 	pa := prompt_audit_setting.Current()
+	protocol, covered := promptaudit.RelayProtocol(info.RelayFormat, info.RequestURLPath)
+	if rule.Degraded {
+		return degradedResult(c, info, rule, covered)
+	}
 
 	paMode := engineOff
-	protocol, covered := promptaudit.RelayProtocol(info.RelayFormat, info.RequestURLPath)
 	if rule.PromptAudit.Enabled && covered && (pa.Config.Enabled || pa.Degraded) {
 		paMode = engineAsync
 		if promptAuditSynchronous(rule) && pa.Config.Mode == prompt_audit_setting.ModeBlocking {
@@ -323,6 +330,14 @@ func evaluate(c *gin.Context, info *relaycommon.RelayInfo, format string) Result
 		_, _ = common.GetBodyStorage(c)
 		var wg sync.WaitGroup
 		wg.Go(func() {
+			// A panic must not cross the goroutine; the check then counts as
+			// unavailable and the rule's failure policy decides.
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					common.SysError(common.LogText("prompt audit check panicked for request %s: %v", meta.RequestID, recovered))
+					paVerdict = promptaudit.Verdict{Outcome: promptaudit.OutcomeUnavailable}
+				}
+			}()
 			paVerdict = promptaudit.Check(context.WithoutCancel(c.Request.Context()), c, meta, rule.ID, rule.PromptAudit)
 		})
 		cmOutcome = contentmoderation.Check(c, info, cmSubject, cmDecision)
@@ -377,6 +392,25 @@ func RerouteFailedError(c *gin.Context, reroute *Reroute, reason string) *types.
 // the model or channel, such as a Responses WebSocket connection.
 func RerouteUnsupportedError(c *gin.Context, reroute *Reroute) *types.NewAPIError {
 	return RerouteFailedError(c, reroute, "the connection is pinned to its model and channel")
+}
+
+// degradedResult handles a request whose stored rule could not be read: no
+// engine runs, and an engine the rule asked to block with is treated as
+// unavailable, so the rule's failure policy decides.
+func degradedResult(c *gin.Context, info *relaycommon.RelayInfo, rule *audit_policy_setting.Rule, promptAuditCovered bool) Result {
+	pa := prompt_audit_setting.Current()
+	if rule.PromptAudit.Enabled && rule.PromptAudit.Action != audit_policy_setting.ActionObserve && promptAuditCovered &&
+		(pa.Config.Enabled || pa.Degraded) && pa.Config.Mode == prompt_audit_setting.ModeBlocking &&
+		rule.PromptAudit.FailPolicy == audit_policy_setting.FailClosed {
+		return Result{Err: promptAuditError(c, ErrorCodePromptAuditUnavailable, http.StatusServiceUnavailable, i18n.MsgAuditUnavailable, "the audit policy rule is degraded and fails closed")}
+	}
+	_, moderationCovered := contentmoderation.RelayProtocol(info.RelayFormat, info.RequestURLPath)
+	if rule.ContentModeration.Enabled && rule.ContentModeration.Action != audit_policy_setting.ActionObserve && moderationCovered &&
+		content_moderation_setting.Current().Config.Mode == content_moderation_setting.ModePreBlock &&
+		rule.ContentModeration.FailPolicy == audit_policy_setting.FailClosed {
+		return Result{Err: contentmoderation.UnavailableError(c)}
+	}
+	return Result{}
 }
 
 // promptAuditError builds a rejection that names no category, so the reply

@@ -8140,5 +8140,10 @@
     "Check inputs with the moderation API and keyword lists for requests this rule matches.": "Kiểm tra đầu vào bằng API kiểm duyệt và danh sách từ khóa cho các yêu cầu khớp quy tắc này.",
     "Findings under this rule count toward the violation limit that can disable a user.": "Kết quả theo quy tắc này được tính vào giới hạn vi phạm có thể khiến người dùng bị vô hiệu hóa.",
     "Turn off to use the keyword lists of the content moderation settings.": "Tắt để dùng danh sách từ khóa trong cài đặt kiểm duyệt nội dung."
-  }
+  },
+  "Requested groups": "Nhóm được yêu cầu",
+  "Group the token asked for, for example auto": "Nhóm mà token yêu cầu, ví dụ auto",
+  "Requested groups: {{value}}": "Nhóm được yêu cầu: {{value}}",
+  "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.": "Không thể đọc đầy đủ chính sách kiểm duyệt đã lưu. Các quy tắc không đọc được sẽ không kiểm tra; nếu chúng yêu cầu chặn, chính sách khi lỗi của chúng sẽ quyết định. Hãy xem lại các quy tắc và lưu để sửa chính sách.",
+  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "không đọc được quy tắc này; không kiểm tra, và khi quy tắc yêu cầu chặn thì chính sách khi lỗi sẽ quyết định"
 }

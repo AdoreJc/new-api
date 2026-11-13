@@ -8140,5 +8140,10 @@
     "Check inputs with the moderation API and keyword lists for requests this rule matches.": "Check inputs with the moderation API and keyword lists for requests this rule matches.",
     "Findings under this rule count toward the violation limit that can disable a user.": "Findings under this rule count toward the violation limit that can disable a user.",
     "Turn off to use the keyword lists of the content moderation settings.": "Turn off to use the keyword lists of the content moderation settings."
-  }
+  },
+  "Requested groups": "Requested groups",
+  "Group the token asked for, for example auto": "Group the token asked for, for example auto",
+  "Requested groups: {{value}}": "Requested groups: {{value}}",
+  "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.": "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.",
+  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "this rule could not be read; no check runs and its failure policy decides where it asked to block"
 }

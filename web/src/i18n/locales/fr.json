@@ -8140,5 +8140,10 @@
     "Check inputs with the moderation API and keyword lists for requests this rule matches.": "Vérifie les entrées avec l'API de modération et les listes de mots-clés pour les requêtes ciblées par cette règle.",
     "Findings under this rule count toward the violation limit that can disable a user.": "Les résultats de cette règle comptent dans la limite d'infractions pouvant désactiver un utilisateur.",
     "Turn off to use the keyword lists of the content moderation settings.": "Désactivez pour utiliser les listes de mots-clés des paramètres de modération du contenu."
-  }
+  },
+  "Requested groups": "Groupes demandés",
+  "Group the token asked for, for example auto": "Groupe demandé par le jeton, par exemple auto",
+  "Requested groups: {{value}}": "Groupes demandés : {{value}}",
+  "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.": "La politique d’audit enregistrée n’a pas pu être lue entièrement. Les règles illisibles n’effectuent aucune vérification ; lorsqu’elles demandaient un blocage, leur politique en cas d’échec décide. Vérifiez les règles et enregistrez pour réparer la politique.",
+  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "cette règle n’a pas pu être lue ; aucune vérification n’est effectuée et sa politique en cas d’échec décide lorsqu’elle demandait un blocage"
 }

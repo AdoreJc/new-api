@@ -8140,5 +8140,10 @@
     "Check inputs with the moderation API and keyword lists for requests this rule matches.": "对该规则匹配的请求使用审核 API 和关键词列表检查输入。",
     "Findings under this rule count toward the violation limit that can disable a user.": "该规则下的发现会计入可能导致用户被禁用的违规上限。",
     "Turn off to use the keyword lists of the content moderation settings.": "关闭则使用内容审核设置中的关键词列表。"
-  }
+  },
+  "Requested groups": "请求分组",
+  "Group the token asked for, for example auto": "令牌本身的分组，例如 auto",
+  "Requested groups: {{value}}": "请求分组：{{value}}",
+  "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.": "已保存的审核策略无法完整读取。无法读取的规则不执行任何检查；原本要求拦截的规则按其故障策略处理。请检查规则并重新保存以修复策略。",
+  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "该规则无法读取：不执行任何检查，原本要求拦截时按其故障策略处理"
 }

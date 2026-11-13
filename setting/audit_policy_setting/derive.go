@@ -2,6 +2,7 @@ package audit_policy_setting
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/setting/content_moderation_setting"
@@ -48,6 +49,8 @@ func Derive(pa prompt_audit_setting.Config, paDegraded bool, cm content_moderati
 		config.Allowlist = append(config.Allowlist, ListEntry{UserID: id, Note: "content moderation allowlist"})
 	}
 	add := func(id, name string, match Match, withPA bool, cmRule *ContentModeration) {
+		// Before the table, neither engine checked Responses WebSocket turns.
+		match.Formats = slices.DeleteFunc(slices.Clone(validRelayFormats), func(format string) bool { return format == FormatResponsesWebSocket })
 		rule := Rule{ID: id, Name: name, Enabled: true, Match: match}
 		if withPA {
 			rule.PromptAudit = promptAudit
@@ -62,11 +65,36 @@ func Derive(pa prompt_audit_setting.Config, paDegraded bool, cm content_moderati
 	}
 	allowlisted := len(cm.AllowlistUserIDs) > 0
 	if paOn && cmOn {
-		if both, ok := intersectGroups(paGroups, cmGroups); ok {
-			if allowlisted {
-				add("legacy-both-allowlist", "Prompt audit and content moderation (allowlist)", cmMatch(both, ListAllowlist), true, &recordOnly)
+		// A request was in an engine's scope when its own group or, for an
+		// "auto" token, "auto" matched. Both engines applied when each matched
+		// by either name: the shared groups, or "auto" for one engine and the
+		// distributor's group for the other.
+		var both []Match
+		if shared, ok := intersectGroups(paGroups, cmGroups); ok {
+			both = append(both, Match{Groups: shared})
+		}
+		if paGroups != nil && cmGroups != nil {
+			auto := []string{"auto"}
+			if includesGroup(paGroups, "auto") {
+				both = append(both, Match{RequestedGroups: auto, Groups: slices.Clone(cmGroups)})
 			}
-			add("legacy-both", "Prompt audit and content moderation", cmMatch(both, ListAny), true, &contentModeration)
+			if includesGroup(cmGroups, "auto") {
+				both = append(both, Match{RequestedGroups: auto, Groups: slices.Clone(paGroups)})
+			}
+		}
+		for index, match := range both {
+			suffix := ""
+			if index > 0 {
+				suffix = "-" + strconv.Itoa(index+1)
+			}
+			if allowlisted {
+				allowlistMatch := cmMatch(match.Groups, ListAllowlist)
+				allowlistMatch.RequestedGroups = match.RequestedGroups
+				add("legacy-both-allowlist"+suffix, "Prompt audit and content moderation (allowlist)", allowlistMatch, true, &recordOnly)
+			}
+			bothMatch := cmMatch(match.Groups, ListAny)
+			bothMatch.RequestedGroups = match.RequestedGroups
+			add("legacy-both"+suffix, "Prompt audit and content moderation", bothMatch, true, &contentModeration)
 		}
 	}
 	if paOn {
@@ -101,6 +129,14 @@ func derivedPromptAudit(pa prompt_audit_setting.Config, degraded bool) PromptAud
 		}
 	}
 	return rule
+}
+
+// includesGroup applies a legacy group scope (exact names and "prefix*").
+func includesGroup(patterns []string, group string) bool {
+	return slices.ContainsFunc(patterns, func(pattern string) bool {
+		prefix, wildcard := strings.CutSuffix(pattern, "*")
+		return pattern == group || wildcard && strings.HasPrefix(group, prefix)
+	})
 }
 
 // intersectGroups intersects two legacy group scopes, each a list of exact

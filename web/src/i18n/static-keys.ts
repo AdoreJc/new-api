@@ -929,6 +929,7 @@ export const STATIC_I18N_KEYS = [
   'content moderation mode is observe, so this rule only observes',
   'reroute applies only to verified allowlist users; this subject gets observe',
   'reroute applies only to verified allowlist users; this subject gets block',
+  'this rule could not be read; no check runs and its failure policy decides where it asked to block',
   // Audit policy API errors.
   'An audit policy holds at most 200 rules',
   'Audit policy rule ids must be unique, non-empty and at most 64 characters',

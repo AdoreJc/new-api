@@ -85,6 +85,11 @@ const PATTERN_FIELDS = [
     placeholder: 'Group name or pattern, for example claude-ch*',
   },
   {
+    name: 'match.requested_groups',
+    label: 'Requested groups',
+    placeholder: 'Group the token asked for, for example auto',
+  },
+  {
     name: 'match.models',
     label: 'Models',
     placeholder: 'Model name or pattern, for example gpt-*',

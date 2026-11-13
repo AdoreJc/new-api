@@ -8140,5 +8140,10 @@
     "Check inputs with the moderation API and keyword lists for requests this rule matches.": "このルールに一致するリクエストの入力をモデレーション API とキーワードリストでチェックします。",
     "Findings under this rule count toward the violation limit that can disable a user.": "このルールでの検出は、ユーザーが無効化される可能性のある違反上限にカウントされます。",
     "Turn off to use the keyword lists of the content moderation settings.": "オフにするとコンテンツモデレーション設定のキーワードリストを使用します。"
-  }
+  },
+  "Requested groups": "リクエストグループ",
+  "Group the token asked for, for example auto": "トークン自身のグループ（例：auto）",
+  "Requested groups: {{value}}": "リクエストグループ：{{value}}",
+  "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.": "保存された監査ポリシーを完全には読み込めませんでした。読み込めないルールはチェックを行いません。ブロックを指定していたルールは障害時ポリシーに従います。ルールを確認し、保存してポリシーを修復してください。",
+  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "このルールは読み込めません。チェックは行われず、ブロックを指定していた場合は障害時ポリシーに従います"
 }

@@ -12,6 +12,7 @@ var filterEvalOrder = []dto.ChannelFilterKind{
 	dto.FilterTaskPluginEndpoint,
 	dto.FilterTaskPluginIdentity,
 	dto.FilterResponsesWebSocket,
+	dto.FilterBodyRewritten,
 }
 
 // ChannelSatisfiesFilters reports whether ch passes every filter.
@@ -122,6 +123,15 @@ func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilte
 		// group, priority, weight, affinity, and pin rules. Unrelated type-61
 		// plugins cannot execute this endpoint.
 		return ch.Type != constant.ChannelTypeTaskPlugin || pluginChannel
+	case dto.FilterBodyRewritten:
+		if ch.GetSetting().PassThroughBodyEnabled {
+			return false
+		}
+		if constant.IsAdvancedCustomChannel(ch.Type) && filter.RequestPath != "" {
+			route, ok := ch.GetOtherSettings().AdvancedCustom.MatchPathForModel(filter.RequestPath, modelName)
+			return !ok || !route.PassThroughBodyEnabled
+		}
+		return true
 	case dto.FilterResponsesWebSocket:
 		if !ch.GetSetting().ResponsesWebSocketEnabled {
 			return false

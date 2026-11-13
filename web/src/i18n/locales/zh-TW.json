@@ -8140,5 +8140,10 @@
     "Check inputs with the moderation API and keyword lists for requests this rule matches.": "對此規則符合的請求使用審核 API 與關鍵字清單檢查輸入。",
     "Findings under this rule count toward the violation limit that can disable a user.": "此規則下的發現會計入可能導致使用者被停用的違規上限。",
     "Turn off to use the keyword lists of the content moderation settings.": "關閉則使用內容審核設定中的關鍵字清單。"
-  }
+  },
+  "Requested groups": "請求分組",
+  "Group the token asked for, for example auto": "令牌本身的分組，例如 auto",
+  "Requested groups: {{value}}": "請求分組：{{value}}",
+  "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.": "已儲存的審核策略無法完整讀取。無法讀取的規則不執行任何檢查；原本要求攔截的規則依其故障策略處理。請檢查規則並重新儲存以修復策略。",
+  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "此規則無法讀取：不執行任何檢查，原本要求攔截時依其故障策略處理"
 }

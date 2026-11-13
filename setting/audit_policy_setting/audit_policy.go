@@ -11,6 +11,7 @@ package audit_policy_setting
 import (
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -21,6 +22,10 @@ import (
 
 // OptionKey stores the saved rule table as JSON.
 const OptionKey = "AuditPolicySetting"
+
+// FormatResponsesWebSocket is the relay format of Responses API turns over
+// WebSocket.
+const FormatResponsesWebSocket = "responses_websocket"
 
 // Actions taken when an engine finds something. ActionIgnore is only valid as
 // a per-category override and drops the category from the decision.
@@ -75,7 +80,7 @@ var (
 	validLists         = []string{ListAny, ListAllowlist, ListVerified, ListBlocklist, ListUnlisted}
 	validFailPolicies  = []string{FailOpen, FailClosed}
 	validKeywordModes  = []string{content_moderation_setting.KeywordModeAPIOnly, content_moderation_setting.KeywordModeKeywordOnly, content_moderation_setting.KeywordModeKeywordAndAPI, content_moderation_setting.KeywordModeKeywordGated}
-	validRelayFormats  = []string{"openai", "claude", "gemini", "openai_responses", "openai_responses_compaction", "openai_image", "responses_websocket"}
+	validRelayFormats  = []string{"openai", "claude", "gemini", "openai_responses", "openai_responses_compaction", "openai_image", FormatResponsesWebSocket}
 	actionSeverityRank = map[string]int{ActionIgnore: 0, ActionObserve: 1, ActionReroute: 2, ActionBlock: 3}
 )
 
@@ -83,12 +88,15 @@ var (
 // one list any entry may match. Group and model patterns may use "*" for any
 // run of characters, for example "claude-ch*" or "*-thinking".
 type Match struct {
-	Groups        []string `json:"groups"`
-	Models        []string `json:"models"`
-	ExcludeModels []string `json:"exclude_models"`
-	UserIDs       []int    `json:"user_ids"`
-	TokenIDs      []int    `json:"token_ids"`
-	List          string   `json:"list"`
+	Groups []string `json:"groups"`
+	// RequestedGroups match only the group the token asked for, such as
+	// "auto", never the group the distributor chose for it.
+	RequestedGroups []string `json:"requested_groups"`
+	Models          []string `json:"models"`
+	ExcludeModels   []string `json:"exclude_models"`
+	UserIDs         []int    `json:"user_ids"`
+	TokenIDs        []int    `json:"token_ids"`
+	List            string   `json:"list"`
 	// Formats are relay formats; "responses_websocket" is the Responses API
 	// over WebSocket.
 	Formats []string `json:"formats"`
@@ -145,6 +153,11 @@ type Rule struct {
 	// taken instead.
 	Reroute         RerouteTarget `json:"reroute"`
 	RerouteFallback string        `json:"reroute_fallback"`
+	// Degraded marks a stored rule whose engine settings could not be read.
+	// Its engines run nothing; where it asked to block or reroute, the
+	// request is handled as if the engine were unavailable, so its failure
+	// policy decides.
+	Degraded bool `json:"degraded,omitempty"`
 }
 
 // ListEntry names a user, or a single token of a user, on a list.
@@ -170,6 +183,10 @@ type Config struct {
 type Snapshot struct {
 	Config Config
 	Saved  bool
+	// Degraded is set when the stored table could not be read as a whole;
+	// Problems says what was dropped or kept degraded.
+	Degraded bool
+	Problems []string
 }
 
 // derivedSnapshot caches the rules derived from one pair of engine snapshots.
@@ -215,11 +232,134 @@ func ApplyOption(key, value string) {
 		return
 	}
 	config, err := ParseConfig(value)
-	if err != nil {
-		common.SysError(common.LogText("audit policy setting is invalid, previous rules kept: %s", err.Error()))
+	if err == nil {
+		saved.Store(&Snapshot{Config: config, Saved: true})
 		return
 	}
-	saved.Store(&Snapshot{Config: config, Saved: true})
+	config, problems := ParseDegraded(value)
+	common.SysError(common.LogText("audit policy setting is invalid, degraded rules in use: %s (%s)", err.Error(), strings.Join(problems, "; ")))
+	saved.Store(&Snapshot{Config: config, Saved: true, Degraded: true, Problems: problems})
+}
+
+// ParseDegraded reads a stored table that failed validation as far as it
+// can. Valid rules are kept. A rule whose match conditions are valid but
+// whose engine settings are not is kept as a degraded rule that carries only
+// its blocking intent; a rule whose conditions cannot be read is dropped.
+// Invalid list entries are dropped. When the value is not even readable
+// JSON, a degraded default rule keeps a blocking intent found in the text,
+// so the failure policy decides instead of nothing being checked.
+func ParseDegraded(value string) (Config, []string) {
+	var raw Config
+	problems := []string{}
+	if err := common.UnmarshalJsonStr(value, &raw); err != nil {
+		problems = append(problems, "the stored table is not readable")
+		config := Config{Rules: []Rule{}, Allowlist: []ListEntry{}, Blocklist: []ListEntry{}}
+		config.Default = degradedRule(Rule{ID: DefaultRuleID}, blockingIntentIn(value))
+		return config, problems
+	}
+	config := Config{Rules: []Rule{}, Allowlist: []ListEntry{}, Blocklist: []ListEntry{}, ConfigVersion: raw.ConfigVersion,
+		UpdatedAt: raw.UpdatedAt, UpdatedBy: raw.UpdatedBy}
+	ids := []string{DefaultRuleID}
+	for index, rule := range raw.Rules {
+		if len(config.Rules) >= MaxRules {
+			problems = append(problems, "rules beyond the limit were dropped")
+			break
+		}
+		original := rule.clone()
+		if err := rule.normalize(false); err == nil && !slices.Contains(ids, rule.ID) {
+			ids = append(ids, rule.ID)
+			config.Rules = append(config.Rules, rule)
+			continue
+		}
+		kept := Rule{ID: strings.TrimSpace(original.ID), Name: original.Name, Enabled: original.Enabled, Match: original.Match}
+		if kept.ID == "" || len(kept.ID) > MaxRuleIDLength || slices.Contains(ids, kept.ID) {
+			kept.ID = "invalid-" + strconv.Itoa(index+1)
+		}
+		if len(kept.Name) > MaxRuleNameLength {
+			kept.Name = ""
+		}
+		if err := kept.normalize(false); err != nil {
+			problems = append(problems, "rule "+strconv.Itoa(index+1)+" was dropped: its conditions are invalid")
+			continue
+		}
+		ids = append(ids, kept.ID)
+		problems = append(problems, "rule "+kept.ID+" is degraded: its engine settings are invalid")
+		config.Rules = append(config.Rules, degradedRule(kept, intentOf(original)))
+	}
+	defaultRule := raw.Default.clone()
+	defaultRule.ID, defaultRule.Enabled, defaultRule.Match = DefaultRuleID, true, Match{}
+	if err := defaultRule.normalize(true); err != nil {
+		problems = append(problems, "the default rule is degraded: its engine settings are invalid")
+		defaultRule = degradedRule(Rule{ID: DefaultRuleID}, intentOf(raw.Default))
+	}
+	config.Default = defaultRule
+	for _, list := range []struct {
+		name    string
+		entries []ListEntry
+		target  *[]ListEntry
+	}{{"allowlist", raw.Allowlist, &config.Allowlist}, {"blocklist", raw.Blocklist, &config.Blocklist}} {
+		for _, entry := range list.entries {
+			normalized, err := normalizeEntries([]ListEntry{entry})
+			if err != nil {
+				problems = append(problems, "an invalid "+list.name+" entry was dropped")
+				continue
+			}
+			if !slices.ContainsFunc(*list.target, func(e ListEntry) bool { return e.UserID == entry.UserID && e.TokenID == entry.TokenID }) {
+				*list.target = append(*list.target, normalized...)
+			}
+		}
+	}
+	for index := range config.Blocklist {
+		config.Blocklist[index].Verified = false
+	}
+	return config, problems
+}
+
+// failIntent is what a degraded rule keeps of an engine: whether it asked to
+// block or reroute, and whether it failed closed.
+type failIntent struct {
+	promptAudit, contentModeration             bool
+	promptAuditClosed, contentModerationClosed bool
+}
+
+func intentOf(rule Rule) failIntent {
+	blocks := func(action string) bool { return action == ActionBlock || action == ActionReroute }
+	return failIntent{
+		promptAudit:             rule.PromptAudit.Enabled && (blocks(rule.PromptAudit.Action) || slices.ContainsFunc(slices.Collect(maps.Values(rule.PromptAudit.CategoryActions)), blocks)),
+		promptAuditClosed:       rule.PromptAudit.FailPolicy == FailClosed,
+		contentModeration:       rule.ContentModeration.Enabled && blocks(rule.ContentModeration.Action),
+		contentModerationClosed: rule.ContentModeration.FailPolicy == FailClosed,
+	}
+}
+
+// blockingIntentIn guesses the intent of an unreadable table from its text:
+// any block or reroute action, and a closed failure policy anywhere.
+func blockingIntentIn(value string) failIntent {
+	compact := strings.Join(strings.Fields(value), "")
+	blocks := strings.Contains(compact, `"action":"block"`) || strings.Contains(compact, `"action":"reroute"`)
+	closed := strings.Contains(compact, `"fail_policy":"closed"`)
+	return failIntent{promptAudit: blocks, contentModeration: blocks, promptAuditClosed: closed, contentModerationClosed: closed}
+}
+
+func degradedRule(rule Rule, intent failIntent) Rule {
+	rule.Degraded = true
+	rule.PromptAudit = PromptAudit{Enabled: intent.promptAudit, Action: ActionBlock, FailPolicy: FailOpen}
+	if intent.promptAuditClosed {
+		rule.PromptAudit.FailPolicy = FailClosed
+	}
+	rule.ContentModeration = ContentModeration{Enabled: intent.contentModeration, Action: ActionBlock, FailPolicy: FailOpen}
+	if intent.contentModerationClosed {
+		rule.ContentModeration.FailPolicy = FailClosed
+	}
+	if !intent.promptAudit {
+		rule.PromptAudit.Action = ActionObserve
+	}
+	if !intent.contentModeration {
+		rule.ContentModeration.Action = ActionObserve
+	}
+	_ = rule.PromptAudit.normalize()
+	_ = rule.ContentModeration.normalize()
+	return rule
 }
 
 // ParseConfig decodes and validates a stored table.
@@ -306,6 +446,8 @@ func normalizeEntries(entries []ListEntry) ([]ListEntry, error) {
 }
 
 func (r *Rule) normalize(isDefault bool) error {
+	// Only ParseDegraded marks rules degraded; a saved rule never is.
+	r.Degraded = false
 	r.ID = strings.TrimSpace(r.ID)
 	r.Name = strings.TrimSpace(r.Name)
 	if r.ID == "" || len(r.ID) > MaxRuleIDLength || len(r.Name) > MaxRuleNameLength {
@@ -314,6 +456,9 @@ func (r *Rule) normalize(isDefault bool) error {
 	if !isDefault {
 		var err error
 		if r.Match.Groups, err = normalizePatterns(r.Match.Groups); err != nil {
+			return err
+		}
+		if r.Match.RequestedGroups, err = normalizePatterns(r.Match.RequestedGroups); err != nil {
 			return err
 		}
 		if r.Match.Models, err = normalizePatterns(r.Match.Models); err != nil {
@@ -566,6 +711,9 @@ func (m *Match) matches(subject Subject, listing Listing) bool {
 		(subject.RequestedGroup == "" || !MatchesAny(m.Groups, subject.RequestedGroup)) {
 		return false
 	}
+	if len(m.RequestedGroups) > 0 && !MatchesAny(m.RequestedGroups, subject.RequestedGroup) {
+		return false
+	}
 	if len(m.Models) > 0 && !MatchesAny(m.Models, subject.Model) {
 		return false
 	}
@@ -665,6 +813,7 @@ func (c Config) Clone() Config {
 func (r Rule) clone() Rule {
 	clone := r
 	clone.Match.Groups = slices.Clone(r.Match.Groups)
+	clone.Match.RequestedGroups = slices.Clone(r.Match.RequestedGroups)
 	clone.Match.Models = slices.Clone(r.Match.Models)
 	clone.Match.ExcludeModels = slices.Clone(r.Match.ExcludeModels)
 	clone.Match.UserIDs = slices.Clone(r.Match.UserIDs)

@@ -533,8 +533,14 @@ func (s *Service) checkSnapshot(ctx context.Context, c *gin.Context, meta Meta, 
 		return Verdict{Outcome: OutcomeUnavailable}
 	}
 	s.metrics.scanned.Add(1)
-	// The first endpoint's timeout bounds the whole check, failover included.
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(endpoints[0].TimeoutMS)*time.Millisecond)
+	// Each call is bounded by its endpoint's own timeout (its HTTP client),
+	// so a slow first endpoint still leaves time to fail over. The whole
+	// check is bounded by the sum of those timeouts, at most MaxTimeoutMS.
+	budget := 0
+	for _, endpoint := range endpoints {
+		budget += endpoint.TimeoutMS
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(min(budget, prompt_audit_setting.MaxTimeoutMS))*time.Millisecond)
 	defer cancel()
 	result, err := s.guard.evaluate(ctx, scanRequest{snapshot: snapshot, rule: rule, synchronous: true}, prompt.Latest, prompt.Rest, &s.metrics)
 	if err != nil {

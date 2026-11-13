@@ -154,15 +154,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}()
 
-	generalSettings := operation_setting.GetGeneralSetting()
-	if relayFormat == types.RelayFormatClaude && relayInfo.IsStream && generalSettings.PingIntervalEnabled {
-		stopKeepAlive := helper.StartStreamKeepAlive(c, time.Duration(generalSettings.PingIntervalSeconds)*time.Second)
-		defer stopKeepAlive()
-	}
-
 	// Prompt audit and content moderation, as the audit policy rules say. It
 	// runs once, before billing and channel retries; a reroute switches the
 	// model or group and picks a channel for it before anything is charged.
+	// It runs before the stream keep-alive starts, so a rejection is still
+	// answered with a JSON error and its status code.
 	audit := auditpolicy.Evaluate(c, relayInfo, "", "")
 	if newAPIError = audit.Err; newAPIError != nil {
 		return
@@ -171,6 +167,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if newAPIError = applyAuditReroute(c, relayInfo, audit.Reroute); newAPIError != nil {
 			return
 		}
+	}
+
+	generalSettings := operation_setting.GetGeneralSetting()
+	if relayFormat == types.RelayFormatClaude && relayInfo.IsStream && generalSettings.PingIntervalEnabled {
+		stopKeepAlive := helper.StartStreamKeepAlive(c, time.Duration(generalSettings.PingIntervalSeconds)*time.Second)
+		defer stopKeepAlive()
 	}
 	if newAPIError = relay.PrepareRequestBilling(c, relayInfo); newAPIError != nil {
 		return
@@ -322,19 +324,33 @@ var upgrader = websocket.Upgrader{
 
 // applyAuditReroute switches the request to the audit policy rule's target
 // model or group and selects a channel for it, before billing, so the
-// request is billed and logged as the target. The first attempt then uses
-// that channel; retries select within the target. A channel that forwards
-// the client body unchanged would still name the original model upstream,
-// so it is not used, and the request is refused rather than sent to its
-// original model.
+// request is billed and logged as the target. The first attempt uses that
+// channel; retries select within the target group (RelayRetryGroup reads
+// TokenGroup). Channels that forward the client body unchanged would still
+// name the original model upstream, so a filter keeps them out of the first
+// selection and of every retry; with none left the request is refused rather
+// than sent to its original model.
+//
+// A request steered to a bound subscription account is refused: that
+// account's subscription pays only for its own channel, and charging the
+// wallet instead would change who pays without the user choosing it.
 func applyAuditReroute(c *gin.Context, info *relaycommon.RelayInfo, reroute *auditpolicy.Reroute) *types.NewAPIError {
 	fromModel, fromGroup := info.OriginModelName, info.UsingGroup
 	toModel, toGroup := cmp.Or(reroute.Model, fromModel), cmp.Or(reroute.Group, fromGroup)
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled {
 		return auditpolicy.RerouteFailedError(c, reroute, "request pass-through is enabled")
 	}
+	if info.SubscriptionRoute.Active() {
+		return auditpolicy.RerouteFailedError(c, reroute, "the request is bound to a subscription account")
+	}
+	service.GetChannelConstraints(c).AddFilter(taskdto.ChannelFilter{Kind: taskdto.FilterBodyRewritten, RequestPath: c.Request.URL.Path})
 	if toGroup != fromGroup {
 		common.SetContextKey(c, constant.ContextKeyAutoGroupIndex, 0)
+		if toGroup != "auto" {
+			// The price uses the auto group when one is set; a concrete
+			// target replaces the group the distributor chose.
+			common.SetContextKey(c, constant.ContextKeyAutoGroup, toGroup)
+		}
 	}
 	channel, selectedGroup, err := service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
 		Ctx: c, TokenGroup: toGroup, ModelName: toModel, RequestPath: c.Request.URL.Path, Retry: common.GetPointer(0),
@@ -342,10 +358,11 @@ func applyAuditReroute(c *gin.Context, info *relaycommon.RelayInfo, reroute *aud
 	if err != nil || channel == nil {
 		return auditpolicy.RerouteFailedError(c, reroute, "no channel for the target")
 	}
-	if channel.GetSetting().PassThroughBodyEnabled {
-		return auditpolicy.RerouteFailedError(c, reroute, "the target channel forwards the body unchanged")
-	}
 	common.SetContextKey(c, constant.ContextKeyUsingGroup, toGroup)
+	if toGroup != fromGroup {
+		common.SetContextKey(c, constant.ContextKeyTokenGroup, toGroup)
+		info.TokenGroup = toGroup
+	}
 	info.UsingGroup = toGroup
 	info.OriginModelName = toModel
 	if apiErr := middleware.SetupContextForSelectedChannel(c, channel, toModel); apiErr != nil {

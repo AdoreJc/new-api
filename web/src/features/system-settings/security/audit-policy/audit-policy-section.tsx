@@ -172,12 +172,28 @@ function AuditPolicyEditor(props: {
       <SettingsPageFormActions
         onSave={onSave}
         isSaving={save.isPending}
-        isSaveDisabled={props.data.saved && !dirty}
+        isSaveDisabled={props.data.saved && !dirty && !props.data.degraded}
         saveLabel='Save audit policy'
         onReset={() => setConfirmReset(true)}
         isResetDisabled={!props.data.saved || reset.isPending}
         resetLabel='Reset to derived rules'
       />
+      {props.data.degraded && (
+        <Alert variant='destructive'>
+          <AlertDescription>
+            <p>
+              {t(
+                'The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.'
+              )}
+            </p>
+            <ul className='mt-2 list-disc ps-5'>
+              {(props.data.problems ?? []).map((problem) => (
+                <li key={problem}>{problem}</li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
       {!props.data.saved && (
         <Alert>
           <AlertDescription>

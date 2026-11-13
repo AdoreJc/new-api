@@ -8140,5 +8140,10 @@
     "Check inputs with the moderation API and keyword lists for requests this rule matches.": "Проверять входные данные API модерации и списками ключевых слов для запросов, подходящих под это правило.",
     "Findings under this rule count toward the violation limit that can disable a user.": "Находки по этому правилу учитываются в лимите нарушений, после которого пользователь может быть отключён.",
     "Turn off to use the keyword lists of the content moderation settings.": "Выключите, чтобы использовать списки ключевых слов из настроек модерации контента."
-  }
+  },
+  "Requested groups": "Запрошенные группы",
+  "Group the token asked for, for example auto": "Группа, указанная в токене, например auto",
+  "Requested groups: {{value}}": "Запрошенные группы: {{value}}",
+  "The saved audit policy could not be read in full. Rules that could not be read run no checks; where they asked to block, their failure policy decides. Review the rules and save to repair the policy.": "Сохранённую политику аудита не удалось прочитать полностью. Нечитаемые правила не выполняют проверок; там, где они требовали блокировки, решает их политика отказа. Проверьте правила и сохраните, чтобы исправить политику.",
+  "this rule could not be read; no check runs and its failure policy decides where it asked to block": "это правило не удалось прочитать; проверки не выполняются, а там, где требовалась блокировка, решает его политика отказа"
 }

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,11 +11,17 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/auditpolicy"
 	"github.com/QuantumNous/new-api/setting/audit_policy_setting"
 	"github.com/QuantumNous/new-api/setting/prompt_audit_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -524,4 +531,49 @@ func TestAuditPolicySaveConflictAndReset(t *testing.T) {
 	var audits int64
 	require.NoError(t, model.LOG_DB.Model(&model.AuditLog{}).Where("action IN ?", []string{"audit_policy.update", "audit_policy.reset"}).Count(&audits).Error)
 	assert.Equal(t, int64(2), audits, "every change is in the audit log")
+}
+
+// TestAuditRerouteMovesAnAutoTokenToTheTargetGroup reroutes an "auto"
+// token's request to a concrete group: the channel, the price group and
+// every retry use the target group. A request bound to a subscription
+// account is refused instead.
+func TestAuditRerouteMovesAnAutoTokenToTheTargetGroup(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	db := modelManagementDB(t, "sqlite", "")
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":2}`))
+	for _, spec := range []struct {
+		id    int
+		group string
+	}{{41, "default"}, {42, "vip"}} {
+		channel := model.Channel{Id: spec.id, Name: fmt.Sprintf("reroute-%d", spec.id), Type: constant.ChannelTypeOpenAI,
+			Key: "test-only", Status: common.ChannelStatusEnabled, Models: "reroute-model", Group: spec.group,
+			Priority: common.GetPointer(int64(0)), Weight: common.GetPointer(uint(1))}
+		require.NoError(t, db.Create(&channel).Error)
+		require.NoError(t, channel.AddAbilities(db))
+	}
+	model.InitChannelCache()
+	newAutoTokenRequest := func() (*gin.Context, *relaycommon.RelayInfo) {
+		ctx := newPinRetryContext()
+		common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+		common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "auto")
+		common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "auto")
+		common.SetContextKey(ctx, constant.ContextKeyTokenAutoGroups, []string{"default"})
+		common.SetContextKey(ctx, constant.ContextKeyAutoGroup, "default")
+		return ctx, &relaycommon.RelayInfo{OriginModelName: "reroute-model", UsingGroup: "auto", TokenGroup: "auto", UserGroup: "default"}
+	}
+
+	ctx, info := newAutoTokenRequest()
+	require.Nil(t, applyAuditReroute(ctx, info, &auditpolicy.Reroute{RuleID: "r", Group: "vip"}))
+	assert.Equal(t, 42, common.GetContextKeyInt(ctx, constant.ContextKeyChannelId))
+	assert.Equal(t, "vip", service.RelayRetryGroup(info), "retries select in the target group")
+	ratio := helper.HandleGroupRatio(ctx, info)
+	assert.Equal(t, "vip", info.UsingGroup, "the price uses the target group, not the auto group chosen before")
+	assert.Equal(t, 2.0, ratio.GroupRatio)
+
+	ctx, info = newAutoTokenRequest()
+	info.SubscriptionRoute = &relaycommon.SubscriptionRoute{SubscriptionId: 1, ChannelId: 41, Group: "default"}
+	apiErr := applyAuditReroute(ctx, info, &auditpolicy.Reroute{RuleID: "r", Group: "vip"})
+	require.NotNil(t, apiErr, "a request bound to a subscription account is not rerouted")
+	assert.Equal(t, auditpolicy.ErrorCodeRerouteFailed, apiErr.GetErrorCode())
+	assert.Equal(t, "reroute-model", info.OriginModelName)
 }
