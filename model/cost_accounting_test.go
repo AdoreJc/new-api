@@ -306,7 +306,7 @@ func runCostAccountingMatrix(t *testing.T, kind common.DatabaseType, db, logDB *
 		require.False(t, logDB.Migrator().HasColumn(&Log{}, "standard_quota"), "expected a database from the previous release")
 		require.False(t, db.Migrator().HasColumn(&QuotaData{}, "standard_quota"))
 		require.False(t, db.Migrator().HasColumn(&Channel{}, "cost_ratio"))
-		require.NoError(t, db.Omit("cost_ratio").Create(&Channel{Id: 3, Name: "legacy", Key: "k", Status: common.ChannelStatusEnabled}).Error)
+		require.NoError(t, db.Omit("cost_ratio", "cost_mode", "monthly_cost_usd", "cost_effective_from", "cost_effective_to", "subscription_plan_type", "subscription_active_start", "subscription_active_until", "subscription_synced_at").Create(&Channel{Id: 3, Name: "legacy", Key: "k", Status: common.ChannelStatusEnabled}).Error)
 		legacyLogs = []Log{
 			{UserId: 7, Type: LogTypeConsume, CreatedAt: hour + 1, ModelName: "m", Group: "vip", ChannelId: 3, Quota: 300, Other: `{"group_ratio":1.5}`},
 			{UserId: 7, Type: LogTypeConsume, CreatedAt: hour + 2, ModelName: "m", Group: "vip", ChannelId: 3, Quota: 100, Other: `{"group_ratio":0}`},
