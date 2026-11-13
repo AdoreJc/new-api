@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/audit_policy_setting"
 	"github.com/QuantumNous/new-api/setting/prompt_audit_setting"
 
 	"github.com/gin-gonic/gin"
@@ -131,6 +132,11 @@ func TestPromptAuditRoutesRequireRoot(t *testing.T) {
 	group.POST("/events/batch-delete", BatchDeletePromptAuditEvents)
 	group.POST("/events/delete-preview", PreviewPromptAuditEventDeletion)
 	group.POST("/events/delete-by-filter", DeletePromptAuditEventsByFilter)
+	policy := router.Group("/api/audit_policy", middleware.RootAuth())
+	policy.GET("/", GetAuditPolicy)
+	policy.PUT("/", UpdateAuditPolicy)
+	policy.POST("/reset", ResetAuditPolicy)
+	policy.POST("/test", TestAuditPolicy)
 	send := func(method, path, bearer string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(method, path, strings.NewReader(`{}`))
 		if bearer != "" {
@@ -477,4 +483,41 @@ func TestPromptAuditFilteredDeletionDeletesInBatches(t *testing.T) {
 	response := confirmPromptAuditDeletion(t, identity, filter, preview)
 	assert.Contains(t, response.Body.String(), `"deleted":1100`, "more rows than one 500-row batch are all deleted")
 	assert.Equal(t, int64(5), promptAuditEventCount(t))
+}
+
+// TestAuditPolicySaveConflictAndReset saves a rule table over the derived
+// rules, rejects a save from a stale version, and returns to derived rules
+// on reset; each change is in the audit log.
+func TestAuditPolicySaveConflictAndReset(t *testing.T) {
+	identity := setupPromptAuditTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Option{}))
+	t.Cleanup(func() { audit_policy_setting.ApplyOption(audit_policy_setting.OptionKey, "") })
+	save := func(version int64) *httptest.ResponseRecorder {
+		body := `{"expected_config_version":` + common.Interface2String(version) + `,"config":{"rules":[{"id":"oauth","enabled":true,
+			"match":{"groups":["claude-ch*"]},"prompt_audit":{"enabled":true,"action":"block","fail_policy":"closed"}}]}}`
+		return securityEnrollmentRequest(http.MethodPut, "/api/audit_policy/", body, "", identity, UpdateAuditPolicy)
+	}
+
+	derived := securityEnrollmentRequest(http.MethodGet, "/api/audit_policy/", "", "", identity, GetAuditPolicy)
+	assert.Contains(t, derived.Body.String(), `"saved":false`)
+
+	saved := save(0)
+	require.Contains(t, saved.Body.String(), `"success":true`, saved.Body.String())
+	assert.True(t, audit_policy_setting.Current().Saved)
+	assert.Equal(t, int64(1), audit_policy_setting.Current().Config.ConfigVersion)
+	assert.Equal(t, "oauth", audit_policy_setting.Current().Config.Rules[0].ID)
+
+	stale := save(0)
+	assert.Equal(t, http.StatusConflict, stale.Code, "a save from a stale version is rejected")
+
+	tested := securityEnrollmentRequest(http.MethodPost, "/api/audit_policy/test", `{"user_id":1,"group":"claude-ch2","model":"m"}`, "", identity, TestAuditPolicy)
+	assert.Contains(t, tested.Body.String(), `"rule_id":"oauth"`)
+
+	reset := securityEnrollmentRequest(http.MethodPost, "/api/audit_policy/reset", `{"expected_config_version":1}`, "", identity, ResetAuditPolicy)
+	require.Contains(t, reset.Body.String(), `"success":true`, reset.Body.String())
+	assert.False(t, audit_policy_setting.Current().Saved, "reset returns to the derived rules")
+
+	var audits int64
+	require.NoError(t, model.LOG_DB.Model(&model.AuditLog{}).Where("action IN ?", []string{"audit_policy.update", "audit_policy.reset"}).Count(&audits).Error)
+	assert.Equal(t, int64(2), audits, "every change is in the audit log")
 }

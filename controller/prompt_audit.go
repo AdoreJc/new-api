@@ -257,7 +257,10 @@ func GetPromptAuditEvent(c *gin.Context) {
 		return
 	}
 	recordManageAudit(c, "prompt_audit.event_view", map[string]any{"id": id, "has_full_prompt": event.FullPrompt != ""})
-	common.ApiSuccess(c, event)
+	common.ApiSuccess(c, struct {
+		*model.PromptAuditEvent
+		Issues []promptaudit.Issue `json:"issues"`
+	}{event, promptaudit.SummarizeIssues(event)})
 }
 
 func DeletePromptAuditEvent(c *gin.Context) {
