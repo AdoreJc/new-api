@@ -29,6 +29,8 @@ const (
 	// structurePendingFingerprints bounds the distinct fingerprints kept in
 	// memory between two flushes.
 	structurePendingFingerprints = 1000
+	// structureShutdownTimeout bounds the last flush when the process exits.
+	structureShutdownTimeout = 5 * time.Second
 )
 
 // structureSubject names who sent a request and how, for its statistics.
@@ -54,9 +56,15 @@ type structureDailyKey struct {
 type structureStats struct {
 	jobs        chan structureJob
 	queuedBytes atomic.Int64
-	observed    atomic.Int64
-	dropped     atomic.Int64
-	writeFailed atomic.Int64
+	// observed counts requests added to the daily counters; dropped counts
+	// requests that were not measured at all because the hand-over queue was
+	// full. fingerprintsDropped counts fingerprint updates left out of an
+	// otherwise measured request: too many distinct fingerprints waiting for
+	// one flush, or a full fingerprint table.
+	observed            atomic.Int64
+	dropped             atomic.Int64
+	fingerprintsDropped atomic.Int64
+	writeFailed         atomic.Int64
 
 	mu           sync.Mutex
 	fingerprints map[string]*model.PromptAuditFingerprintDelta
@@ -149,7 +157,7 @@ func (s *structureStats) record(item structureJob, now time.Time) {
 	fingerprint := s.fingerprints[report.Fingerprint]
 	if fingerprint == nil {
 		if len(s.fingerprints) >= structurePendingFingerprints {
-			s.dropped.Add(1)
+			s.fingerprintsDropped.Add(1)
 			return
 		}
 		fingerprint = &model.PromptAuditFingerprintDelta{Fingerprint: report.Fingerprint, PrefixHash: report.PrefixHash, FirstSeenAt: now.Unix()}
@@ -188,16 +196,17 @@ func (s *structureStats) flush() {
 		return
 	}
 	skipped, err := model.ApplyPromptAuditStructureStats(fingerprints, daily)
-	s.dropped.Add(int64(skipped))
+	s.fingerprintsDropped.Add(int64(skipped))
 	if err != nil {
 		s.writeFailed.Add(1)
 		common.SysError(common.LogText("failed to store prompt audit structure statistics: %s", err.Error()))
 	}
 }
 
-// drain analyses every queued request without waiting for more.
-func (s *structureStats) drain(now func() time.Time) {
-	for {
+// drain analyses the queued requests without waiting for more, until the
+// queue is empty or the deadline has passed.
+func (s *structureStats) drain(now func() time.Time, deadline time.Time) {
+	for time.Now().Before(deadline) {
 		select {
 		case item := <-s.jobs:
 			s.record(item, now())
@@ -213,7 +222,7 @@ func (s *Service) structureLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			s.flushStructure()
+			s.flushStructure(time.Now().Add(structureShutdownTimeout))
 			return
 		case item := <-s.structure.jobs:
 			s.structure.record(item, s.now())
@@ -223,12 +232,29 @@ func (s *Service) structureLoop(ctx context.Context) {
 	}
 }
 
-// flushStructure stores what is queued and counted so far.
-func (s *Service) flushStructure() {
-	s.structure.drain(s.now)
+// flushStructure stores what is queued and counted so far. Queued requests
+// not analysed by the deadline are left out.
+func (s *Service) flushStructure(deadline time.Time) {
+	s.structure.drain(s.now, deadline)
 	s.structure.flush()
 }
 
 // Shutdown stores the request structure statistics still held in memory. It
-// is called once when the process exits.
-func Shutdown() { defaultService.flushStructure() }
+// is called once when the process exits and returns after
+// structureShutdownTimeout at the latest; what is not stored by then is lost.
+func Shutdown() { defaultService.shutdown(structureShutdownTimeout) }
+
+func (s *Service) shutdown(timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// Half of the time is for analysing queued requests, the rest for the
+		// database write.
+		s.flushStructure(time.Now().Add(timeout / 2))
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		common.SysError(common.LogText("prompt audit structure statistics were not stored within %s at shutdown", timeout.String()))
+	}
+}

@@ -1139,7 +1139,7 @@ func TestStructureStatsAggregateHashesAndCountsOnly(t *testing.T) {
 		segments, turns, err := requestSegments(protocol, []byte(body))
 		require.NoError(t, err)
 		s.structure.submit(structureSubject{userID: userID, protocol: protocol, client: client}, segments, turns)
-		s.structure.drain(s.now)
+		s.structure.drain(s.now, time.Now().Add(time.Minute))
 	}
 	const shared = `{"messages":[{"role":"system","content":"shared rules for 2026-11-13"},{"role":"user","content":"question"}]}`
 	const prefilled = `{"system":"personal rules","messages":[{"role":"user","content":"question"},{"role":"assistant","content":"The answer starts"}]}`
@@ -1150,7 +1150,7 @@ func TestStructureStatsAggregateHashesAndCountsOnly(t *testing.T) {
 	observe(7, ProtocolClaude, ClientOther, prefilled)
 	observe(7, ProtocolClaude, ClientOther, prefilled)
 	observe(8, ProtocolResponses, ClientCodex, `{"input":"no system prompt here"}`)
-	s.flushStructure()
+	s.shutdown(time.Minute)
 	assert.Equal(t, int64(model.PromptAuditFingerprintUserCap+14), s.structure.observed.Load())
 	assert.Zero(t, s.structure.writeFailed.Load())
 
@@ -1169,7 +1169,7 @@ func TestStructureStatsAggregateHashesAndCountsOnly(t *testing.T) {
 	observe(9001, ProtocolChat, ClientClaudeCode, shared)
 	observe(7, ProtocolClaude, ClientOther, prefilled)
 	observe(9, ProtocolClaude, ClientOther, prefilled)
-	s.flushStructure()
+	s.shutdown(time.Minute)
 	var userRows int64
 	require.NoError(t, model.DB.Model(&model.PromptAuditFingerprintUser{}).Where("fingerprint = ?", top.Fingerprint).Count(&userRows).Error)
 	assert.Equal(t, int64(model.PromptAuditFingerprintUserCap), userRows, "user rows per fingerprint stay bounded")
@@ -1260,7 +1260,46 @@ func TestStructureStatsDropInsteadOfBlocking(t *testing.T) {
 	large := []promptSegment{{text: strings.Repeat("x", structureQueuedLimit), role: "user", turn: 1}}
 	stats.submit(structureSubject{userID: 1, protocol: ProtocolChat}, large, 1)
 	assert.Equal(t, int64(4), stats.dropped.Load(), "text beyond the byte limit is not queued")
-	stats.drain(time.Now)
+	stats.drain(time.Now, time.Now().Add(-time.Second))
+	assert.Len(t, stats.jobs, structureQueueSize, "nothing is analysed after the deadline")
+	stats.drain(time.Now, time.Now().Add(time.Minute))
 	assert.Zero(t, stats.queuedBytes.Load())
 	assert.Equal(t, int64(structureQueueSize), stats.observed.Load())
+
+	// More distinct fingerprints than one flush keeps: the requests are still
+	// counted, only their fingerprint updates are left out.
+	for index := range structurePendingFingerprints + 2 {
+		system := promptSegment{text: "rules " + strings.Repeat("a", index+1), role: "system"}
+		stats.submit(structureSubject{userID: 1, protocol: ProtocolChat}, []promptSegment{system, segments[0]}, 1)
+		stats.drain(time.Now, time.Now().Add(time.Minute))
+	}
+	assert.Equal(t, int64(structureQueueSize+structurePendingFingerprints+2), stats.observed.Load())
+	assert.Equal(t, int64(3), stats.fingerprintsDropped.Load(), "the 'none' fingerprint already takes one of the kept places")
+	assert.Equal(t, int64(4), stats.dropped.Load(), "left-out fingerprints are not counted as unmeasured requests")
+}
+
+func TestSystemPromptNormalizationStaysLinear(t *testing.T) {
+	assert.Equal(t, "keep <b>this</b> and that", normalizeSystemPrompt("keep <b>this</b> <env>dir</env>and<system-reminder>x</system-reminder> that"))
+	assert.Equal(t, "open <env> never closes <user_instructions> too", normalizeSystemPrompt("open <env> never closes <user_instructions> too"))
+
+	// Several megabytes of nothing but wrapped blocks, and of opening tags
+	// that never close: both must take time proportional to their length.
+	// Rescanning or copying the text per block would take hours here.
+	for _, piece := range []string{"<env></env>", "<env><system-reminder>", "<<<<"} {
+		text := strings.Repeat(piece, (4<<20)/len(piece))
+		started := time.Now()
+		fingerprint, _ := systemFingerprint(text)
+		assert.Less(t, time.Since(started), 10*time.Second, piece)
+		assert.Len(t, fingerprint, 64)
+	}
+	assert.Empty(t, normalizeSystemPrompt(strings.Repeat("<env> a </env>\n", 1000)))
+}
+
+func TestLatestUserTurnSpansAgentWrappersInsideOneMessage(t *testing.T) {
+	const body = `{"messages":[{"role":"assistant","content":"earlier answer"},{"role":"user","content":[
+		{"type":"text","text":"first part"},{"type":"text","text":"<system-reminder>note</system-reminder>"},{"type":"text","text":"second part"}]}]}`
+	snapshot, err := extractPromptSnapshot(ProtocolChat, []byte(body), prompt_audit_setting.ScanScopeLatestUser)
+	require.NoError(t, err)
+	assert.Equal(t, "first part\n\nsecond part", snapshot.Latest.text, "user text on both sides of an agent wrapper is the latest turn")
+	assert.Empty(t, snapshot.Rest.text)
 }

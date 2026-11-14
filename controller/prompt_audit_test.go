@@ -721,8 +721,10 @@ func TestPromptAuditStructureEndpointsReturnAggregates(t *testing.T) {
 	assert.Equal(t, "none", byRequests.Data.Items[0].Fingerprint)
 	assert.Equal(t, int64(90), byRequests.Data.Items[0].RequestCount)
 	assert.False(t, byRequests.Data.Items[0].UserCountCapped)
-	status, _ := fingerprints("?sort=prompt")
-	assert.Equal(t, http.StatusBadRequest, status)
+	for _, query := range []string{"?sort=prompt", "?page_size=-1", "?p=-2"} {
+		response := securityEnrollmentRequest(http.MethodGet, "/api/prompt_audit/structure/fingerprints"+query, "", "", identity, GetPromptAuditStructureFingerprints)
+		assert.Equal(t, http.StatusBadRequest, response.Code, query)
+	}
 
 	type signalList struct {
 		Data struct {
@@ -753,6 +755,6 @@ func TestPromptAuditStructureEndpointsReturnAggregates(t *testing.T) {
 	assert.Equal(t, []int64{90, 9}, []int64{chat.Data.Items[0].Requests, chat.Data.Items[0].TrailingAssistant})
 	_, past := signals("?end_day=20200101")
 	assert.Empty(t, past.Data.Items)
-	status, _ = signals("?client_class=unknown")
+	status, _ := signals("?client_class=unknown")
 	assert.Equal(t, http.StatusBadRequest, status)
 }

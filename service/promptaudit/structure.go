@@ -219,7 +219,8 @@ func countHiddenText(text string) (invisible int, encodedRuns int) {
 }
 
 // hasRoleMarker reports whether a line of the text starts with a role label
-// followed by a colon, as a transcript of another turn would.
+// followed by a colon, as a transcript of another turn would. Code and
+// configuration with such keys match too, so the counter overstates.
 func hasRoleMarker(text string) bool {
 	for line := range strings.SplitSeq(text, "\n") {
 		line = strings.TrimLeft(line, " \t")
@@ -241,9 +242,13 @@ func hasRoleMarker(text string) bool {
 func systemFingerprint(text string) (fingerprint string, prefixHash string) {
 	normalized := normalizeSystemPrompt(text)
 	digest := sha256.Sum256([]byte(normalized))
-	prefix := normalized
-	if utf8.RuneCountInString(prefix) > fingerprintPrefixRunes {
-		prefix = string([]rune(prefix)[:fingerprintPrefixRunes])
+	prefix, runes := normalized, 0
+	for offset := range normalized {
+		if runes == fingerprintPrefixRunes {
+			prefix = normalized[:offset]
+			break
+		}
+		runes++
 	}
 	prefixDigest := sha256.Sum256([]byte(prefix))
 	return hex.EncodeToString(digest[:]), hex.EncodeToString(prefixDigest[:])
@@ -252,22 +257,10 @@ func systemFingerprint(text string) (fingerprint string, prefixHash string) {
 // normalizeSystemPrompt removes what agent templates change on every request,
 // so the same template gives the same text: blocks agents rewrite per request
 // (environment, reminders), file paths, identifiers and numbers such as
-// dates and versions. Whitespace is collapsed.
+// dates and versions. Whitespace is collapsed. The text of a removed block
+// has no part in the fingerprint.
 func normalizeSystemPrompt(text string) string {
-	for _, tag := range fingerprintVolatileTags {
-		openTag, closeTag := "<"+tag+">", "</"+tag+">"
-		for {
-			before, body, found := strings.Cut(text, openTag)
-			if !found {
-				break
-			}
-			_, after, closed := strings.Cut(body, closeTag)
-			if !closed {
-				break
-			}
-			text = before + " " + after
-		}
-	}
+	text = withoutVolatileBlocks(text)
 	var builder strings.Builder
 	builder.Grow(len(text))
 	for token := range strings.FieldsSeq(text) {
@@ -276,6 +269,48 @@ func normalizeSystemPrompt(text string) string {
 		}
 		builder.WriteString(stableToken(token))
 	}
+	return builder.String()
+}
+
+// withoutVolatileBlocks replaces every block wrapped in one of
+// fingerprintVolatileTags with a space, in one pass over the text. A tag
+// whose closing tag is missing once is not searched for again, so the work
+// stays linear in the length of the text.
+func withoutVolatileBlocks(text string) string {
+	if !strings.Contains(text, "<") {
+		return text
+	}
+	unclosed := make([]bool, len(fingerprintVolatileTags))
+	var builder strings.Builder
+	builder.Grow(len(text))
+	for {
+		start := strings.IndexByte(text, '<')
+		if start < 0 {
+			break
+		}
+		builder.WriteString(text[:start])
+		text = text[start:]
+		removed := false
+		for index, tag := range fingerprintVolatileTags {
+			body, isOpen := strings.CutPrefix(text, "<"+tag+">")
+			if !isOpen || unclosed[index] {
+				continue
+			}
+			_, after, closed := strings.Cut(body, "</"+tag+">")
+			if !closed {
+				unclosed[index] = true
+				continue
+			}
+			builder.WriteByte(' ')
+			text, removed = after, true
+			break
+		}
+		if !removed {
+			builder.WriteByte('<')
+			text = text[1:]
+		}
+	}
+	builder.WriteString(text)
 	return builder.String()
 }
 

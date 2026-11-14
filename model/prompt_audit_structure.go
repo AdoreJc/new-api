@@ -1,6 +1,7 @@
 package model
 
 import (
+	"cmp"
 	"slices"
 
 	"gorm.io/gorm"
@@ -14,6 +15,9 @@ import (
 const (
 	// PromptAuditFingerprintUserCap is how many distinct users are counted
 	// exactly per fingerprint; a count at the cap means "at least that many".
+	// Users are counted since the fingerprint was first seen and stay counted
+	// while it is kept. The cap is approximate across nodes: two nodes that
+	// flush at once can each add users, leaving a few rows more than the cap.
 	PromptAuditFingerprintUserCap = 50
 	// PromptAuditFingerprintMaxRows bounds the fingerprint table; new
 	// fingerprints are not stored while it is full.
@@ -123,6 +127,14 @@ type PromptAuditFingerprintDelta struct {
 // are added with column arithmetic, which keeps several nodes correct. It
 // returns how many new fingerprints were left out because the table is full.
 func ApplyPromptAuditStructureStats(fingerprints []*PromptAuditFingerprintDelta, daily []*PromptAuditStructureDaily) (int, error) {
+	// Rows are written in one order on every node, so concurrent flushes
+	// take their row locks in the same order and cannot deadlock.
+	fingerprints = slices.SortedFunc(slices.Values(fingerprints), func(a, b *PromptAuditFingerprintDelta) int {
+		return cmp.Compare(a.Fingerprint, b.Fingerprint)
+	})
+	daily = slices.SortedFunc(slices.Values(daily), func(a, b *PromptAuditStructureDaily) int {
+		return cmp.Or(cmp.Compare(a.StatDay, b.StatDay), cmp.Compare(a.RequestFormat, b.RequestFormat), cmp.Compare(a.ClientClass, b.ClientClass))
+	})
 	skipped := 0
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		skipped = 0
@@ -256,7 +268,7 @@ func ListPromptAuditFingerprints(sort string, offset, limit int) ([]*PromptAudit
 	if sort == PromptAuditFingerprintSortRequests {
 		order = "request_count desc, user_count desc, id desc"
 	}
-	items := make([]*PromptAuditFingerprint, 0, limit)
+	items := make([]*PromptAuditFingerprint, 0, max(limit, 0))
 	err := DB.Order(order).Offset(offset).Limit(limit).Find(&items).Error
 	return items, total, err
 }

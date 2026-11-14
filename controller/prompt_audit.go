@@ -433,11 +433,12 @@ type promptAuditFingerprintItem struct {
 // distinct users (default) or by requests. Rows hold hashes and counts only.
 func GetPromptAuditStructureFingerprints(c *gin.Context) {
 	sort := c.DefaultQuery("sort", model.PromptAuditFingerprintSortUsers)
-	if sort != model.PromptAuditFingerprintSortUsers && sort != model.PromptAuditFingerprintSortRequests {
+	pageInfo := common.GetPageQuery(c)
+	if (sort != model.PromptAuditFingerprintSortUsers && sort != model.PromptAuditFingerprintSortRequests) ||
+		pageInfo.GetPage() < 1 || pageInfo.GetPageSize() < 1 {
 		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
 		return
 	}
-	pageInfo := common.GetPageQuery(c)
 	fingerprints, total, err := model.ListPromptAuditFingerprints(sort, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)

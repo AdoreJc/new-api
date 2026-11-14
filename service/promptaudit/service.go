@@ -737,12 +737,16 @@ type RuntimeStatus struct {
 	SyncP50MS       int64 `json:"sync_p50_ms"`
 	SyncP95MS       int64 `json:"sync_p95_ms"`
 	SyncP99MS       int64 `json:"sync_p99_ms"`
-	// Structure* describe request structure statistics: requests measured,
-	// requests or fingerprints left out, and failed batch writes.
-	StructureStatsEnabled bool  `json:"structure_stats_enabled"`
-	StructureObserved     int64 `json:"structure_observed"`
-	StructureDropped      int64 `json:"structure_dropped"`
-	StructureWriteFailed  int64 `json:"structure_write_failed"`
+	// Structure* describe request structure statistics. Observed: requests
+	// measured. Dropped: requests not measured because the hand-over queue
+	// was full. FingerprintsDropped: fingerprint updates left out of measured
+	// requests (too many distinct fingerprints at once, or a full table).
+	// WriteFailed: batch writes that failed and lost their counters.
+	StructureStatsEnabled        bool  `json:"structure_stats_enabled"`
+	StructureObserved            int64 `json:"structure_observed"`
+	StructureDropped             int64 `json:"structure_dropped"`
+	StructureFingerprintsDropped int64 `json:"structure_fingerprints_dropped"`
+	StructureWriteFailed         int64 `json:"structure_write_failed"`
 }
 
 func Runtime() RuntimeStatus { return defaultService.runtime() }
@@ -765,7 +769,8 @@ func (s *Service) runtime() RuntimeStatus {
 		LatencyMaxMS: m.latencyMaxMS.Load(), SyncChecks: m.syncChecks.Load(), SyncUnavailable: m.syncUnavailable.Load(),
 		SyncInFlight: len(s.syncSlots), SyncConcurrency: cap(s.syncSlots),
 		StructureStatsEnabled: config.StructureStatsEnabled, StructureObserved: s.structure.observed.Load(),
-		StructureDropped: s.structure.dropped.Load(), StructureWriteFailed: s.structure.writeFailed.Load(),
+		StructureDropped: s.structure.dropped.Load(), StructureFingerprintsDropped: s.structure.fingerprintsDropped.Load(),
+		StructureWriteFailed: s.structure.writeFailed.Load(),
 	}
 	if completed := status.Passed + status.Flagged + status.Critical; completed > 0 {
 		status.LatencyAvgMS = m.latencyTotalMS.Load() / completed
