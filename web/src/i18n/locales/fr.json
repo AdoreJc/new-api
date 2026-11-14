@@ -8294,7 +8294,14 @@
     "Last redemption (any source)": "Dernière utilisation (toute source)",
     "Redemption in progress": "Utilisation en cours",
     "Automatic redemptions in the last 7 days": "Utilisations automatiques sur les 7 derniers jours",
-    "Interrupted redemption (outcome unknown, still counted)": "Utilisation interrompue (résultat inconnu, toujours comptée)"
+    "Interrupted redemption (outcome unknown, still counted)": "Utilisation interrompue (résultat inconnu, toujours comptée)",
+    "The channel is manually disabled. Binding enables it, and releasing the binding disables it again.": "Le canal est désactivé manuellement. La liaison l'active, et la libération de la liaison le désactive à nouveau.",
+    "The channel is auto-disabled. Authorize the account again and enable it manually before it can serve requests.": "Le canal est désactivé automatiquement. Autorisez à nouveau le compte et activez le canal manuellement avant qu'il puisse traiter des requêtes.",
+    "Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected. The channel was manually disabled and has been enabled; it will be disabled again when the binding is released": "Les requêtes pour les modèles du canal lié sont acheminées vers le groupe dédié {{group}} ; les autres requêtes ne sont pas affectées. Le canal était désactivé manuellement et a été activé ; il sera de nouveau désactivé lorsque la liaison sera libérée",
+    "Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected. The channel is auto-disabled and cannot serve requests: authorize the account again, then enable the channel manually": "Les requêtes pour les modèles du canal lié sont acheminées vers le groupe dédié {{group}} ; les autres requêtes ne sont pas affectées. Le canal est désactivé automatiquement et ne peut pas traiter de requêtes : autorisez à nouveau le compte, puis activez le canal manuellement",
+    "OpenAI rejected the refresh token ({{code}}). Authorize the account again": "OpenAI a rejeté le jeton d'actualisation ({{code}}). Autorisez à nouveau le compte",
+    "Failed to refresh credentials: OpenAI returned the error {{code}}": "Échec de l'actualisation des identifiants : OpenAI a renvoyé l'erreur {{code}}",
+    "Authorization code exchange failed: OpenAI returned the error {{code}}. Generate a new authorization link and try again": "Échec de l'échange du code d'autorisation : OpenAI a renvoyé l'erreur {{code}}. Générez un nouveau lien d'autorisation et réessayez"
   },
   "Requested groups": "Groupes demandés",
   "Group the token asked for, for example auto": "Groupe demandé par le jeton, par exemple auto",

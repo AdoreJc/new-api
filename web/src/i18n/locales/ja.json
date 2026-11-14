@@ -8294,7 +8294,14 @@
     "Last redemption (any source)": "前回の使用（すべての経路）",
     "Redemption in progress": "進行中の使用",
     "Automatic redemptions in the last 7 days": "過去 7 日間の自動使用回数",
-    "Interrupted redemption (outcome unknown, still counted)": "中断された使用（結果不明、制限には計上）"
+    "Interrupted redemption (outcome unknown, still counted)": "中断された使用（結果不明、制限には計上）",
+    "The channel is manually disabled. Binding enables it, and releasing the binding disables it again.": "このチャンネルは手動で無効化されています。バインドすると有効になり、バインドを解除すると再び無効になります。",
+    "The channel is auto-disabled. Authorize the account again and enable it manually before it can serve requests.": "このチャンネルは自動的に無効化されています。アカウントを再認可し、手動で有効にするまでリクエストを処理できません。",
+    "Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected. The channel was manually disabled and has been enabled; it will be disabled again when the binding is released": "バインド済みチャンネル上のモデルへのリクエストは専用グループ {{group}} に振り分けられます。その他のリクエストは影響を受けません。チャンネルは手動で無効化されていたため有効にしました。バインドを解除すると再び無効になります",
+    "Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected. The channel is auto-disabled and cannot serve requests: authorize the account again, then enable the channel manually": "バインド済みチャンネル上のモデルへのリクエストは専用グループ {{group}} に振り分けられます。その他のリクエストは影響を受けません。チャンネルは自動的に無効化されており、リクエストを処理できません。アカウントを再認可してから、チャンネルを手動で有効にしてください",
+    "OpenAI rejected the refresh token ({{code}}). Authorize the account again": "OpenAI がリフレッシュトークンを拒否しました（{{code}}）。アカウントを再認可してください",
+    "Failed to refresh credentials: OpenAI returned the error {{code}}": "認証情報の更新に失敗しました：OpenAI がエラー {{code}} を返しました",
+    "Authorization code exchange failed: OpenAI returned the error {{code}}. Generate a new authorization link and try again": "認可コードの交換に失敗しました：OpenAI がエラー {{code}} を返しました。新しい認可リンクを生成してやり直してください"
   },
   "Requested groups": "リクエストグループ",
   "Group the token asked for, for example auto": "トークン自身のグループ（例：auto）",

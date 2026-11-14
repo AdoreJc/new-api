@@ -8294,7 +8294,14 @@
     "Last redemption (any source)": "Последнее использование (любой источник)",
     "Redemption in progress": "Использование в процессе",
     "Automatic redemptions in the last 7 days": "Автоиспользований за 7 дней",
-    "Interrupted redemption (outcome unknown, still counted)": "Прерванное использование (результат неизвестен, учитывается)"
+    "Interrupted redemption (outcome unknown, still counted)": "Прерванное использование (результат неизвестен, учитывается)",
+    "The channel is manually disabled. Binding enables it, and releasing the binding disables it again.": "Канал отключён вручную. Привязка включает его, а после снятия привязки он снова отключается.",
+    "The channel is auto-disabled. Authorize the account again and enable it manually before it can serve requests.": "Канал отключён автоматически. Авторизуйте аккаунт заново и включите канал вручную, прежде чем он сможет обрабатывать запросы.",
+    "Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected. The channel was manually disabled and has been enabled; it will be disabled again when the binding is released": "Запросы к моделям привязанного канала направляются в выделенную группу {{group}}; остальные запросы не затрагиваются. Канал был отключён вручную и теперь включён; после снятия привязки он снова будет отключён",
+    "Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected. The channel is auto-disabled and cannot serve requests: authorize the account again, then enable the channel manually": "Запросы к моделям привязанного канала направляются в выделенную группу {{group}}; остальные запросы не затрагиваются. Канал отключён автоматически и не может обрабатывать запросы: авторизуйте аккаунт заново, затем включите канал вручную",
+    "OpenAI rejected the refresh token ({{code}}). Authorize the account again": "OpenAI отклонил токен обновления ({{code}}). Авторизуйте аккаунт заново",
+    "Failed to refresh credentials: OpenAI returned the error {{code}}": "Не удалось обновить учётные данные: OpenAI вернул ошибку {{code}}",
+    "Authorization code exchange failed: OpenAI returned the error {{code}}. Generate a new authorization link and try again": "Не удалось обменять код авторизации: OpenAI вернул ошибку {{code}}. Создайте новую ссылку авторизации и повторите попытку"
   },
   "Requested groups": "Запрошенные группы",
   "Group the token asked for, for example auto": "Группа, указанная в токене, например auto",

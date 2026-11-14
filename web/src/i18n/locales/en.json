@@ -8294,7 +8294,14 @@
     "Last redemption (any source)": "Last redemption (any source)",
     "Redemption in progress": "Redemption in progress",
     "Automatic redemptions in the last 7 days": "Automatic redemptions in the last 7 days",
-    "Interrupted redemption (outcome unknown, still counted)": "Interrupted redemption (outcome unknown, still counted)"
+    "Interrupted redemption (outcome unknown, still counted)": "Interrupted redemption (outcome unknown, still counted)",
+    "The channel is manually disabled. Binding enables it, and releasing the binding disables it again.": "The channel is manually disabled. Binding enables it, and releasing the binding disables it again.",
+    "The channel is auto-disabled. Authorize the account again and enable it manually before it can serve requests.": "The channel is auto-disabled. Authorize the account again and enable it manually before it can serve requests.",
+    "Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected. The channel was manually disabled and has been enabled; it will be disabled again when the binding is released": "Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected. The channel was manually disabled and has been enabled; it will be disabled again when the binding is released",
+    "Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected. The channel is auto-disabled and cannot serve requests: authorize the account again, then enable the channel manually": "Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected. The channel is auto-disabled and cannot serve requests: authorize the account again, then enable the channel manually",
+    "OpenAI rejected the refresh token ({{code}}). Authorize the account again": "OpenAI rejected the refresh token ({{code}}). Authorize the account again",
+    "Failed to refresh credentials: OpenAI returned the error {{code}}": "Failed to refresh credentials: OpenAI returned the error {{code}}",
+    "Authorization code exchange failed: OpenAI returned the error {{code}}. Generate a new authorization link and try again": "Authorization code exchange failed: OpenAI returned the error {{code}}. Generate a new authorization link and try again"
   },
   "Requested groups": "Requested groups",
   "Group the token asked for, for example auto": "Group the token asked for, for example auto",

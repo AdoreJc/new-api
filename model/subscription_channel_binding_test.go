@@ -350,7 +350,7 @@ func bindLegacySubscriptionChannel(t *testing.T, f bindingFixture, sub *UserSubs
 	legacy := "oauth-ch" + strconv.Itoa(f.channel.Id)
 	require.NoError(t, ensureSubscriptionBoundGroupRatio(legacy, "default"))
 	prevChannelGroup := f.channel.Group
-	require.NoError(t, setChannelGroupTx(DB, f.channel.Id, legacy))
+	require.NoError(t, setChannelGroupTx(DB, f.channel.Id, legacy, 0))
 	require.NoError(t, DB.Model(&User{}).Where("id = ?", f.user.Id).Update("group", legacy).Error)
 	require.NoError(t, DB.Model(&UserSubscription{}).Where("id = ?", sub.Id).Updates(map[string]any{
 		"upgrade_group":            legacy,
@@ -538,7 +538,7 @@ func TestMigrateSubscriptionBoundUserGroupsRestoresUsersIdempotently(t *testing.
 		sub := createActiveSubscription(t, f)
 		typed := "claude-ch" + strconv.Itoa(f.channel.Id)
 		require.NoError(t, ensureSubscriptionBoundGroupRatio(typed, "pro"))
-		require.NoError(t, setChannelGroupTx(DB, f.channel.Id, typed))
+		require.NoError(t, setChannelGroupTx(DB, f.channel.Id, typed, 0))
 		require.NoError(t, DB.Model(&User{}).Where("id = ?", f.user.Id).Update("group", typed).Error)
 		require.NoError(t, DB.Model(&UserSubscription{}).Where("id = ?", sub.Id).Updates(map[string]any{
 			"upgrade_group":            typed,
@@ -593,4 +593,225 @@ func TestMigrateSubscriptionBoundUserGroupsRestoresUsersIdempotently(t *testing.
 		require.NoError(t, MigrateSubscriptionBoundUserGroups())
 		assert.Equal(t, "vip", userGroupOf(t, f.user.Id))
 	})
+}
+
+// boundChannelState is what a binding may change on a channel: status, group
+// and the abilities derived from both.
+type boundChannelState struct {
+	Status           int
+	Group            string
+	AbilityGroups    []string
+	AbilitiesEnabled []bool
+}
+
+func boundChannelStateOf(t *testing.T, channelId int) boundChannelState {
+	t.Helper()
+	var channel Channel
+	require.NoError(t, DB.First(&channel, channelId).Error)
+	state := boundChannelState{Status: channel.Status, Group: channel.Group, AbilityGroups: abilityGroupsOf(t, channelId)}
+	require.NoError(t, DB.Model(&Ability{}).Where("channel_id = ?", channelId).Order(commonGroupCol).Pluck("enabled", &state.AbilitiesEnabled).Error)
+	return state
+}
+
+// newBindingFixtureWithChannelStatus is newBindingFixture with the channel in
+// the given status before any binding.
+func newBindingFixtureWithChannelStatus(t *testing.T, channelGroup string, status int) bindingFixture {
+	t.Helper()
+	f := newBindingFixture(t, "", channelGroup)
+	require.NoError(t, DB.Model(&Channel{}).Where("id = ?", f.channel.Id).Update("status", status).Error)
+	require.NoError(t, UpdateAbilityStatus(f.channel.Id, status == common.ChannelStatusEnabled))
+	return f
+}
+
+func expireSubscriptionNow(t *testing.T, subId int) {
+	t.Helper()
+	require.NoError(t, DB.Model(&UserSubscription{}).Where("id = ?", subId).Update("end_time", time.Now().Unix()-1).Error)
+	expired, err := ExpireDueSubscriptions(10)
+	require.NoError(t, err)
+	require.Equal(t, 1, expired)
+}
+
+func TestBindEnablesManuallyDisabledChannelAndEveryReleaseDisablesItAgain(t *testing.T) {
+	parked := boundChannelState{Status: common.ChannelStatusManuallyDisabled, Group: "default", AbilityGroups: []string{"default"}, AbilitiesEnabled: []bool{false}}
+
+	bind := func(t *testing.T) (bindingFixture, *UserSubscription, string) {
+		f := newBindingFixtureWithChannelStatus(t, "default", common.ChannelStatusManuallyDisabled)
+		require.Equal(t, parked, boundChannelStateOf(t, f.channel.Id))
+		sub := createActiveSubscription(t, f)
+		notice, err := AdminBindSubscriptionChannel(sub.Id, f.channel.Id)
+		require.NoError(t, err)
+		require.NotNil(t, notice)
+		assert.Contains(t, notice.Key, "has been enabled")
+		dedicated := SubscriptionBoundGroupName(f.channel.Type, f.channel.Id)
+		assert.Equal(t,
+			boundChannelState{Status: common.ChannelStatusEnabled, Group: dedicated, AbilityGroups: []string{dedicated}, AbilitiesEnabled: []bool{true}},
+			boundChannelStateOf(t, f.channel.Id))
+		assert.Equal(t, common.ChannelStatusManuallyDisabled, subscriptionOf(t, sub.Id).BoundChannelPrevStatus)
+		return f, sub, dedicated
+	}
+
+	t.Run("unbind", func(t *testing.T) {
+		f, sub, _ := bind(t)
+		_, err := AdminUnbindSubscriptionChannel(sub.Id)
+		require.NoError(t, err)
+		assert.Equal(t, parked, boundChannelStateOf(t, f.channel.Id))
+		assert.Equal(t, 0, subscriptionOf(t, sub.Id).BoundChannelPrevStatus)
+	})
+
+	t.Run("unbind after the channel was auto-disabled while bound", func(t *testing.T) {
+		f, sub, _ := bind(t)
+		require.NoError(t, DB.Model(&Channel{}).Where("id = ?", f.channel.Id).Update("status", common.ChannelStatusAutoDisabled).Error)
+		_, err := AdminUnbindSubscriptionChannel(sub.Id)
+		require.NoError(t, err)
+		assert.Equal(t, parked, boundChannelStateOf(t, f.channel.Id))
+	})
+
+	t.Run("rebind restores the old channel and treats the new one by its own status", func(t *testing.T) {
+		f, sub, _ := bind(t)
+		enabled := Channel{Type: constant.ChannelTypeCodex, Key: `{"access_token":"at","account_id":"acc"}`, Name: "codex-enabled", Status: common.ChannelStatusEnabled, Models: "gpt-5-codex", Group: "vip"}
+		require.NoError(t, enabled.Insert())
+		_, err := AdminBindSubscriptionChannel(sub.Id, enabled.Id)
+		require.NoError(t, err)
+		assert.Equal(t, parked, boundChannelStateOf(t, f.channel.Id))
+		assert.Equal(t, common.ChannelStatusEnabled, boundChannelStateOf(t, enabled.Id).Status)
+		assert.Equal(t, 0, subscriptionOf(t, sub.Id).BoundChannelPrevStatus, "the new channel was enabled before the binding")
+
+		// Back to the disabled channel: it is enabled again and the enabled
+		// channel returns as it was.
+		_, err = AdminBindSubscriptionChannel(sub.Id, f.channel.Id)
+		require.NoError(t, err)
+		assert.Equal(t, common.ChannelStatusEnabled, boundChannelStateOf(t, f.channel.Id).Status)
+		assert.Equal(t, common.ChannelStatusManuallyDisabled, subscriptionOf(t, sub.Id).BoundChannelPrevStatus)
+		assert.Equal(t,
+			boundChannelState{Status: common.ChannelStatusEnabled, Group: "vip", AbilityGroups: []string{"vip"}, AbilitiesEnabled: []bool{true}},
+			boundChannelStateOf(t, enabled.Id))
+	})
+
+	t.Run("invalidate", func(t *testing.T) {
+		f, sub, _ := bind(t)
+		_, err := AdminInvalidateUserSubscription(sub.Id)
+		require.NoError(t, err)
+		assert.Equal(t, parked, boundChannelStateOf(t, f.channel.Id))
+		assert.Equal(t, 0, subscriptionOf(t, sub.Id).BoundChannelPrevStatus)
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		f, sub, _ := bind(t)
+		_, err := AdminDeleteUserSubscription(sub.Id)
+		require.NoError(t, err)
+		assert.Equal(t, parked, boundChannelStateOf(t, f.channel.Id))
+	})
+
+	t.Run("expiry disables the channel in its dedicated group and a renewal enables it again", func(t *testing.T) {
+		f, sub, dedicated := bind(t)
+		expireSubscriptionNow(t, sub.Id)
+		assert.Equal(t,
+			boundChannelState{Status: common.ChannelStatusManuallyDisabled, Group: dedicated, AbilityGroups: []string{dedicated}, AbilitiesEnabled: []bool{false}},
+			boundChannelStateOf(t, f.channel.Id))
+
+		renewal := createActiveSubscription(t, f)
+		_, err := AdminBindSubscriptionChannel(renewal.Id, f.channel.Id)
+		require.NoError(t, err)
+		assert.Equal(t, common.ChannelStatusEnabled, boundChannelStateOf(t, f.channel.Id).Status)
+		_, err = AdminUnbindSubscriptionChannel(renewal.Id)
+		require.NoError(t, err)
+		assert.Equal(t, parked, boundChannelStateOf(t, f.channel.Id))
+	})
+
+	t.Run("a renewal bound before the expiry sweep keeps the restore mark", func(t *testing.T) {
+		f, sub, _ := bind(t)
+		require.NoError(t, DB.Model(&UserSubscription{}).Where("id = ?", sub.Id).Update("end_time", time.Now().Unix()-1).Error)
+		renewal := createActiveSubscription(t, f)
+		_, err := AdminBindSubscriptionChannel(renewal.Id, f.channel.Id)
+		require.NoError(t, err)
+		assert.Equal(t, common.ChannelStatusManuallyDisabled, subscriptionOf(t, renewal.Id).BoundChannelPrevStatus)
+
+		_, err = ExpireDueSubscriptions(10)
+		require.NoError(t, err)
+		assert.Equal(t, common.ChannelStatusEnabled, boundChannelStateOf(t, f.channel.Id).Status, "the ended subscription no longer owns the channel")
+		_, err = AdminUnbindSubscriptionChannel(renewal.Id)
+		require.NoError(t, err)
+		assert.Equal(t, parked, boundChannelStateOf(t, f.channel.Id))
+	})
+
+	t.Run("a channel the administrator moved out of the dedicated group is left alone", func(t *testing.T) {
+		f, sub, _ := bind(t)
+		require.NoError(t, DB.Model(&Channel{}).Where("id = ?", f.channel.Id).Update("group", "vip").Error)
+		var moved Channel
+		require.NoError(t, DB.First(&moved, f.channel.Id).Error)
+		require.NoError(t, moved.UpdateAbilities(nil))
+		before := boundChannelStateOf(t, f.channel.Id)
+
+		_, err := AdminUnbindSubscriptionChannel(sub.Id)
+		require.NoError(t, err)
+		assert.Equal(t, before, boundChannelStateOf(t, f.channel.Id))
+		assert.Equal(t, common.ChannelStatusEnabled, before.Status)
+		assert.Equal(t, 0, subscriptionOf(t, sub.Id).BoundChannelPrevStatus)
+	})
+}
+
+// A channel that was enabled before the binding goes through bind, unbind,
+// invalidate and expiry exactly as before the restore mark existed.
+func TestBindLeavesEnabledChannelStatusAloneThroughBindReleaseAndExpiry(t *testing.T) {
+	original := boundChannelState{Status: common.ChannelStatusEnabled, Group: "default,vip", AbilityGroups: []string{"default", "vip"}, AbilitiesEnabled: []bool{true, true}}
+
+	bind := func(t *testing.T) (bindingFixture, *UserSubscription, boundChannelState) {
+		f := newBindingFixtureWithChannelStatus(t, "default,vip", common.ChannelStatusEnabled)
+		require.Equal(t, original, boundChannelStateOf(t, f.channel.Id))
+		sub := createActiveSubscription(t, f)
+		notice, err := AdminBindSubscriptionChannel(sub.Id, f.channel.Id)
+		require.NoError(t, err)
+		dedicated := SubscriptionBoundGroupName(f.channel.Type, f.channel.Id)
+		require.NotNil(t, notice)
+		assert.Equal(t, "Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected", notice.Key)
+		bound := boundChannelState{Status: common.ChannelStatusEnabled, Group: dedicated, AbilityGroups: []string{dedicated}, AbilitiesEnabled: []bool{true}}
+		assert.Equal(t, bound, boundChannelStateOf(t, f.channel.Id))
+		stored := subscriptionOf(t, sub.Id)
+		assert.Equal(t, 0, stored.BoundChannelPrevStatus)
+		assert.Equal(t, "default,vip", stored.BoundChannelPrevGroup)
+		return f, sub, bound
+	}
+
+	t.Run("unbind", func(t *testing.T) {
+		f, sub, _ := bind(t)
+		_, err := AdminUnbindSubscriptionChannel(sub.Id)
+		require.NoError(t, err)
+		assert.Equal(t, original, boundChannelStateOf(t, f.channel.Id))
+	})
+
+	t.Run("invalidate", func(t *testing.T) {
+		f, sub, _ := bind(t)
+		_, err := AdminInvalidateUserSubscription(sub.Id)
+		require.NoError(t, err)
+		assert.Equal(t, original, boundChannelStateOf(t, f.channel.Id))
+	})
+
+	t.Run("expiry keeps the channel enabled in its dedicated group", func(t *testing.T) {
+		f, sub, bound := bind(t)
+		expireSubscriptionNow(t, sub.Id)
+		assert.Equal(t, bound, boundChannelStateOf(t, f.channel.Id))
+		assert.Equal(t, f.channel.Id, subscriptionOf(t, sub.Id).BoundChannelId)
+	})
+}
+
+func TestBindLeavesAutoDisabledChannelDisabledAndSaysSo(t *testing.T) {
+	f := newBindingFixtureWithChannelStatus(t, "default", common.ChannelStatusAutoDisabled)
+	sub := createActiveSubscription(t, f)
+
+	notice, err := AdminBindSubscriptionChannel(sub.Id, f.channel.Id)
+	require.NoError(t, err)
+	require.NotNil(t, notice)
+	assert.Contains(t, notice.Key, "auto-disabled")
+	assert.Contains(t, notice.Key, "authorize the account again")
+	dedicated := SubscriptionBoundGroupName(f.channel.Type, f.channel.Id)
+	assert.Equal(t,
+		boundChannelState{Status: common.ChannelStatusAutoDisabled, Group: dedicated, AbilityGroups: []string{dedicated}, AbilitiesEnabled: []bool{false}},
+		boundChannelStateOf(t, f.channel.Id))
+	assert.Equal(t, 0, subscriptionOf(t, sub.Id).BoundChannelPrevStatus)
+
+	_, err = AdminUnbindSubscriptionChannel(sub.Id)
+	require.NoError(t, err)
+	assert.Equal(t,
+		boundChannelState{Status: common.ChannelStatusAutoDisabled, Group: "default", AbilityGroups: []string{"default"}, AbilitiesEnabled: []bool{false}},
+		boundChannelStateOf(t, f.channel.Id))
 }

@@ -8294,7 +8294,14 @@
     "Last redemption (any source)": "上次兑换（任意来源）",
     "Redemption in progress": "进行中的兑换",
     "Automatic redemptions in the last 7 days": "最近 7 天自动兑换次数",
-    "Interrupted redemption (outcome unknown, still counted)": "被中断的兑换（结果未知，仍计入防护）"
+    "Interrupted redemption (outcome unknown, still counted)": "被中断的兑换（结果未知，仍计入防护）",
+    "The channel is manually disabled. Binding enables it, and releasing the binding disables it again.": "该渠道处于手动禁用状态。绑定后会自动启用，释放绑定后恢复禁用。",
+    "The channel is auto-disabled. Authorize the account again and enable it manually before it can serve requests.": "该渠道处于自动禁用状态。需重新授权账户并手动启用后才能使用。",
+    "Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected. The channel was manually disabled and has been enabled; it will be disabled again when the binding is released": "该用户对绑定渠道上模型的请求将定向到专属分组 {{group}}，其他请求不受影响。该渠道原为手动禁用，现已启用；释放绑定后会恢复禁用",
+    "Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected. The channel is auto-disabled and cannot serve requests: authorize the account again, then enable the channel manually": "该用户对绑定渠道上模型的请求将定向到专属分组 {{group}}，其他请求不受影响。该渠道处于自动禁用状态，无法处理请求：请重新授权账户，然后手动启用渠道",
+    "OpenAI rejected the refresh token ({{code}}). Authorize the account again": "OpenAI 拒绝了刷新令牌（{{code}}），请重新授权该账户",
+    "Failed to refresh credentials: OpenAI returned the error {{code}}": "刷新凭证失败：OpenAI 返回错误 {{code}}",
+    "Authorization code exchange failed: OpenAI returned the error {{code}}. Generate a new authorization link and try again": "授权码交换失败：OpenAI 返回错误 {{code}}。请重新生成授权链接后再试"
   },
   "Requested groups": "请求分组",
   "Group the token asked for, for example auto": "令牌本身的分组，例如 auto",

@@ -88,6 +88,58 @@ func CodexPermanentRefreshErrorCode(err error) (string, bool) {
 	return "", false
 }
 
+// CodexOAuthExchangeError is a non-2xx answer of the token endpoint to an
+// authorization code exchange, with the same fields as a refresh error.
+type CodexOAuthExchangeError CodexOAuthRefreshError
+
+func (e *CodexOAuthExchangeError) Error() string {
+	msg := fmt.Sprintf("codex oauth code exchange failed: status=%d", e.StatusCode)
+	if e.Code != "" {
+		msg += " code=" + e.Code
+	}
+	if e.Description != "" {
+		msg += ": " + e.Description
+	}
+	return msg
+}
+
+// CodexRefreshTokenRejectedError says the stored refresh token was already
+// rejected for good with Code, so it is not sent again.
+type CodexRefreshTokenRejectedError struct {
+	Code string
+}
+
+func (e *CodexRefreshTokenRejectedError) Error() string {
+	return fmt.Sprintf("codex channel: the refresh token was rejected (%s); authorize the account again", e.Code)
+}
+
+// CodexOAuthErrorCode returns the OAuth error code the token endpoint gave
+// for a failed code exchange or refresh, and whether it means the account
+// must be authorized again. The code is safe to show: anything that is not a
+// short identifier is dropped. Timeouts and network errors yield ok == false.
+func CodexOAuthErrorCode(err error) (code string, reauthorize bool, ok bool) {
+	var rejected *CodexRefreshTokenRejectedError
+	var refreshErr *CodexOAuthRefreshError
+	var exchangeErr *CodexOAuthExchangeError
+	switch {
+	case errors.As(err, &rejected):
+		code, reauthorize = rejected.Code, true
+	case errors.As(err, &refreshErr):
+		code = refreshErr.Code
+		_, reauthorize = CodexPermanentRefreshErrorCode(err)
+	case errors.As(err, &exchangeErr):
+		code = exchangeErr.Code
+	}
+	code = strings.TrimSpace(code)
+	if code == "" || len(code) > 64 {
+		return "", false, false
+	}
+	if strings.Trim(code, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") != "" {
+		return "", false, false
+	}
+	return code, reauthorize, true
+}
+
 func RefreshCodexOAuthToken(ctx context.Context, refreshToken string) (*CodexOAuthTokenResult, error) {
 	return RefreshCodexOAuthTokenWithProxy(ctx, refreshToken, "")
 }
@@ -403,16 +455,28 @@ func ExchangeCodexAuthorizationCodeWithProxy(ctx context.Context, code string, v
 	}
 	defer resp.Body.Close()
 
+	body, err := io.ReadAll(io.LimitReader(resp.Body, codexOAuthErrorBodyLimit))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		exchangeErr := (*CodexOAuthExchangeError)(parseCodexOAuthRefreshError(resp.StatusCode, body))
+		// The description is upstream text; drop it if it repeats what was
+		// sent, so neither the code nor the verifier reaches a log.
+		for _, secret := range []string{form.Get("code"), form.Get("code_verifier")} {
+			if secret != "" && strings.Contains(exchangeErr.Description, secret) {
+				exchangeErr.Description = ""
+			}
+		}
+		return nil, exchangeErr
+	}
 	var payload struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		IDToken      string `json:"id_token"`
 		ExpiresIn    int    `json:"expires_in"`
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("codex oauth code exchange failed: status=%d", resp.StatusCode)
-	}
-	if err := common.DecodeJson(resp.Body, &payload); err != nil {
+	if err := common.Unmarshal(body, &payload); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(payload.AccessToken) == "" || strings.TrimSpace(payload.RefreshToken) == "" || payload.ExpiresIn <= 0 {
