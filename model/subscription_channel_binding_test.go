@@ -1,6 +1,7 @@
 package model
 
 import (
+	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -8,9 +9,13 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 type bindingFixture struct {
@@ -734,6 +739,29 @@ func TestBindEnablesManuallyDisabledChannelAndEveryReleaseDisablesItAgain(t *tes
 		assert.Equal(t, parked, boundChannelStateOf(t, f.channel.Id))
 	})
 
+	t.Run("expiry leaves a channel the administrator moved out of the dedicated group alone", func(t *testing.T) {
+		f, sub, _ := bind(t)
+		require.NoError(t, DB.Model(&Channel{}).Where("id = ?", f.channel.Id).Update("group", "vip").Error)
+		var moved Channel
+		require.NoError(t, DB.First(&moved, f.channel.Id).Error)
+		require.NoError(t, moved.UpdateAbilities(nil))
+		before := boundChannelStateOf(t, f.channel.Id)
+
+		expireSubscriptionNow(t, sub.Id)
+		assert.Equal(t, before, boundChannelStateOf(t, f.channel.Id))
+		assert.Equal(t, common.ChannelStatusEnabled, before.Status)
+		assert.Equal(t, "expired", subscriptionOf(t, sub.Id).Status)
+	})
+
+	t.Run("expiry of a binding whose channel was deleted only expires the subscription", func(t *testing.T) {
+		f, sub, _ := bind(t)
+		require.NoError(t, DB.Where("channel_id = ?", f.channel.Id).Delete(&Ability{}).Error)
+		require.NoError(t, DB.Delete(&Channel{}, f.channel.Id).Error)
+
+		expireSubscriptionNow(t, sub.Id)
+		assert.Equal(t, "expired", subscriptionOf(t, sub.Id).Status)
+	})
+
 	t.Run("a channel the administrator moved out of the dedicated group is left alone", func(t *testing.T) {
 		f, sub, _ := bind(t)
 		require.NoError(t, DB.Model(&Channel{}).Where("id = ?", f.channel.Id).Update("group", "vip").Error)
@@ -814,4 +842,100 @@ func TestBindLeavesAutoDisabledChannelDisabledAndSaysSo(t *testing.T) {
 	assert.Equal(t,
 		boundChannelState{Status: common.ChannelStatusAutoDisabled, Group: "default", AbilityGroups: []string{"default"}, AbilitiesEnabled: []bool{false}},
 		boundChannelStateOf(t, f.channel.Id))
+}
+
+// The expiry sweep reads the due subscriptions before it takes any lock. A
+// renewal bound to the same channel after that read owns the channel, so the
+// sweep must not disable it. On MySQL and PostgreSQL the renewal is bound
+// while the sweep's transaction is already open.
+func TestExpirySweepLeavesChannelReboundToARenewalDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			var driver gorm.Dialector
+			switch dialect {
+			case "sqlite":
+				driver = sqlite.Open(":memory:")
+			case "mysql":
+				dsn := os.Getenv("TEST_MYSQL_DSN")
+				if dsn == "" {
+					t.Skip("TEST_MYSQL_DSN not configured")
+				}
+				driver = mysql.Open(dsn)
+			case "postgres":
+				dsn := os.Getenv("TEST_POSTGRES_DSN")
+				if dsn == "" {
+					t.Skip("TEST_POSTGRES_DSN not configured")
+				}
+				driver = postgres.Open(dsn)
+			}
+			db, err := gorm.Open(driver, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: "bind_sweep_test_"}})
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			if dialect == "sqlite" {
+				sqlDB.SetMaxOpenConns(1)
+			}
+			tables := []any{&User{}, &SubscriptionPlan{}, &UserSubscription{}, &Channel{}, &Ability{}, &Option{}}
+			previousDB, previousLogDB, previousType := DB, LOG_DB, common.MainDatabaseType()
+			DB, LOG_DB = db, db
+			common.SetMainDatabaseType(common.DatabaseType(dialect))
+			initCol()
+			t.Cleanup(func() {
+				require.NoError(t, db.Migrator().DropTable(tables...))
+				DB, LOG_DB = previousDB, previousLogDB
+				common.SetMainDatabaseType(previousType)
+				initCol()
+				require.NoError(t, sqlDB.Close())
+			})
+			require.NoError(t, db.Migrator().DropTable(tables...))
+			require.NoError(t, db.AutoMigrate(tables...))
+			var version string
+			query := "SELECT version()"
+			if dialect == "sqlite" {
+				query = "SELECT sqlite_version()"
+			}
+			require.NoError(t, db.Raw(query).Scan(&version).Error)
+			t.Logf("database version: %s", version)
+
+			f := newBindingFixtureWithChannelStatus(t, "default", common.ChannelStatusManuallyDisabled)
+			ended := createActiveSubscription(t, f)
+			_, err = AdminBindSubscriptionChannel(ended.Id, f.channel.Id)
+			require.NoError(t, err)
+			require.NoError(t, DB.Model(&UserSubscription{}).Where("id = ?", ended.Id).Update("end_time", time.Now().Unix()-1).Error)
+			// What the sweep read before the renewal was bound.
+			sweepSnapshot := subscriptionOf(t, ended.Id)
+			renewal := createActiveSubscription(t, f)
+			bindRenewal := func() {
+				_, err := AdminBindSubscriptionChannel(renewal.Id, f.channel.Id)
+				require.NoError(t, err)
+			}
+
+			if dialect == "sqlite" {
+				// One connection: the renewal commits before the sweep's transaction.
+				bindRenewal()
+			}
+			require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+				if dialect != "sqlite" {
+					bindRenewal()
+				}
+				disabled, err := disableExpiredBoundChannelTx(tx, &sweepSnapshot)
+				assert.False(t, disabled)
+				return err
+			}))
+
+			dedicated := SubscriptionBoundGroupName(f.channel.Type, f.channel.Id)
+			inUse := boundChannelState{Status: common.ChannelStatusEnabled, Group: dedicated, AbilityGroups: []string{dedicated}, AbilitiesEnabled: []bool{true}}
+			assert.Equal(t, inUse, boundChannelStateOf(t, f.channel.Id))
+			assert.Equal(t, common.ChannelStatusManuallyDisabled, subscriptionOf(t, renewal.Id).BoundChannelPrevStatus)
+
+			expired, err := ExpireDueSubscriptions(10)
+			require.NoError(t, err)
+			assert.Equal(t, 1, expired)
+			assert.Equal(t, inUse, boundChannelStateOf(t, f.channel.Id))
+
+			_, err = AdminUnbindSubscriptionChannel(renewal.Id)
+			require.NoError(t, err)
+			assert.Equal(t, common.ChannelStatusManuallyDisabled, boundChannelStateOf(t, f.channel.Id).Status)
+		})
+	}
 }

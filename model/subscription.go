@@ -1224,22 +1224,30 @@ func ExpireDueSubscriptions(limit int) (int, error) {
 	}
 	for userId := range userIds {
 		cacheGroup := ""
+		// Channels a binding had enabled go back to manually disabled, each in
+		// a transaction of its own that starts with the channel lock (see
+		// disableExpiredBoundChannelTx).
+		var enabledBindings []UserSubscription
+		if err := DB.Where("user_id = ? AND status = ? AND end_time > 0 AND end_time <= ? AND bound_channel_id > 0 AND bound_channel_prev_status = ?",
+			userId, "active", now, common.ChannelStatusManuallyDisabled).
+			Find(&enabledBindings).Error; err != nil {
+			return expiredCount, err
+		}
 		channelDisabled := false
-		err := DB.Transaction(func(tx *gorm.DB) error {
-			// Channels a binding had enabled go back to manually disabled.
-			var enabledBindings []UserSubscription
-			if err := tx.Where("user_id = ? AND status = ? AND end_time > 0 AND end_time <= ? AND bound_channel_id > 0 AND bound_channel_prev_status = ?",
-				userId, "active", now, common.ChannelStatusManuallyDisabled).
-				Find(&enabledBindings).Error; err != nil {
-				return err
-			}
-			for i := range enabledBindings {
+		for i := range enabledBindings {
+			err := DB.Transaction(func(tx *gorm.DB) error {
 				disabled, err := disableExpiredBoundChannelTx(tx, &enabledBindings[i])
-				if err != nil {
-					return err
-				}
 				channelDisabled = channelDisabled || disabled
+				return err
+			})
+			if err != nil {
+				return expiredCount, err
 			}
+		}
+		if channelDisabled {
+			InitChannelCache()
+		}
+		err := DB.Transaction(func(tx *gorm.DB) error {
 			res := tx.Model(&UserSubscription{}).
 				Where("user_id = ? AND status = ? AND end_time > 0 AND end_time <= ?", userId, "active", now).
 				Updates(map[string]any{
@@ -1304,9 +1312,6 @@ func ExpireDueSubscriptions(limit int) (int, error) {
 		})
 		if err != nil {
 			return expiredCount, err
-		}
-		if channelDisabled {
-			InitChannelCache()
 		}
 		InvalidateSubscriptionRouteBindingCache(userId)
 		if cacheGroup != "" {

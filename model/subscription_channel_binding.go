@@ -273,14 +273,19 @@ func releaseBoundChannelTx(tx *gorm.DB, sub *UserSubscription) (bool, error) {
 // disableExpiredBoundChannelTx returns the channel of a subscription that is
 // expiring to manually disabled when the binding had enabled it. The channel
 // stays parked in its dedicated group and the subscription keeps pointing at
-// it, as for any expired binding; only the restore mark is cleared.
+// it with its restore mark, as for any expired binding.
+//
+// sub is a snapshot read without a lock, so a renewal may have been bound to
+// the channel since. The channel row is locked first and the subscription is
+// read again under that lock: a bind rewrites the subscriptions pointing at a
+// channel only while holding the channel's lock. tx must not have read
+// anything before this call (a MySQL transaction keeps the view of its first
+// plain read), and no subscription row is locked or written here, so this
+// cannot deadlock with a bind (channel, then subscriptions) or a release
+// (subscription, then channel).
 func disableExpiredBoundChannelTx(tx *gorm.DB, sub *UserSubscription) (bool, error) {
 	if sub == nil || sub.BoundChannelId <= 0 || sub.BoundChannelPrevStatus != common.ChannelStatusManuallyDisabled {
 		return false, nil
-	}
-	if err := tx.Model(&UserSubscription{}).Where("id = ?", sub.Id).
-		Update("bound_channel_prev_status", 0).Error; err != nil {
-		return false, err
 	}
 	var channel Channel
 	err := lockForUpdate(tx).Where("id = ?", sub.BoundChannelId).First(&channel).Error
@@ -290,7 +295,15 @@ func disableExpiredBoundChannelTx(tx *gorm.DB, sub *UserSubscription) (bool, err
 	if err != nil {
 		return false, err
 	}
-	if !isSubscriptionBoundGroupOf(sub, channel.Group) || channel.Status == common.ChannelStatusManuallyDisabled {
+	var current UserSubscription
+	if err := tx.Select("id", "bound_channel_id", "bound_group", "bound_channel_prev_status").
+		Where("id = ?", sub.Id).Limit(1).Find(&current).Error; err != nil {
+		return false, err
+	}
+	if current.BoundChannelId != channel.Id || current.BoundChannelPrevStatus != common.ChannelStatusManuallyDisabled {
+		return false, nil
+	}
+	if !isSubscriptionBoundGroupOf(&current, channel.Group) || channel.Status == common.ChannelStatusManuallyDisabled {
 		return false, nil
 	}
 	if err := setChannelGroupTx(tx, channel.Id, channel.Group, common.ChannelStatusManuallyDisabled); err != nil {
