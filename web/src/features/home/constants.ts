@@ -57,30 +57,6 @@ export const GATEWAY_FEATURES = [
   'Pass-Through',
 ] as const
 
-// Stats section - Default statistics
-export const DEFAULT_STATS = [
-  {
-    value: '50',
-    suffix: '+',
-    description: 'upstream services integrated',
-  },
-  {
-    value: '100',
-    suffix: '+',
-    description: 'model billing support',
-  },
-  {
-    value: '50',
-    suffix: '+',
-    description: 'compatible API routes',
-  },
-  {
-    value: '10',
-    suffix: '+',
-    description: 'scheduling controls',
-  },
-] as const
-
 // Features section - Default features
 export const DEFAULT_FEATURES = [
   {
@@ -129,13 +105,6 @@ export const DEFAULT_FEATURES = [
 
 export function getGatewayFeatures(t: TFunction) {
   return GATEWAY_FEATURES.map((feature) => t(feature))
-}
-
-export function getDefaultStats(t: TFunction) {
-  return DEFAULT_STATS.map((stat) => ({
-    ...stat,
-    description: stat.description ? t(stat.description) : undefined,
-  }))
 }
 
 export function getDefaultFeatures(t: TFunction) {

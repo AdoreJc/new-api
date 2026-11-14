@@ -243,6 +243,21 @@ describe('administrator update entry', () => {
   })
 
   test.each(['', 'v0.0.0'])(
+    'renders no version label for %s when hideWhenVersionUnknown is set',
+    (version) => {
+      client.setQueryData(STATUS_QUERY_KEY, { version })
+      render(
+        <SystemUpdateAction presentation='version' hideWhenVersionUnknown />,
+        {
+          wrapper: Wrapper,
+        }
+      )
+      expect(screen.queryByRole('button')).not.toBeInTheDocument()
+      expect(screen.queryByText('Unknown version')).not.toBeInTheDocument()
+    }
+  )
+
+  test.each(['', 'v0.0.0'])(
     'shows an unknown current version for %s and allows ignoring the fetched release',
     async (version) => {
       const user = userEvent.setup()
