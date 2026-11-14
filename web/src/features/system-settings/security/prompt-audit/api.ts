@@ -50,6 +50,9 @@ export type PromptAuditConfig = {
   max_chunks_per_request: number
   scan_scope: string
   strict_jailbreak_mapping: boolean
+  /** Measurement only: aggregates hashes and counts, never prompt text. */
+  structure_stats_enabled: boolean
+  structure_stats_retention_days: number
   endpoints: PromptAuditEndpoint[]
   config_version: number
   updated_at: number

@@ -283,6 +283,9 @@ func main() {
 	if common.DataExportEnabled {
 		model.SaveQuotaDataCache()
 	}
+	// Store the prompt audit structure statistics still held in memory; it
+	// gives up after a few seconds.
+	promptaudit.Shutdown()
 	common.SysLog(common.LogText("server exited"))
 }
 

@@ -90,6 +90,20 @@ it('shows the saved switch values once the settings load', async () => {
   expect(screen.getByText('claude-ch*')).toBeVisible()
 })
 
+it('shows structure statistics off with 30 retention days for settings saved before the option', async () => {
+  mockSavedConfig({ all_groups: true, groups: [] })
+  renderSection()
+
+  expect(
+    await screen.findByRole('switch', { name: 'Request structure statistics' })
+  ).toHaveAttribute('aria-checked', 'false')
+  expect(
+    screen.getByRole('spinbutton', {
+      name: 'Structure statistics retention (days)',
+    })
+  ).toHaveValue(30)
+})
+
 it('shows the group input right below the all groups switch when it is turned off', async () => {
   mockSavedConfig({ all_groups: true, groups: [] })
   const user = userEvent.setup()

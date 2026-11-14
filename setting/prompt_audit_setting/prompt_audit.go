@@ -47,6 +47,9 @@ const (
 	MaxInputLimit        = 100000
 	MaxEndpoints         = 8
 	MaxGroups            = 200
+	// DefaultStructureStatsRetentionDays is how long request structure
+	// statistics are kept after they were last updated.
+	DefaultStructureStatsRetentionDays = 30
 	// DefaultMaxChunks bounds Guard calls per request: the latest user turn
 	// first, then earlier text from newest to oldest.
 	DefaultMaxChunks  = 8
@@ -117,6 +120,13 @@ type Config struct {
 	ConfigVersion   int64      `json:"config_version"`
 	UpdatedAt       int64      `json:"updated_at"`
 	UpdatedBy       int        `json:"updated_by"`
+	// StructureStatsEnabled aggregates structural counters and a hash of the
+	// system prompt for requests sent to prompt audit. It only measures: it
+	// stores no prompt text, calls no Guard and changes no audit decision.
+	StructureStatsEnabled bool `json:"structure_stats_enabled"`
+	// StructureStatsRetentionDays removes system prompt fingerprints not seen
+	// for that many days, and daily counters older than that.
+	StructureStatsRetentionDays int `json:"structure_stats_retention_days"`
 }
 
 // Snapshot is the immutable runtime view: configuration plus Guard tokens.
@@ -149,6 +159,8 @@ func DefaultConfig() Config {
 		ScanScope:           DefaultScanScope,
 		FailPolicy:          FailOpen,
 		Endpoints:           []Endpoint{},
+
+		StructureStatsRetentionDays: DefaultStructureStatsRetentionDays,
 	}
 }
 
@@ -290,7 +302,11 @@ func (c *Config) Normalize() error {
 	if c.MaxChunksPerRequest == 0 {
 		c.MaxChunksPerRequest = DefaultMaxChunks
 	}
+	if c.StructureStatsRetentionDays == 0 {
+		c.StructureStatsRetentionDays = DefaultStructureStatsRetentionDays
+	}
 	if c.MaxChunksPerRequest < 1 || c.MaxChunksPerRequest > MaxMaxChunks ||
+		c.StructureStatsRetentionDays < 1 || c.StructureStatsRetentionDays > MaxRetentionDays ||
 		c.WorkerCount < 1 || c.WorkerCount > MaxWorkerCount ||
 		c.QueueCapacity < 1 || c.QueueCapacity > MaxQueueCapacity ||
 		c.RetentionDays < 1 || c.RetentionDays > MaxRetentionDays {

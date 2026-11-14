@@ -665,3 +665,96 @@ func TestAuditRerouteMovesAnAutoTokenToTheTargetGroup(t *testing.T) {
 		t.Cleanup(func() { service.ClearCurrentChannelAffinityCache(ctx) })
 	}
 }
+
+func TestPromptAuditStructureEndpointsReturnAggregates(t *testing.T) {
+	identity := setupPromptAuditTest(t)
+	tables := []any{&model.PromptAuditFingerprint{}, &model.PromptAuditFingerprintUser{}, &model.PromptAuditStructureDaily{}}
+	require.NoError(t, model.DB.AutoMigrate(tables...))
+	t.Cleanup(func() { _ = model.DB.Migrator().DropTable(tables...) })
+	now := time.Now()
+	day := now.Year()*10000 + int(now.Month())*100 + now.Day()
+	users := make([]int, model.PromptAuditFingerprintUserCap)
+	for index := range users {
+		users[index] = index + 1
+	}
+	shared := strings.Repeat("a", 64)
+	_, err := model.ApplyPromptAuditStructureStats([]*model.PromptAuditFingerprintDelta{
+		{Fingerprint: shared, PrefixHash: strings.Repeat("b", 64), FirstSeenAt: 100, LastSeenAt: 200, Requests: 70, UserIds: users,
+			SystemLength: 1200, RequestFormat: "anthropic_messages", ClientClass: "claude_code"},
+		{Fingerprint: "none", PrefixHash: "none", FirstSeenAt: 100, LastSeenAt: 300, Requests: 90, UserIds: []int{1, 2},
+			RequestFormat: "openai_chat", ClientClass: "other"},
+	}, []*model.PromptAuditStructureDaily{
+		{StatDay: day, RequestFormat: "anthropic_messages", ClientClass: "claude_code", Requests: 70, WithSystem: 70, TrailingAssistant: 3},
+		{StatDay: day, RequestFormat: "openai_chat", ClientClass: "other", Requests: 90, TrailingAssistant: 9},
+	})
+	require.NoError(t, err)
+
+	type fingerprintPage struct {
+		Data struct {
+			Total int `json:"total"`
+			Items []struct {
+				Fingerprint     string `json:"fingerprint"`
+				RequestCount    int64  `json:"request_count"`
+				UserCount       int    `json:"user_count"`
+				UserCountCapped bool   `json:"user_count_capped"`
+				SystemLength    int    `json:"system_length"`
+				LastClientClass string `json:"last_client_class"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	fingerprints := func(query string) (int, fingerprintPage) {
+		response := securityEnrollmentRequest(http.MethodGet, "/api/prompt_audit/structure/fingerprints"+query, "", "", identity, GetPromptAuditStructureFingerprints)
+		var page fingerprintPage
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &page), response.Body.String())
+		return response.Code, page
+	}
+	_, byUsers := fingerprints("")
+	require.Len(t, byUsers.Data.Items, 2)
+	assert.Equal(t, 2, byUsers.Data.Total)
+	assert.Equal(t, shared, byUsers.Data.Items[0].Fingerprint, "ranked by distinct users unless asked otherwise")
+	assert.Equal(t, model.PromptAuditFingerprintUserCap, byUsers.Data.Items[0].UserCount)
+	assert.True(t, byUsers.Data.Items[0].UserCountCapped, "a count at the cap is reported as a lower bound")
+	assert.Equal(t, 1200, byUsers.Data.Items[0].SystemLength)
+	assert.Equal(t, "claude_code", byUsers.Data.Items[0].LastClientClass)
+	_, byRequests := fingerprints("?sort=requests&page_size=1")
+	require.Len(t, byRequests.Data.Items, 1)
+	assert.Equal(t, "none", byRequests.Data.Items[0].Fingerprint)
+	assert.Equal(t, int64(90), byRequests.Data.Items[0].RequestCount)
+	assert.False(t, byRequests.Data.Items[0].UserCountCapped)
+	for _, query := range []string{"?sort=prompt", "?page_size=-1", "?p=-2"} {
+		response := securityEnrollmentRequest(http.MethodGet, "/api/prompt_audit/structure/fingerprints"+query, "", "", identity, GetPromptAuditStructureFingerprints)
+		assert.Equal(t, http.StatusBadRequest, response.Code, query)
+	}
+
+	type signalList struct {
+		Data struct {
+			Items []struct {
+				StatDay           int   `json:"stat_day"`
+				Requests          int64 `json:"requests"`
+				WithSystem        int64 `json:"with_system"`
+				TrailingAssistant int64 `json:"trailing_assistant"`
+			} `json:"items"`
+			RequestFormats []string `json:"request_formats"`
+			ClientClasses  []string `json:"client_classes"`
+		} `json:"data"`
+	}
+	signals := func(query string) (int, signalList) {
+		response := securityEnrollmentRequest(http.MethodGet, "/api/prompt_audit/structure/signals"+query, "", "", identity, GetPromptAuditStructureSignals)
+		var list signalList
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &list), response.Body.String())
+		return response.Code, list
+	}
+	_, all := signals("")
+	require.Len(t, all.Data.Items, 1)
+	assert.Equal(t, []int64{int64(day), 160, 70, 12}, []int64{int64(all.Data.Items[0].StatDay), all.Data.Items[0].Requests,
+		all.Data.Items[0].WithSystem, all.Data.Items[0].TrailingAssistant}, "counters are summed over formats and client classes")
+	assert.Contains(t, all.Data.RequestFormats, "anthropic_messages")
+	assert.Contains(t, all.Data.ClientClasses, "claude_code")
+	_, chat := signals("?request_format=openai_chat&client_class=other")
+	require.Len(t, chat.Data.Items, 1)
+	assert.Equal(t, []int64{90, 9}, []int64{chat.Data.Items[0].Requests, chat.Data.Items[0].TrailingAssistant})
+	_, past := signals("?end_day=20200101")
+	assert.Empty(t, past.Data.Items)
+	status, _ := signals("?client_class=unknown")
+	assert.Equal(t, http.StatusBadRequest, status)
+}

@@ -246,6 +246,14 @@ func TestStoredConfigWithoutNewKeysUsesNewDefaults(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, prompt_audit_setting.ScanScopeLatestUser, config.ScanScope)
 	assert.False(t, config.StrictJailbreakMapping)
+	assert.False(t, config.StructureStatsEnabled, "request structure statistics are off unless turned on")
+	assert.Equal(t, prompt_audit_setting.DefaultStructureStatsRetentionDays, config.StructureStatsRetentionDays)
+
+	config.StructureStatsRetentionDays = prompt_audit_setting.MaxRetentionDays + 1
+	assert.ErrorIs(t, config.Normalize(), prompt_audit_setting.ErrInvalidLimits)
+	config.StructureStatsRetentionDays = 0
+	require.NoError(t, config.Normalize())
+	assert.Equal(t, prompt_audit_setting.DefaultStructureStatsRetentionDays, config.StructureStatsRetentionDays)
 
 	config.ScanScope = "everything"
 	assert.ErrorIs(t, config.Normalize(), prompt_audit_setting.ErrInvalidScanScope)
@@ -455,13 +463,14 @@ func setupEventDB(t *testing.T) {
 		db, err = gorm.Open(sqlite.Open(t.TempDir()+"/audit.db"), config)
 	}
 	require.NoError(t, err)
-	require.NoError(t, db.Migrator().DropTable(&model.PromptAuditEvent{}))
-	require.NoError(t, db.AutoMigrate(&model.PromptAuditEvent{}))
+	tables := append([]any{&model.PromptAuditEvent{}}, structureTables...)
+	require.NoError(t, db.Migrator().DropTable(tables...))
+	require.NoError(t, db.AutoMigrate(tables...))
 	previous := model.DB
 	model.DB = db
 	t.Cleanup(func() {
 		model.DB = previous
-		_ = db.Migrator().DropTable(&model.PromptAuditEvent{})
+		_ = db.Migrator().DropTable(tables...)
 		if connection, err := db.DB(); err == nil {
 			_ = connection.Close()
 		}
@@ -864,4 +873,433 @@ func TestHitChunksNameRolesInScanOrder(t *testing.T) {
 		{Index: 2, Roles: []string{"assistant"}, Decision: DecisionFlag, Categories: categories},
 		{Index: 3, Roles: []string{"system", "user", "assistant"}, Decision: DecisionFlag, Categories: categories},
 	}, result.Hits)
+}
+
+// structureTables are the tables of request structure statistics.
+var structureTables = []any{&model.PromptAuditFingerprint{}, &model.PromptAuditFingerprintUser{}, &model.PromptAuditStructureDaily{}}
+
+func TestStructureSegmentKindsPerRequestFormat(t *testing.T) {
+	tests := []struct {
+		name     string
+		protocol string
+		body     string
+		kinds    []string
+		want     structureReport
+	}{
+		{
+			name: "chat history", protocol: ProtocolChat,
+			body: `{"messages":[{"role":"system","content":"rules"},{"role":"user","content":"first"},
+				{"role":"assistant","content":"reply"},{"role":"tool","content":"tool out"},{"role":"user","content":"latest"}]}`,
+			kinds: []string{kindSystem, kindHistoryUser, kindHistoryAssistant, kindTool, kindLatestUser},
+			want:  structureReport{HasSystem: true, HasHistoryUser: true, HasHistoryAssistant: true, HasTool: true, AssistantTurns: 1, UserTurns: 2, SystemLength: 5},
+		},
+		{
+			name: "chat ending with an assistant message", protocol: ProtocolChat,
+			body: `{"messages":[{"role":"developer","content":"rules"},{"role":"user","content":"question"},
+				{"role":"assistant","content":"earlier answer"},{"role":"user","content":"again"},{"role":"assistant","content":"The answer starts"}]}`,
+			kinds: []string{kindDeveloper, kindHistoryUser, kindHistoryAssistant, kindLatestUser, kindTrailingAssistant},
+			want: structureReport{HasDeveloper: true, HasHistoryUser: true, HasHistoryAssistant: true, TrailingAssistant: true,
+				AssistantTurns: 2, UserTurns: 2, SystemLength: 5},
+		},
+		{
+			name: "chat with a system message in the middle", protocol: ProtocolChat,
+			body:  `{"messages":[{"role":"system","content":"rules"},{"role":"user","content":"first"},{"role":"system","content":"more rules"},{"role":"user","content":"latest"}]}`,
+			kinds: []string{kindSystem, kindHistoryUser, kindSystem, kindLatestUser},
+			want:  structureReport{HasSystem: true, HasHistoryUser: true, MidSystem: true, UserTurns: 2, SystemLength: 15},
+		},
+		{
+			name: "claude tool turn does not end with assistant text", protocol: ProtocolClaude,
+			body: `{"system":[{"type":"text","text":"rules"}],"messages":[
+				{"role":"user","content":[{"type":"text","text":"<system-reminder>note</system-reminder>"},{"type":"text","text":"do it"}]},
+				{"role":"assistant","content":[{"type":"text","text":"calling a tool"},{"type":"tool_use","id":"t1","name":"read","input":{}}]},
+				{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"file body"}]}]}`,
+			kinds: []string{kindSystem, kindAgentContext, kindLatestUser, kindHistoryAssistant},
+			want:  structureReport{HasSystem: true, HasHistoryAssistant: true, HasAgentContext: true, AssistantTurns: 1, UserTurns: 1, SystemLength: 5},
+		},
+		{
+			name: "claude ending with an assistant message", protocol: ProtocolClaude,
+			body:  `{"system":"rules","messages":[{"role":"user","content":"question"},{"role":"assistant","content":[{"type":"text","text":"The answer"},{"type":"text","text":"starts"}]}]}`,
+			kinds: []string{kindSystem, kindLatestUser, kindTrailingAssistant, kindTrailingAssistant},
+			want:  structureReport{HasSystem: true, TrailingAssistant: true, AssistantTurns: 1, UserTurns: 1, SystemLength: 5},
+		},
+		{
+			name: "gemini", protocol: ProtocolGemini,
+			body: `{"systemInstruction":{"parts":[{"text":"rules"}]},"contents":[{"role":"user","parts":[{"text":"first"}]},
+				{"role":"model","parts":[{"text":"reply"}]},{"role":"user","parts":[{"text":"latest"}]},{"role":"model","parts":[{"text":"The answer starts"}]}]}`,
+			kinds: []string{kindSystem, kindHistoryUser, kindHistoryAssistant, kindLatestUser, kindTrailingAssistant},
+			want: structureReport{HasSystem: true, HasHistoryUser: true, HasHistoryAssistant: true, TrailingAssistant: true,
+				AssistantTurns: 2, UserTurns: 2, SystemLength: 5},
+		},
+		{
+			name: "responses", protocol: ProtocolResponses,
+			body: `{"instructions":"rules","input":[{"role":"developer","content":"dev rules"},
+				{"type":"message","role":"user","content":[{"type":"input_text","text":"first"}]},
+				{"type":"message","role":"assistant","content":[{"type":"output_text","text":"reply"}]},
+				{"type":"reasoning","text":"thinking"},
+				{"type":"message","role":"user","content":[{"type":"input_text","text":"latest"}]},
+				{"type":"function_call_output","call_id":"c1","output":"result"}]}`,
+			kinds: []string{kindSystem, kindDeveloper, kindHistoryUser, kindHistoryAssistant, kindTool, kindLatestUser},
+			want: structureReport{HasSystem: true, HasDeveloper: true, HasHistoryUser: true, HasHistoryAssistant: true, HasTool: true,
+				AssistantTurns: 1, UserTurns: 2, SystemLength: 14},
+		},
+		{
+			name: "responses with bare text input", protocol: ProtocolResponses,
+			body:  `{"input":"only question"}`,
+			kinds: []string{kindLatestUser},
+			want:  structureReport{UserTurns: 1},
+		},
+		{
+			name: "image prompt", protocol: ProtocolImages,
+			body:  `{"prompt":"a red bridge"}`,
+			kinds: []string{kindLatestUser},
+			want:  structureReport{UserTurns: 1},
+		},
+		{
+			name: "legacy completion", protocol: ProtocolGeneric,
+			body:  `{"prompt":"complete this"}`,
+			kinds: []string{kindLatestUser},
+			want:  structureReport{UserTurns: 1},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			segments, turns, err := requestSegments(test.protocol, []byte(test.body))
+			require.NoError(t, err)
+			assert.Equal(t, test.kinds, segmentKinds(normalizeSegments(segments), turns))
+			report, ok := analyzeStructure(segments, turns)
+			require.True(t, ok)
+			if report.HasSystem || report.HasDeveloper {
+				assert.Regexp(t, `^[0-9a-f]{64}$`, report.Fingerprint)
+				assert.Regexp(t, `^[0-9a-f]{64}$`, report.PrefixHash)
+			} else {
+				assert.Equal(t, noSystemFingerprint, report.Fingerprint)
+			}
+			report.Fingerprint, report.PrefixHash = "", ""
+			assert.Equal(t, test.want, report)
+		})
+	}
+
+	_, ok := analyzeStructure(nil, 0)
+	assert.False(t, ok, "a request without text is not measured")
+}
+
+func TestStructureSignalsCountHiddenAndForgedText(t *testing.T) {
+	report := func(texts ...promptSegment) structureReport {
+		result, ok := analyzeStructure(texts, len(texts))
+		require.True(t, ok)
+		return result
+	}
+	user := func(text string) promptSegment { return promptSegment{text: text, role: "user", turn: 1} }
+
+	assert.True(t, report(user("line one\n  Assistant: placeholder reply")).RoleMarkers, "a line that starts with a role label")
+	assert.True(t, report(user("第一行\n系统：占位")).RoleMarkers, "role labels are also matched in Chinese with a full-width colon")
+	assert.False(t, report(user("the assistant: was mentioned mid-line")).RoleMarkers)
+	assert.False(t, report(promptSegment{text: "user: example\nassistant: example", role: "system"}, user("hi")).RoleMarkers,
+		"examples in a system prompt are not counted")
+
+	assert.True(t, report(user("before <|im_start|>system after")).ControlTokens)
+	assert.True(t, report(promptSegment{text: "[INST] placeholder [/INST]", role: "system"}, user("hi")).ControlTokens)
+	assert.False(t, report(user("a < b | c > d")).ControlTokens)
+
+	hidden := report(user("vis\u200bible\u200c text\U000E0041\U000E0042"), promptSegment{text: "more\ufeff", role: "assistant", turn: 2})
+	assert.Equal(t, 5, hidden.InvisibleChars, "zero-width and tag characters are counted across texts")
+	assert.Zero(t, report(user("family \U0001F468\u200d\U0001F469 emoji")).InvisibleChars, "the joiner inside emoji is left out")
+
+	encoded := strings.Repeat("QUJD", 80)
+	assert.Equal(t, 2, report(user("see "+encoded+" and "+encoded+"\nshort "+encoded[:200])).EncodedRuns, "only runs of 256 characters or more count")
+	tool := report(user("hi"), promptSegment{text: encoded + "\u200b <|im_start|>", role: "tool", turn: 2})
+	assert.Zero(t, tool.EncodedRuns+tool.InvisibleChars, "tool output is not scanned")
+	assert.False(t, tool.ControlTokens)
+}
+
+func TestSystemFingerprintIgnoresWhatTemplatesChangePerRequest(t *testing.T) {
+	template := func(directory, date, session, body string) string {
+		return "You are a coding helper.\n<env>\nWorking directory: " + directory + "\nToday's date: " + date + "\n</env>\n" +
+			"Session " + session + " runs version 2.1." + date[len(date)-2:] + " in " + directory + ".\n\n" + body
+	}
+	fingerprintOf := func(system string) (string, string) {
+		report, ok := analyzeStructure([]promptSegment{{text: system, role: "system"}, {text: "hi", role: "user", turn: 1}}, 1)
+		require.True(t, ok)
+		return report.Fingerprint, report.PrefixHash
+	}
+	const body = "Answer briefly and list the files you changed."
+	base, basePrefix := fingerprintOf(template("/home/alice/project", "2026-11-13", "3f2a9c1e-77aa-4b1c-9d2e-0a1b2c3d4e5f", body))
+	same, _ := fingerprintOf(template(`C:\Users\bob\work`, "2027-01-02", "0123456789abcdef", "Answer   briefly and\nlist the files you changed."))
+	assert.Equal(t, base, same, "paths, dates, identifiers, versions and whitespace do not change the fingerprint")
+
+	changed, _ := fingerprintOf(template("/home/alice/project", "2026-11-13", "3f2a9c1e-77aa-4b1c-9d2e-0a1b2c3d4e5f", "Answer at length and list the files you changed."))
+	assert.NotEqual(t, base, changed, "a change of the instructions changes the fingerprint")
+
+	long := strings.Repeat("Keep answers short. ", 60)
+	first, firstPrefix := fingerprintOf(long + "Variant one.")
+	second, secondPrefix := fingerprintOf(long + "Variant two.")
+	assert.NotEqual(t, first, second)
+	assert.Equal(t, firstPrefix, secondPrefix, "prompts that differ only after the leading part share the prefix hash")
+	assert.NotEqual(t, basePrefix, firstPrefix)
+
+	assert.Equal(t, ClientClaudeCode, ClientClassOf("claude-cli/2.1.318 (external, cli)"))
+	assert.Equal(t, ClientCodex, ClientClassOf("codex_cli_rs/0.50.0 (Mac OS 15.0; arm64)"))
+	assert.Equal(t, ClientSDK, ClientClassOf("OpenAI/Python 1.99.0"))
+	assert.Equal(t, ClientBrowser, ClientClassOf("Mozilla/5.0 (X11; Linux x86_64)"))
+	assert.Equal(t, ClientOther, ClientClassOf(""))
+}
+
+// auditOutcome is everything a request leaves behind in prompt audit.
+type auditOutcome struct {
+	Events     []model.PromptAuditEvent
+	GuardCalls int64
+	Verdict    Verdict
+	Metrics    RuntimeStatus
+}
+
+func TestStructureStatsLeaveAuditResultsUnchanged(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	bodies := []string{
+		`{"messages":[{"role":"system","content":"rules"},{"role":"user","content":"first"},{"role":"assistant","content":"reply"},{"role":"user","content":"latest question"}]}`,
+		`{"messages":[{"role":"user","content":"question"},{"role":"assistant","content":"The answer starts"}]}`,
+		`{"messages":[{"role":"user","content":"<system-reminder>note</system-reminder>"}]}`,
+		`{"messages":[{"role":"system","content":"only rules"}]}`,
+		`{"messages":[]}`,
+		`not json`,
+	}
+	answers := map[string]string{
+		"safe": "Safety: Safe\nCategories: None", "controversial": "Safety: Controversial\nCategories: Politically Sensitive Topics",
+		"unsafe": "Safety: Unsafe\nCategories: Jailbreak", "broken": "no verdict",
+	}
+	fixed := time.Unix(1794000000, 0)
+	run := func(t *testing.T, statsOn, synchronous bool, body, answer, scope string) (auditOutcome, *Service) {
+		server, calls := guardServer(t, guardAnswer(answer))
+		config := enabledConfig(server.URL)
+		config.StoreFullPrompt, config.StorePassEvents, config.ScanScope = true, true, scope
+		config.StructureStatsEnabled = statsOn
+		useConfig(t, config, nil)
+		s := newService()
+		s.retryDelays = nil
+		s.now = func() time.Time { return fixed }
+		c := relayContext(body)
+		c.Request.Header.Set("User-Agent", "claude-cli/2.1.318 (external, cli)")
+		var outcome auditOutcome
+		if synchronous {
+			meta := Meta{RequestID: "req-1", UserID: 7, TokenID: 3, Group: "default", Protocol: ProtocolChat, Endpoint: "/v1/chat/completions", Model: "gpt-x"}
+			outcome.Verdict = s.check(context.Background(), c, meta, "rule-1", *legacyRule(&config))
+			if outcome.Verdict.Event != nil {
+				outcome.Events = append(outcome.Events, *outcome.Verdict.Event)
+				outcome.Verdict.Event = nil
+			}
+			outcome.Verdict.LatencyMS = 0
+		} else {
+			s.enqueueRelay(c, chatInfo("default"))
+			s.process(context.Background(), <-s.queue)
+			close(s.writes)
+			for event := range s.writes {
+				outcome.Events = append(outcome.Events, *event)
+			}
+		}
+		for index := range outcome.Events {
+			outcome.Events[index].LatencyMs = 0
+		}
+		outcome.GuardCalls = calls.Load()
+		outcome.Metrics = s.runtime()
+		outcome.Metrics.StructureStatsEnabled = false
+		for _, latency := range []*int64{&outcome.Metrics.LatencyAvgMS, &outcome.Metrics.LatencyMaxMS, &outcome.Metrics.LatencyP50MS,
+			&outcome.Metrics.LatencyP95MS, &outcome.Metrics.LatencyP99MS, &outcome.Metrics.SyncP50MS, &outcome.Metrics.SyncP95MS, &outcome.Metrics.SyncP99MS} {
+			*latency = 0
+		}
+		return outcome, s
+	}
+	for _, synchronous := range []bool{false, true} {
+		for _, scope := range prompt_audit_setting.ScanScopes {
+			for name, answer := range answers {
+				for index, body := range bodies {
+					off, offService := run(t, false, synchronous, body, answer, scope)
+					on, onService := run(t, true, synchronous, body, answer, scope)
+					label := name + " " + scope + " body " + string(rune('0'+index))
+					if synchronous {
+						label += " synchronous"
+					}
+					assert.Equal(t, off, on, label+": events, verdict, Guard calls and counters are the same with statistics on")
+					assert.Empty(t, offService.structure.jobs, label+": nothing is handed over while statistics are off")
+					assert.Equal(t, index < 4, len(onService.structure.jobs) == 1, label+": every request with readable JSON text is handed over, whatever the scan scope")
+				}
+			}
+		}
+	}
+}
+
+func TestStructureStatsAggregateHashesAndCountsOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupEventDB(t)
+	config := enabledConfig("http://127.0.0.1:1")
+	config.StructureStatsEnabled, config.StructureStatsRetentionDays = true, 7
+	useConfig(t, config, nil)
+	s := newService()
+	now := time.Date(2026, 11, 13, 10, 0, 0, 0, time.Local)
+	s.now = func() time.Time { return now }
+	observe := func(userID int, protocol, client, body string) {
+		segments, turns, err := requestSegments(protocol, []byte(body))
+		require.NoError(t, err)
+		s.structure.submit(structureSubject{userID: userID, protocol: protocol, client: client}, segments, turns)
+		s.structure.drain(s.now, time.Now().Add(time.Minute))
+	}
+	const shared = `{"messages":[{"role":"system","content":"shared rules for 2026-11-13"},{"role":"user","content":"question"}]}`
+	const prefilled = `{"system":"personal rules","messages":[{"role":"user","content":"question"},{"role":"assistant","content":"The answer starts"}]}`
+	for userID := 1; userID <= model.PromptAuditFingerprintUserCap+10; userID++ {
+		observe(userID, ProtocolChat, ClientClaudeCode, shared)
+	}
+	observe(1, ProtocolChat, ClientClaudeCode, shared)
+	observe(7, ProtocolClaude, ClientOther, prefilled)
+	observe(7, ProtocolClaude, ClientOther, prefilled)
+	observe(8, ProtocolResponses, ClientCodex, `{"input":"no system prompt here"}`)
+	s.shutdown(time.Minute)
+	assert.Equal(t, int64(model.PromptAuditFingerprintUserCap+14), s.structure.observed.Load())
+	assert.Zero(t, s.structure.writeFailed.Load())
+
+	byUsers, total, err := model.ListPromptAuditFingerprints(model.PromptAuditFingerprintSortUsers, 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), total)
+	top := byUsers[0]
+	assert.Equal(t, model.PromptAuditFingerprintUserCap, top.UserCount, "distinct users are counted exactly up to the cap")
+	assert.Equal(t, int64(model.PromptAuditFingerprintUserCap+11), top.RequestCount)
+	assert.Equal(t, ProtocolChat, top.LastRequestFormat)
+	assert.Equal(t, ClientClaudeCode, top.LastClientClass)
+	assert.Equal(t, 27, top.SystemLength)
+	assert.Equal(t, now.Unix(), top.FirstSeenAt)
+
+	// Users seen after the cap, in a later flush, add requests but no rows.
+	observe(9001, ProtocolChat, ClientClaudeCode, shared)
+	observe(7, ProtocolClaude, ClientOther, prefilled)
+	observe(9, ProtocolClaude, ClientOther, prefilled)
+	s.shutdown(time.Minute)
+	var userRows int64
+	require.NoError(t, model.DB.Model(&model.PromptAuditFingerprintUser{}).Where("fingerprint = ?", top.Fingerprint).Count(&userRows).Error)
+	assert.Equal(t, int64(model.PromptAuditFingerprintUserCap), userRows, "user rows per fingerprint stay bounded")
+	byRequests, _, err := model.ListPromptAuditFingerprints(model.PromptAuditFingerprintSortRequests, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, byRequests, 3)
+	assert.Equal(t, []int64{int64(model.PromptAuditFingerprintUserCap + 12), 4, 1},
+		[]int64{byRequests[0].RequestCount, byRequests[1].RequestCount, byRequests[2].RequestCount})
+	assert.Equal(t, []int{model.PromptAuditFingerprintUserCap, 2, 1}, []int{byRequests[0].UserCount, byRequests[1].UserCount, byRequests[2].UserCount})
+	assert.Equal(t, noSystemFingerprint, byRequests[2].Fingerprint, "requests without a system prompt share one row")
+
+	day := structureDay(now)
+	all, err := model.ListPromptAuditStructureDaily(model.PromptAuditStructureFilter{StartDay: day, EndDay: day})
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+	assert.Equal(t, model.PromptAuditStructureDaily{StatDay: day, Requests: int64(model.PromptAuditFingerprintUserCap + 17),
+		WithSystem: int64(model.PromptAuditFingerprintUserCap + 16), TrailingAssistant: 4, AssistantTurns: 4,
+		UserTurns: int64(model.PromptAuditFingerprintUserCap + 17), SystemUnder1k: int64(model.PromptAuditFingerprintUserCap + 16)}, *all[0])
+	claude, err := model.ListPromptAuditStructureDaily(model.PromptAuditStructureFilter{RequestFormat: ProtocolClaude, ClientClass: ClientOther})
+	require.NoError(t, err)
+	require.Len(t, claude, 1)
+	assert.Equal(t, []int64{4, 4}, []int64{claude[0].Requests, claude[0].TrailingAssistant})
+	none, err := model.ListPromptAuditStructureDaily(model.PromptAuditStructureFilter{StartDay: day + 1})
+	require.NoError(t, err)
+	assert.Empty(t, none)
+
+	// The tables hold hashes, counts, lengths, times and categories: every
+	// column is an integer or a short string of a fixed vocabulary.
+	shortText := map[string]bool{"fingerprint": true, "prefix_hash": true, "last_request_format": true, "last_client_class": true,
+		"request_format": true, "client_class": true}
+	for _, table := range structureTables {
+		columns, err := model.DB.Migrator().ColumnTypes(table)
+		require.NoError(t, err)
+		require.NotEmpty(t, columns)
+		for _, column := range columns {
+			kind := strings.ToLower(column.DatabaseTypeName())
+			if !shortText[column.Name()] {
+				assert.Contains(t, kind, "int", "column %s must be a number", column.Name())
+				continue
+			}
+			length, _ := column.Length()
+			assert.Contains(t, kind, "char", "column %s", column.Name())
+			assert.LessOrEqual(t, length, int64(64), "column %s", column.Name())
+		}
+	}
+	var stored []model.PromptAuditFingerprint
+	require.NoError(t, model.DB.Find(&stored).Error)
+	for _, row := range stored {
+		assert.Regexp(t, `^([0-9a-f]{64}|none)$`, row.Fingerprint)
+		assert.Regexp(t, `^([0-9a-f]{64}|none)$`, row.PrefixHash)
+		assert.Contains(t, StructureFormats, row.LastRequestFormat)
+		assert.Contains(t, ClientClasses, row.LastClientClass)
+	}
+
+	// Retention: fingerprints not seen for 7 days go with their user rows,
+	// and so do daily counters older than that.
+	stale := byRequests[1].Fingerprint
+	require.NoError(t, model.DB.Model(&model.PromptAuditFingerprint{}).Where("fingerprint = ?", stale).
+		Update("last_seen_at", now.Add(-8*24*time.Hour).Unix()).Error)
+	_, err = model.ApplyPromptAuditStructureStats(nil, []*model.PromptAuditStructureDaily{
+		{StatDay: structureDay(now.Add(-8 * 24 * time.Hour)), RequestFormat: ProtocolChat, ClientClass: ClientOther, Requests: 5},
+		{StatDay: structureDay(now.Add(-6 * 24 * time.Hour)), RequestFormat: ProtocolChat, ClientClass: ClientOther, Requests: 6},
+	})
+	require.NoError(t, err)
+	_, err = s.cleanup()
+	require.NoError(t, err)
+	_, total, err = model.ListPromptAuditFingerprints("", 0, 10)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), total)
+	require.NoError(t, model.DB.Model(&model.PromptAuditFingerprintUser{}).Where("fingerprint = ?", stale).Count(&userRows).Error)
+	assert.Zero(t, userRows)
+	kept, err := model.ListPromptAuditStructureDaily(model.PromptAuditStructureFilter{})
+	require.NoError(t, err)
+	require.Len(t, kept, 2)
+	assert.Equal(t, []int64{int64(model.PromptAuditFingerprintUserCap + 17), 6}, []int64{kept[0].Requests, kept[1].Requests})
+}
+
+func TestStructureStatsDropInsteadOfBlocking(t *testing.T) {
+	stats := newStructureStats()
+	segments := []promptSegment{{text: "question", role: "user", turn: 1}}
+	for range structureQueueSize + 3 {
+		stats.submit(structureSubject{userID: 1, protocol: ProtocolChat}, segments, 1)
+	}
+	assert.Len(t, stats.jobs, structureQueueSize)
+	assert.Equal(t, int64(3), stats.dropped.Load(), "a full queue drops the measurement")
+	assert.Equal(t, int64(structureQueueSize*len("question")), stats.queuedBytes.Load())
+
+	large := []promptSegment{{text: strings.Repeat("x", structureQueuedLimit), role: "user", turn: 1}}
+	stats.submit(structureSubject{userID: 1, protocol: ProtocolChat}, large, 1)
+	assert.Equal(t, int64(4), stats.dropped.Load(), "text beyond the byte limit is not queued")
+	stats.drain(time.Now, time.Now().Add(-time.Second))
+	assert.Len(t, stats.jobs, structureQueueSize, "nothing is analysed after the deadline")
+	stats.drain(time.Now, time.Now().Add(time.Minute))
+	assert.Zero(t, stats.queuedBytes.Load())
+	assert.Equal(t, int64(structureQueueSize), stats.observed.Load())
+
+	// More distinct fingerprints than one flush keeps: the requests are still
+	// counted, only their fingerprint updates are left out.
+	for index := range structurePendingFingerprints + 2 {
+		system := promptSegment{text: "rules " + strings.Repeat("a", index+1), role: "system"}
+		stats.submit(structureSubject{userID: 1, protocol: ProtocolChat}, []promptSegment{system, segments[0]}, 1)
+		stats.drain(time.Now, time.Now().Add(time.Minute))
+	}
+	assert.Equal(t, int64(structureQueueSize+structurePendingFingerprints+2), stats.observed.Load())
+	assert.Equal(t, int64(3), stats.fingerprintsDropped.Load(), "the 'none' fingerprint already takes one of the kept places")
+	assert.Equal(t, int64(4), stats.dropped.Load(), "left-out fingerprints are not counted as unmeasured requests")
+}
+
+func TestSystemPromptNormalizationStaysLinear(t *testing.T) {
+	assert.Equal(t, "keep <b>this</b> and that", normalizeSystemPrompt("keep <b>this</b> <env>dir</env>and<system-reminder>x</system-reminder> that"))
+	assert.Equal(t, "open <env> never closes <user_instructions> too", normalizeSystemPrompt("open <env> never closes <user_instructions> too"))
+
+	// Several megabytes of nothing but wrapped blocks, and of opening tags
+	// that never close: both must take time proportional to their length.
+	// Rescanning or copying the text per block would take hours here.
+	for _, piece := range []string{"<env></env>", "<env><system-reminder>", "<<<<"} {
+		text := strings.Repeat(piece, (4<<20)/len(piece))
+		started := time.Now()
+		fingerprint, _ := systemFingerprint(text)
+		assert.Less(t, time.Since(started), 10*time.Second, piece)
+		assert.Len(t, fingerprint, 64)
+	}
+	assert.Empty(t, normalizeSystemPrompt(strings.Repeat("<env> a </env>\n", 1000)))
+}
+
+func TestLatestUserTurnSpansAgentWrappersInsideOneMessage(t *testing.T) {
+	const body = `{"messages":[{"role":"assistant","content":"earlier answer"},{"role":"user","content":[
+		{"type":"text","text":"first part"},{"type":"text","text":"<system-reminder>note</system-reminder>"},{"type":"text","text":"second part"}]}]}`
+	snapshot, err := extractPromptSnapshot(ProtocolChat, []byte(body), prompt_audit_setting.ScanScopeLatestUser)
+	require.NoError(t, err)
+	assert.Equal(t, "first part\n\nsecond part", snapshot.Latest.text, "user text on both sides of an agent wrapper is the latest turn")
+	assert.Empty(t, snapshot.Rest.text)
 }

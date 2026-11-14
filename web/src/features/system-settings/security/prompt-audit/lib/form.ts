@@ -118,6 +118,8 @@ export const promptAuditFormSchema = z
     max_chunks_per_request: z.coerce.number().int().min(1).max(100),
     scan_scope: z.enum(['latest_user', 'user', 'all']),
     strict_jailbreak_mapping: z.boolean(),
+    structure_stats_enabled: z.boolean(),
+    structure_stats_retention_days: z.coerce.number().int().min(1).max(365),
     endpoints: z.array(endpointSchema).max(8),
   })
   .superRefine((values, context) => {
@@ -193,6 +195,8 @@ export function toPromptAuditFormValues(
     // Settings saved before these options existed read as the defaults.
     scan_scope: toScanScope(config.scan_scope),
     strict_jailbreak_mapping: config.strict_jailbreak_mapping ?? false,
+    structure_stats_enabled: config.structure_stats_enabled ?? false,
+    structure_stats_retention_days: config.structure_stats_retention_days || 30,
     endpoints: (config.endpoints ?? []).map((endpoint) => ({
       ...endpoint,
       has_token: response.has_token?.[endpoint.id] ?? false,
@@ -237,6 +241,8 @@ export function toPromptAuditConfigRequest(
       max_chunks_per_request: values.max_chunks_per_request,
       scan_scope: values.scan_scope,
       strict_jailbreak_mapping: values.strict_jailbreak_mapping,
+      structure_stats_enabled: values.structure_stats_enabled,
+      structure_stats_retention_days: values.structure_stats_retention_days,
       endpoints: values.endpoints.map((endpoint) => ({
         id: endpoint.id,
         name: endpoint.name.trim(),
