@@ -13,7 +13,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service/contentmoderation"
-	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/content_moderation_setting"
 
 	"github.com/gin-gonic/gin"
@@ -194,7 +193,7 @@ func GetContentModerationKeywordLists(c *gin.Context) {
 		return
 	}
 	views := []contentModerationKeywordListView{{
-		Name: content_moderation_setting.DefaultKeywordList, Count: len(setting.SensitiveWords), Builtin: true,
+		Name: content_moderation_setting.DefaultKeywordList, Builtin: true,
 	}}
 	for _, list := range lists {
 		words, _ := content_moderation_setting.NormalizeKeywords(string(list.Words))

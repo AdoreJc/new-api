@@ -21,7 +21,6 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
-	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/content_moderation_setting"
 
 	"github.com/gin-gonic/gin"
@@ -602,16 +601,8 @@ func TestExcerptRedactsSecrets(t *testing.T) {
 	assert.Len(t, []rune(Excerpt(strings.Repeat("a b ", 200))), maxExcerptRunes)
 }
 
-func useSensitiveWords(t *testing.T, words string) {
-	t.Helper()
-	previous := setting.SensitiveWordsToString()
-	setting.SensitiveWordsFromString(words)
-	t.Cleanup(func() { setting.SensitiveWordsFromString(previous) })
-}
-
 func TestKeywordListsMatchCaseInsensitivelyAndFollowChanges(t *testing.T) {
 	setupDB(t)
-	useSensitiveWords(t, "Banned Phrase")
 	s := newService()
 	require.NoError(t, model.SaveContentModerationKeywordList("spam", []string{"BuyNow", "免费领取"}, 100))
 	require.NoError(t, s.reloadKeywords(false))
@@ -623,9 +614,11 @@ func TestKeywordListsMatchCaseInsensitivelyAndFollowChanges(t *testing.T) {
 	}{
 		{"please buynow today", []string{"spam"}, "spam"},
 		{"现在免费领取吧", []string{"spam"}, "spam"},
-		{"a banned phrase here", []string{"spam", content_moderation_setting.DefaultKeywordList}, content_moderation_setting.DefaultKeywordList},
 		{"a banned phrase here", []string{"spam"}, ""},
+		// The built-in default list is empty since the sensitive word check
+		// was retired, and does not hide a hit in a later list.
 		{"nothing to see", []string{"spam", content_moderation_setting.DefaultKeywordList}, ""},
+		{"please buynow today", []string{content_moderation_setting.DefaultKeywordList, "spam"}, "spam"},
 		{"buynow", []string{"missing-list"}, ""},
 	}
 	for _, test := range tests {
@@ -634,16 +627,10 @@ func TestKeywordListsMatchCaseInsensitivelyAndFollowChanges(t *testing.T) {
 		assert.Equal(t, test.want != "", hit, test.text)
 	}
 
-	// The default list reads the global sensitive words in place, so an
-	// edit there applies at once without a reload.
-	setting.SensitiveWordsFromString("other words")
-	_, hit := s.matchKeyword("a banned phrase here", []string{content_moderation_setting.DefaultKeywordList})
-	assert.False(t, hit)
-
 	// A stored list change is picked up by the next reload.
 	require.NoError(t, model.SaveContentModerationKeywordList("spam", []string{"discount"}, 200))
 	require.NoError(t, s.reloadKeywords(false))
-	_, hit = s.matchKeyword("please buynow today", []string{"spam"})
+	_, hit := s.matchKeyword("please buynow today", []string{"spam"})
 	assert.False(t, hit)
 	list, _ := s.matchKeyword("big DISCOUNT", []string{"spam"})
 	assert.Equal(t, "spam", list)
@@ -667,7 +654,6 @@ func TestNormalizeKeywordsEnforcesLimits(t *testing.T) {
 func TestKeywordModes(t *testing.T) {
 	setupDB(t)
 	require.NoError(t, i18n.Init())
-	useSensitiveWords(t, "")
 	server := newModerationServer(t, okStatus, scoreBy("attack"))
 	require.NoError(t, model.SaveContentModerationKeywordList("spam", []string{"buynow", "attack"}, 100))
 
@@ -890,7 +876,6 @@ func reminderInfo(protocol string) *relaycommon.RelayInfo {
 func TestKeywordsSeeTextNextToReminders(t *testing.T) {
 	setupDB(t)
 	require.NoError(t, i18n.Init())
-	useSensitiveWords(t, "")
 	const word = "今晚打老虎"
 	server := newModerationServer(t, okStatus, scoreBy("never-flagged"))
 	require.NoError(t, model.SaveContentModerationKeywordList("tiger", []string{word}, 100))
