@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -109,8 +110,7 @@ type ContentModerationFlaggedHash struct {
 }
 
 // ContentModerationKeywordList is one named keyword list, one keyword per
-// line. The built-in "default" list is the global sensitive words and is not
-// stored here.
+// line.
 type ContentModerationKeywordList struct {
 	Id        int      `json:"id"`
 	Name      string   `json:"name" gorm:"type:varchar(64);uniqueIndex"`
@@ -143,6 +143,75 @@ func SaveContentModerationKeywordList(name string, words []string, updatedAt int
 			"words": joined, "updated_at": updatedAt, "revision": gorm.Expr("COALESCE(revision, 0) + 1"),
 		}).Error
 	})
+}
+
+// MigrateSensitiveWordsToKeywordList copies the words of the retired sensitive
+// word check into the stored keyword list "default", the name content
+// moderation settings and audit policy rules used for those words while they
+// were read in place. What matched before the upgrade keeps matching, whether
+// or not the retired check itself was switched on. Call it before
+// MigrateSensitiveWords, which deletes the option the words are read from; a
+// later start then finds nothing to copy, and a list that already exists is
+// left as it is.
+func MigrateSensitiveWordsToKeywordList() error {
+	if DB == nil {
+		return errors.New("database is not initialized")
+	}
+	var option Option
+	err := DB.Where(&Option{Key: "SensitiveWords"}).First(&option).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	// The retired check had no limits; a keyword list has, and a list over
+	// them would not load at all.
+	words := make([]string, 0)
+	seen := map[string]struct{}{}
+	skipped := 0
+	for line := range strings.SplitSeq(option.Value, "\n") {
+		word := strings.TrimSpace(line)
+		if word == "" {
+			continue
+		}
+		key := strings.ToLower(word)
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		if utf8.RuneCountInString(word) > content_moderation_setting.MaxKeywordRunes || len(words) >= content_moderation_setting.MaxKeywordsPerList {
+			skipped++
+			continue
+		}
+		seen[key] = struct{}{}
+		words = append(words, word)
+	}
+	if len(words) == 0 {
+		return nil
+	}
+	name := content_moderation_setting.DefaultKeywordList
+	created := false
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		var existing ContentModerationKeywordList
+		if err := lockForUpdate(tx).Where("name = ?", name).Limit(1).Find(&existing).Error; err != nil {
+			return err
+		}
+		if existing.Id != 0 {
+			return nil
+		}
+		created = true
+		return tx.Create(&ContentModerationKeywordList{
+			Name: name, Words: LongText(strings.Join(words, "\n")), UpdatedAt: common.GetTimestamp(), Revision: 1,
+		}).Error
+	})
+	if err != nil || !created {
+		return err
+	}
+	common.SysLog(common.LogText("copied %d sensitive words to the content moderation keyword list %s", len(words), name))
+	if skipped > 0 {
+		common.SysError(common.LogText("%d sensitive words exceed the keyword list limits and were not copied to the keyword list %s", skipped, name))
+	}
+	return nil
 }
 
 func DeleteContentModerationKeywordList(name string) (int64, error) {

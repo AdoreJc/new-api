@@ -179,22 +179,17 @@ type contentModerationKeywordListView struct {
 	Name      string `json:"name"`
 	Count     int    `json:"count"`
 	UpdatedAt int64  `json:"updated_at"`
-	// Builtin marks the "default" list: the global sensitive words, edited
-	// on the sensitive words settings page.
-	Builtin bool `json:"builtin"`
 }
 
-// GetContentModerationKeywordLists lists the built-in list and the stored
-// lists with their sizes, without the keywords.
+// GetContentModerationKeywordLists lists the stored lists with their sizes,
+// without the keywords.
 func GetContentModerationKeywordLists(c *gin.Context) {
 	lists, err := model.ListContentModerationKeywordLists()
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	views := []contentModerationKeywordListView{{
-		Name: content_moderation_setting.DefaultKeywordList, Builtin: true,
-	}}
+	views := make([]contentModerationKeywordListView, 0, len(lists))
 	for _, list := range lists {
 		words, _ := content_moderation_setting.NormalizeKeywords(string(list.Words))
 		views = append(views, contentModerationKeywordListView{Name: list.Name, Count: len(words), UpdatedAt: list.UpdatedAt})
@@ -206,10 +201,6 @@ func contentModerationKeywordListName(c *gin.Context) (string, bool) {
 	name := c.Param("name")
 	if !content_moderation_setting.ValidKeywordListName(name) {
 		common.ApiError(c, content_moderation_setting.ErrInvalidKeywordList)
-		return "", false
-	}
-	if name == content_moderation_setting.DefaultKeywordList {
-		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("The default list is the sensitive words list; edit it in the sensitive words settings"))
 		return "", false
 	}
 	return name, true

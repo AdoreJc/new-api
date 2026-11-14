@@ -379,7 +379,11 @@ func InitResources() error {
 		if err := model.MigrateRetiredFrontendOptions(); err != nil {
 			common.SysError(common.LogText("failed to migrate retired frontend options: %s", err.Error()))
 		}
-		if err := model.MigrateSensitiveWords(); err != nil {
+		// The keyword list copy reads the words the next migration deletes;
+		// when it fails the words stay where they are for the next start.
+		if err := model.MigrateSensitiveWordsToKeywordList(); err != nil {
+			common.SysError(common.LogText("failed to copy sensitive words to the content moderation keyword list: %s", err.Error()))
+		} else if err := model.MigrateSensitiveWords(); err != nil {
 			common.SysError(common.LogText("failed to migrate sensitive words: %s", err.Error()))
 		}
 	}

@@ -171,13 +171,15 @@ func TestContentModerationRoutesRequireRoot(t *testing.T) {
 	saved := send(http.MethodPut, "/api/content_moderation/keyword_lists/spam", root, `{"words":"BuyNow\nbuynow\nfree gift\n"}`)
 	require.Contains(t, saved.Body.String(), `"count":2`, saved.Body.String())
 	lists := send(http.MethodGet, "/api/content_moderation/keyword_lists", root, "")
-	assert.Contains(t, lists.Body.String(), `"name":"default"`)
+	assert.NotContains(t, lists.Body.String(), `"name":"default"`, "no list is built in")
 	assert.Contains(t, lists.Body.String(), `"name":"spam","count":2`)
 	assert.NotContains(t, lists.Body.String(), "BuyNow", "the summary carries no keywords")
-	builtin := send(http.MethodPut, "/api/content_moderation/keyword_lists/default", root, `{"words":"x"}`)
-	assert.Equal(t, http.StatusBadRequest, builtin.Code, "the default list is edited as sensitive words, not here")
 	require.NoError(t, model.LOG_DB.Where("action = ?", "content_moderation.keyword_list_save").Find(&audits).Error)
 	require.Len(t, audits, 1)
+	// The list an upgrade fills with the former sensitive words is edited
+	// like any other.
+	renamed := send(http.MethodPut, "/api/content_moderation/keyword_lists/default", root, `{"words":"x"}`)
+	assert.Contains(t, renamed.Body.String(), `"count":1`, renamed.Body.String())
 	encoded, err := common.Marshal(audits[0])
 	require.NoError(t, err)
 	assert.NotContains(t, string(encoded), "BuyNow", "the audit log records the list size, not its keywords")
