@@ -21,7 +21,6 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
-	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/content_moderation_setting"
 
 	"github.com/gin-gonic/gin"
@@ -602,18 +601,11 @@ func TestExcerptRedactsSecrets(t *testing.T) {
 	assert.Len(t, []rune(Excerpt(strings.Repeat("a b ", 200))), maxExcerptRunes)
 }
 
-func useSensitiveWords(t *testing.T, words string) {
-	t.Helper()
-	previous := setting.SensitiveWordsToString()
-	setting.SensitiveWordsFromString(words)
-	t.Cleanup(func() { setting.SensitiveWordsFromString(previous) })
-}
-
 func TestKeywordListsMatchCaseInsensitivelyAndFollowChanges(t *testing.T) {
 	setupDB(t)
-	useSensitiveWords(t, "Banned Phrase")
 	s := newService()
 	require.NoError(t, model.SaveContentModerationKeywordList("spam", []string{"BuyNow", "免费领取"}, 100))
+	require.NoError(t, model.SaveContentModerationKeywordList(content_moderation_setting.DefaultKeywordList, []string{"Banned Phrase"}, 100))
 	require.NoError(t, s.reloadKeywords(false))
 
 	tests := []struct {
@@ -634,19 +626,65 @@ func TestKeywordListsMatchCaseInsensitivelyAndFollowChanges(t *testing.T) {
 		assert.Equal(t, test.want != "", hit, test.text)
 	}
 
-	// The default list reads the global sensitive words in place, so an
-	// edit there applies at once without a reload.
-	setting.SensitiveWordsFromString("other words")
-	_, hit := s.matchKeyword("a banned phrase here", []string{content_moderation_setting.DefaultKeywordList})
-	assert.False(t, hit)
-
 	// A stored list change is picked up by the next reload.
 	require.NoError(t, model.SaveContentModerationKeywordList("spam", []string{"discount"}, 200))
 	require.NoError(t, s.reloadKeywords(false))
-	_, hit = s.matchKeyword("please buynow today", []string{"spam"})
+	_, hit := s.matchKeyword("please buynow today", []string{"spam"})
 	assert.False(t, hit)
 	list, _ := s.matchKeyword("big DISCOUNT", []string{"spam"})
 	assert.Equal(t, "spam", list)
+}
+
+// TestSensitiveWordsUpgradeKeepsDefaultListMatching: the retired sensitive
+// word check lent its words to the "default" keyword list. The upgrade copies
+// them into a stored list before the upstream migration deletes the options,
+// so a site that only used them through content moderation, with the retired
+// check switched off, keeps its keyword hits.
+func TestSensitiveWordsUpgradeKeepsDefaultListMatching(t *testing.T) {
+	setupDB(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Option{}))
+	t.Cleanup(func() { _ = model.DB.Migrator().DropTable(&model.Option{}) })
+	lists := []string{content_moderation_setting.DefaultKeywordList}
+	tooLong := strings.Repeat("x", content_moderation_setting.MaxKeywordRunes+1)
+	require.NoError(t, model.DB.Create(&[]model.Option{
+		{Key: "SensitiveWords", Value: " Banned Phrase \n\nbanned phrase\n今晚打老虎\n" + tooLong},
+		{Key: "CheckSensitiveEnabled", Value: "false"},
+		{Key: "CheckSensitiveOnPromptEnabled", Value: "false"},
+	}).Error)
+
+	// Both migrations in startup order, twice: a restart copies nothing again.
+	for range 2 {
+		require.NoError(t, model.MigrateSensitiveWordsToKeywordList())
+		require.NoError(t, model.MigrateSensitiveWords())
+	}
+	stored, err := model.ListContentModerationKeywordLists()
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Equal(t, content_moderation_setting.DefaultKeywordList, stored[0].Name)
+	assert.Equal(t, "Banned Phrase\n今晚打老虎", string(stored[0].Words), "blank, duplicate and over-long words are left out")
+	assert.EqualValues(t, 1, stored[0].Revision)
+	var remaining int64
+	require.NoError(t, model.DB.Model(&model.Option{}).Where(&model.Option{Key: "SensitiveWords"}).Count(&remaining).Error)
+	assert.Zero(t, remaining, "the upstream migration still retires the option")
+
+	s := newService()
+	require.NoError(t, s.reloadKeywords(false))
+	for _, text := range []string{"a BANNED phrase here", "听说今晚打老虎"} {
+		list, hit := s.matchKeyword(text, lists)
+		assert.True(t, hit, text)
+		assert.Equal(t, content_moderation_setting.DefaultKeywordList, list, text)
+	}
+	_, hit := s.matchKeyword("nothing to see", lists)
+	assert.False(t, hit)
+
+	// A list an administrator already keeps under the name is not replaced.
+	require.NoError(t, model.SaveContentModerationKeywordList(content_moderation_setting.DefaultKeywordList, []string{"edited"}, 200))
+	require.NoError(t, model.DB.Create(&model.Option{Key: "SensitiveWords", Value: "other words"}).Error)
+	require.NoError(t, model.MigrateSensitiveWordsToKeywordList())
+	stored, err = model.ListContentModerationKeywordLists()
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Equal(t, "edited", string(stored[0].Words))
 }
 
 func TestNormalizeKeywordsEnforcesLimits(t *testing.T) {
@@ -667,7 +705,6 @@ func TestNormalizeKeywordsEnforcesLimits(t *testing.T) {
 func TestKeywordModes(t *testing.T) {
 	setupDB(t)
 	require.NoError(t, i18n.Init())
-	useSensitiveWords(t, "")
 	server := newModerationServer(t, okStatus, scoreBy("attack"))
 	require.NoError(t, model.SaveContentModerationKeywordList("spam", []string{"buynow", "attack"}, 100))
 
@@ -890,7 +927,6 @@ func reminderInfo(protocol string) *relaycommon.RelayInfo {
 func TestKeywordsSeeTextNextToReminders(t *testing.T) {
 	setupDB(t)
 	require.NoError(t, i18n.Init())
-	useSensitiveWords(t, "")
 	const word = "今晚打老虎"
 	server := newModerationServer(t, okStatus, scoreBy("never-flagged"))
 	require.NoError(t, model.SaveContentModerationKeywordList("tiger", []string{word}, 100))

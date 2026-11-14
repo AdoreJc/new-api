@@ -32,8 +32,9 @@ const (
 	KeywordModeKeywordAndAPI = "keyword_and_api"
 	KeywordModeKeywordGated  = "keyword_gated_api"
 
-	// DefaultKeywordList names the built-in list: the global sensitive words
-	// (SensitiveWords option), read in place and never copied.
+	// DefaultKeywordList names the stored list that an upgrade fills with the
+	// words of the retired sensitive word check, which used to be read in
+	// place under this name. It is an ordinary list otherwise.
 	DefaultKeywordList    = "default"
 	MaxKeywordLists       = 50
 	MaxKeywordsPerList    = 10000

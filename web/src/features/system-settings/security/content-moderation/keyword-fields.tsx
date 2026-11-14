@@ -135,7 +135,7 @@ export function ContentModerationKeywordFields(props: {
         <h4 className='text-sm font-medium'>{t('Keyword lists')}</h4>
         <p className='text-muted-foreground text-xs'>
           {t(
-            'Matching ignores case. The default list is the sensitive words list from the content settings; its existing checks are unchanged.'
+            'Matching ignores case. An upgrade copies the words of the former sensitive words setting into the list named default.'
           )}
         </p>
       </div>
@@ -208,29 +208,25 @@ export function ContentModerationKeywordFields(props: {
                   <span className='text-muted-foreground text-xs'>
                     {t('{{count}} keywords', { count: list.count })}
                   </span>
-                  {!list.builtin && (
-                    <>
-                      <Button
-                        type='button'
-                        size='sm'
-                        variant='ghost'
-                        className='h-7 px-2'
-                        disabled={open.isPending}
-                        onClick={() => open.mutate(list.name)}
-                      >
-                        {t('Edit')}
-                      </Button>
-                      <Button
-                        type='button'
-                        size='sm'
-                        variant='ghost'
-                        className='text-destructive h-7 px-2'
-                        onClick={() => setDeleting(list.name)}
-                      >
-                        {t('Delete')}
-                      </Button>
-                    </>
-                  )}
+                  <Button
+                    type='button'
+                    size='sm'
+                    variant='ghost'
+                    className='h-7 px-2'
+                    disabled={open.isPending}
+                    onClick={() => open.mutate(list.name)}
+                  >
+                    {t('Edit')}
+                  </Button>
+                  <Button
+                    type='button'
+                    size='sm'
+                    variant='ghost'
+                    className='text-destructive h-7 px-2'
+                    onClick={() => setDeleting(list.name)}
+                  >
+                    {t('Delete')}
+                  </Button>
                 </div>
               ))}
             </div>

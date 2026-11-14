@@ -227,8 +227,6 @@ export type ContentModerationKeywordListSummary = {
   name: string
   count: number
   updated_at: number
-  /** The default list is the global sensitive words list. */
-  builtin: boolean
 }
 
 export function getContentModerationKeywordLists() {

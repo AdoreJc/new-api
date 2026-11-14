@@ -417,5 +417,6 @@ func FixAbility() (int, int, error) {
 		}
 	}
 	InitChannelCache()
+	BumpSyncTopic(SyncTopicChannels)
 	return successCount, failCount, nil
 }

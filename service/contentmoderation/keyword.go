@@ -19,25 +19,17 @@ type keywordIndex struct {
 }
 
 // matchKeyword returns the first of the given lists that has a keyword in
-// the text. The built-in "default" list is the global sensitive words,
-// matched through the same cached automaton the sensitive word check uses,
-// so the words are never copied and that check's behavior is unchanged.
+// the text. A name without a stored list matches nothing.
 func (s *Service) matchKeyword(text string, lists []string) (string, bool) {
 	if text == "" {
 		return "", false
 	}
-	var lowered []rune
 	index := s.keywords.Load()
+	if index == nil {
+		return "", false
+	}
+	var lowered []rune
 	for _, name := range lists {
-		if name == content_moderation_setting.DefaultKeywordList {
-			if hit, _ := service.SensitiveWordContains(text); hit {
-				return name, true
-			}
-			continue
-		}
-		if index == nil {
-			continue
-		}
 		machine := index.machines[name]
 		if machine == nil {
 			continue
