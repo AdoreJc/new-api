@@ -306,6 +306,10 @@ type UserSubscription struct {
 	BoundGroup string `json:"bound_group" gorm:"type:varchar(64);default:''"`
 	// Channel group before the binding, restored when the channel is released
 	BoundChannelPrevGroup string `json:"bound_channel_prev_group" gorm:"type:varchar(64);default:''"`
+	// BoundChannelPrevStatus is common.ChannelStatusManuallyDisabled when the
+	// bound channel was manually disabled before the binding, which enabled
+	// it; releasing the binding disables it again. 0 means nothing to restore.
+	BoundChannelPrevStatus int `json:"bound_channel_prev_status" gorm:"default:0"`
 	// UpgradeGroup snapshot before the binding, restored on unbind
 	BoundPrevUpgradeGroup string `json:"bound_prev_upgrade_group" gorm:"type:varchar(64);default:''"`
 
@@ -1232,6 +1236,29 @@ func ExpireDueSubscriptions(limit int) (int, error) {
 	}
 	for userId := range userIds {
 		cacheGroup := ""
+		// Channels a binding had enabled go back to manually disabled, each in
+		// a transaction of its own that starts with the channel lock (see
+		// disableExpiredBoundChannelTx).
+		var enabledBindings []UserSubscription
+		if err := DB.Where("user_id = ? AND status = ? AND end_time > 0 AND end_time <= ? AND bound_channel_id > 0 AND bound_channel_prev_status = ?",
+			userId, "active", now, common.ChannelStatusManuallyDisabled).
+			Find(&enabledBindings).Error; err != nil {
+			return expiredCount, err
+		}
+		channelDisabled := false
+		for i := range enabledBindings {
+			err := DB.Transaction(func(tx *gorm.DB) error {
+				disabled, err := disableExpiredBoundChannelTx(tx, &enabledBindings[i])
+				channelDisabled = channelDisabled || disabled
+				return err
+			})
+			if err != nil {
+				return expiredCount, err
+			}
+		}
+		if channelDisabled {
+			InitChannelCache()
+		}
 		err := DB.Transaction(func(tx *gorm.DB) error {
 			res := tx.Model(&UserSubscription{}).
 				Where("user_id = ? AND status = ? AND end_time > 0 AND end_time <= ?", userId, "active", now).

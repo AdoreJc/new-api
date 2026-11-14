@@ -113,7 +113,14 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 	reference := fmt.Sprintf("new-api-ref-%d-%d-%s", user.Id, time.Now().UnixMilli(), randstr.String(4))
 	referenceId := "ref_" + common.Sha1([]byte(reference))
 
-	payLink, err := genStripeLink(referenceId, user.StripeCustomer, user.Email, req.PaymentMethod, req.Amount, req.SuccessURL, req.CancelURL)
+	successURL, cancelURL := req.SuccessURL, req.CancelURL
+	if successURL == "" {
+		successURL = paymentReturnPath(c, "/usage-logs")
+	}
+	if cancelURL == "" {
+		cancelURL = paymentReturnPath(c, "/wallet")
+	}
+	payLink, err := genStripeLink(referenceId, user.StripeCustomer, user.Email, req.PaymentMethod, req.Amount, successURL, cancelURL)
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Stripe failed to create Checkout Session user_id=%d trade_no=%s amount=%d error=%q", id, referenceId, req.Amount, err.Error()))
 		paymentError(c, common.NewMessage("Failed to start payment"))
@@ -371,8 +378,8 @@ func sessionExpired(ctx context.Context, event stripe.Event) {
 //   - email: customer email address for new customer creation
 //   - paymentMethod: "stripe", or an alipay/wxpay method routed through Stripe
 //   - amount: quantity of units to purchase
-//   - successURL: custom URL to redirect after successful payment (empty for default)
-//   - cancelURL: custom URL to redirect when payment is canceled (empty for default)
+//   - successURL: URL to redirect after successful payment
+//   - cancelURL: URL to redirect when payment is canceled
 //
 // Returns the checkout session URL or an error if the session creation fails.
 func genStripeLink(referenceId string, customerId string, email string, paymentMethod string, amount int64, successURL string, cancelURL string) (string, error) {
@@ -392,16 +399,8 @@ func genStripeLink(referenceId string, customerId string, email string, paymentM
 }
 
 // newStripeTopUpCheckoutParams builds the Checkout Session for a wallet
-// top-up: StripePriceId × amount in payment mode. Empty redirect URLs fall back
-// to the console usage-log and wallet pages.
+// top-up: StripePriceId × amount in payment mode.
 func newStripeTopUpCheckoutParams(referenceId string, customerId string, email string, paymentMethod string, amount int64, successURL string, cancelURL string) *stripe.CheckoutSessionParams {
-	if successURL == "" {
-		successURL = paymentReturnPath("/usage-logs")
-	}
-	if cancelURL == "" {
-		cancelURL = paymentReturnPath("/wallet")
-	}
-
 	params := &stripe.CheckoutSessionParams{
 		ClientReferenceID: stripe.String(referenceId),
 		SuccessURL:        stripe.String(successURL),

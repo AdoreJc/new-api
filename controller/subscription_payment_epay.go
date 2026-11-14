@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
 	"github.com/shopspring/decimal"
@@ -99,7 +100,13 @@ func SubscriptionRequestEpay(c *gin.Context) {
 	}
 
 	callBackAddress := service.GetCallbackAddress()
-	returnUrl, err := url.Parse(callBackAddress + "/api/subscription/epay/return")
+	// The browser comes back through the alternate line the order was placed
+	// on; any other request keeps the callback address.
+	returnAddress := callBackAddress
+	if line := service.RequestServerAddress(c.Request); system_setting.IsAlternateServerAddress(line) {
+		returnAddress = line
+	}
+	returnUrl, err := url.Parse(returnAddress + "/api/subscription/epay/return")
 	if err != nil {
 		common.ApiErrorT(c, "Callback URL configuration error")
 		return
@@ -241,7 +248,7 @@ func SubscriptionEpayReturn(c *gin.Context) {
 	if c.Request.Method == "POST" {
 		// POST 请求：从 POST body 解析参数
 		if err := c.Request.ParseForm(); err != nil {
-			c.Redirect(http.StatusFound, paymentReturnPath("/wallet?pay=fail"))
+			c.Redirect(http.StatusFound, paymentReturnPath(c, "/wallet?pay=fail"))
 			return
 		}
 		params = lo.Reduce(lo.Keys(c.Request.PostForm), func(r map[string]string, t string, i int) map[string]string {
@@ -257,27 +264,27 @@ func SubscriptionEpayReturn(c *gin.Context) {
 	}
 
 	if len(params) == 0 {
-		c.Redirect(http.StatusFound, paymentReturnPath("/wallet?pay=fail"))
+		c.Redirect(http.StatusFound, paymentReturnPath(c, "/wallet?pay=fail"))
 		return
 	}
 
 	client := GetEpayClient()
 	if client == nil {
-		c.Redirect(http.StatusFound, paymentReturnPath("/wallet?pay=fail"))
+		c.Redirect(http.StatusFound, paymentReturnPath(c, "/wallet?pay=fail"))
 		return
 	}
 	verifyInfo, err := client.Verify(params)
 	if err != nil || !verifyInfo.VerifyStatus {
-		c.Redirect(http.StatusFound, paymentReturnPath("/wallet?pay=fail"))
+		c.Redirect(http.StatusFound, paymentReturnPath(c, "/wallet?pay=fail"))
 		return
 	}
 	if verifyInfo.TradeStatus == epay.StatusTradeSuccess {
 		if err := completeEpaySubscriptionOrder(c.Request.Context(), verifyInfo, c.ClientIP()); err != nil {
-			c.Redirect(http.StatusFound, paymentReturnPath("/wallet?pay=fail"))
+			c.Redirect(http.StatusFound, paymentReturnPath(c, "/wallet?pay=fail"))
 			return
 		}
-		c.Redirect(http.StatusFound, paymentReturnPath("/wallet?pay=success"))
+		c.Redirect(http.StatusFound, paymentReturnPath(c, "/wallet?pay=success"))
 		return
 	}
-	c.Redirect(http.StatusFound, paymentReturnPath("/wallet?pay=pending"))
+	c.Redirect(http.StatusFound, paymentReturnPath(c, "/wallet?pay=pending"))
 }

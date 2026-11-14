@@ -30,6 +30,9 @@ type oauthStateRequest struct {
 }
 
 type oauthFlowPayload struct {
+	// SiteAddress is the website line the flow started on; its redirect_uri
+	// must be repeated when the code is exchanged.
+	SiteAddress     string                         `json:"site_address,omitempty"`
 	AffiliateCode   string                         `json:"affiliate_code,omitempty"`
 	Verification    *service.OAuthVerificationFlow `json:"verification,omitempty"`
 	Telegram        *oauth.TelegramOAuthFlow       `json:"telegram,omitempty"`
@@ -62,10 +65,10 @@ func GenerateOAuthCode(c *gin.Context) {
 	}
 	userID := 0
 	sessionID := ""
-	flowPayload := oauthFlowPayload{AffiliateCode: request.Aff}
+	flowPayload := oauthFlowPayload{AffiliateCode: request.Aff, SiteAddress: service.RequestServerAddress(c.Request)}
 	bindingStarted := false
 	if request.Provider == "telegram" {
-		telegramFlow, err := oauth.NewTelegramOAuthFlow()
+		telegramFlow, err := oauth.NewTelegramOAuthFlow(flowPayload.SiteAddress)
 		if err != nil {
 			writeSecurityOperationError(c, err)
 			return
@@ -249,7 +252,12 @@ func HandleOAuth(c *gin.Context) {
 		})
 		return
 	}
-	// 5. Exchange code for token
+	// 5. Exchange code for token with the redirect_uri of the line the flow started on
+	// (an unreadable payload falls back to ServerAddress; later steps reject it).
+	var sitePayload oauthFlowPayload
+	if err := common.UnmarshalJsonStr(pendingFlow.Payload, &sitePayload); err == nil {
+		c.Set(oauth.SiteAddressContextKey, sitePayload.SiteAddress)
+	}
 	code := c.Query("code")
 	token, err := provider.ExchangeToken(c.Request.Context(), code, c)
 	if err != nil {

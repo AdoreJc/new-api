@@ -148,6 +148,7 @@ export type SiteSettings = {
   About: string
   HomePageContent: string
   ServerAddress: string
+  AlternateServerAddresses: string
   TaskPublicAddress: string
   'general_setting.docs_link': string
   'legal.user_agreement': string
@@ -386,6 +387,7 @@ export type OperationsSettings = {
   EmailOAuthEmail: string
   EmailOAuthFrom: string
   EmailOAuthSharedSendGranted: boolean
+  EmailOAuthRedirectURI: string
   ResendApiKey: string
   ResendKeyConfigured: boolean
   ResendFrom: string

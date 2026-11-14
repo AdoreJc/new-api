@@ -30,6 +30,8 @@ export const createEmailSchema = (t: (key: string) => string) =>
       // Read-only: set by the authorization flow.
       EmailOAuthEmail: z.string(),
       EmailOAuthSharedSendGranted: z.boolean(),
+      // Read-only: the redirect URI the server sends to the provider.
+      EmailOAuthRedirectURI: z.string(),
       // Optional address to send from instead of the authorized mailbox.
       EmailOAuthFrom: z.string(),
       ResendApiKey: z.string(),

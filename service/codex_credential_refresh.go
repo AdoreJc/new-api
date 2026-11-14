@@ -109,7 +109,7 @@ func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts Code
 
 	usedRefreshToken := oauthKey.RefreshToken
 	if code, failed := codexRefreshPermanentlyFailed(ch.Id, usedRefreshToken); failed {
-		return nil, nil, fmt.Errorf("codex channel: the refresh token was rejected (%s); authorize the account again", code)
+		return nil, nil, &CodexRefreshTokenRejectedError{Code: code}
 	}
 	res, err := RefreshCodexOAuthTokenWithProxy(refreshCtx, usedRefreshToken, ch.GetSetting().Proxy)
 	if err != nil {

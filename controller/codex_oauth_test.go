@@ -5,13 +5,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/codex"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -139,4 +143,165 @@ func TestExchangeCodexOAuthBuildsChannelKey(t *testing.T) {
 
 	replay := postJSON(t, ExchangeCodexOAuth, "/api/channel/codex/oauth/exchange", `{"session_id":"`+sessionID+`","code":"http://localhost:1455/auth/callback?code=auth-code&state=`+state+`"}`, 3, nil)
 	assert.False(t, replay.Success, "a completed session must not be reusable")
+}
+
+// postForBody runs handler and returns the whole response document and its
+// text, for failures whose fields sit beside "data".
+func postForBody(t *testing.T, handler gin.HandlerFunc, path string, body string, params gin.Params) (map[string]any, string) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = params
+	c.Set("id", 1)
+	handler(c)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var document map[string]any
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &document))
+	return document, recorder.Body.String()
+}
+
+func TestExchangeCodexOAuthReportsTheOAuthErrorCodeWithoutTheAuthorizationCode(t *testing.T) {
+	const authCode = "auth-code-secret-7f3a"
+	var answer func(w http.ResponseWriter, r *http.Request)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { answer(w, r) }))
+	defer server.Close()
+	original := service.CodexOAuthTokenURL
+	service.CodexOAuthTokenURL = server.URL + "/oauth/token"
+	t.Cleanup(func() { service.CodexOAuthTokenURL = original })
+
+	exchange := func(t *testing.T) (map[string]any, string) {
+		sessionID, state, _ := startCodexOAuth(t, 1)
+		return postForBody(t, ExchangeCodexOAuth, "/api/channel/codex/oauth/exchange",
+			`{"session_id":"`+sessionID+`","code":"http://localhost:1455/auth/callback?code=`+authCode+`&state=`+state+`"}`, nil)
+	}
+
+	t.Run("an OAuth error answer names its code", func(t *testing.T) {
+		// The description repeats the code and the verifier, as a careless
+		// upstream might; neither may come back.
+		var verifier string
+		answer = func(w http.ResponseWriter, r *http.Request) {
+			require.NoError(t, r.ParseForm())
+			verifier = r.PostForm.Get("code_verifier")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"code ` + r.PostForm.Get("code") + ` verifier ` + verifier + ` is not valid"}`))
+		}
+		document, text := exchange(t)
+		assert.Equal(t, false, document["success"])
+		assert.Equal(t, "invalid_grant", document["oauth_error_code"])
+		assert.Equal(t, "Authorization code exchange failed: OpenAI returned the error {{code}}. Generate a new authorization link and try again", document["message_key"])
+		assert.Contains(t, document["message"], "invalid_grant")
+		require.NotEmpty(t, verifier)
+		assert.NotContains(t, text, authCode)
+		assert.NotContains(t, text, verifier)
+
+		_, err := service.ExchangeCodexAuthorizationCodeWithProxy(t.Context(), authCode, "verifier-secret-91c2", "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "status=400 code=invalid_grant")
+		assert.NotContains(t, err.Error(), authCode)
+		assert.NotContains(t, err.Error(), "verifier-secret-91c2")
+	})
+
+	t.Run("a nested error object names its code", func(t *testing.T) {
+		answer = func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"code":"token_expired","message":"The authorization code has expired"}}`))
+		}
+		document, _ := exchange(t)
+		assert.Equal(t, "token_expired", document["oauth_error_code"])
+	})
+
+	t.Run("an answer without an OAuth error keeps the generic message", func(t *testing.T) {
+		answer = func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`<html>bad gateway ` + authCode + `</html>`))
+		}
+		document, text := exchange(t)
+		assert.Equal(t, "Authorization code exchange failed. Generate a new authorization link and try again", document["message_key"])
+		assert.NotContains(t, document, "oauth_error_code")
+		assert.NotContains(t, text, authCode)
+	})
+}
+
+func TestRefreshCodexChannelCredentialReportsTheOAuthErrorCodeWithoutTheToken(t *testing.T) {
+	setupSubscriptionUsageDB(t)
+	var status int
+	var body string
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		if status == 0 {
+			// Drop the connection: a network error, not an OAuth answer.
+			panic(http.ErrAbortHandler)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+	original := service.CodexOAuthTokenURL
+	service.CodexOAuthTokenURL = server.URL + "/oauth/token"
+	t.Cleanup(func() { service.CodexOAuthTokenURL = original })
+
+	// Automatic disabling is off so the refresh only reports.
+	autoBan := 0
+	seed := func(t *testing.T, refreshToken string) gin.Params {
+		channel := &model.Channel{
+			Type:    constant.ChannelTypeCodex,
+			Key:     `{"access_token":"old-access-token","refresh_token":"` + refreshToken + `","account_id":"acct-test"}`,
+			Name:    "codex-refresh-test",
+			Status:  common.ChannelStatusEnabled,
+			AutoBan: &autoBan,
+		}
+		require.NoError(t, model.DB.Create(channel).Error)
+		return gin.Params{{Key: "id", Value: strconv.Itoa(channel.Id)}}
+	}
+	refresh := func(t *testing.T, params gin.Params) (map[string]any, string) {
+		return postForBody(t, RefreshCodexChannelCredential, "/api/channel/"+params[0].Value+"/codex/refresh", "{}", params)
+	}
+
+	t.Run("a rejected refresh token asks for a new authorization, also on the next attempt", func(t *testing.T) {
+		const refreshToken = "refresh-secret-4b1d"
+		params := seed(t, refreshToken)
+		status, body = http.StatusUnauthorized, `{"error":{"code":"refresh_token_invalidated","message":"Your refresh token has been invalidated"}}`
+		calls.Store(0)
+
+		for attempt := range 2 {
+			document, text := refresh(t, params)
+			assert.Equal(t, false, document["success"], "attempt %d", attempt)
+			assert.Equal(t, "refresh_token_invalidated", document["oauth_error_code"], "attempt %d", attempt)
+			assert.Equal(t, true, document["reauthorization_required"], "attempt %d", attempt)
+			assert.Equal(t, "OpenAI rejected the refresh token ({{code}}). Authorize the account again", document["message_key"], "attempt %d", attempt)
+			assert.Equal(t, map[string]any{"code": "refresh_token_invalidated"}, document["message_params"], "attempt %d", attempt)
+			assert.NotContains(t, text, refreshToken)
+			assert.NotContains(t, text, "old-access-token")
+			assert.NotContains(t, text, "has been invalidated", "the upstream description stays in the server log")
+		}
+		assert.Equal(t, int32(1), calls.Load(), "the rejected token is not sent twice")
+	})
+
+	t.Run("another OAuth error names its code without asking for a new authorization", func(t *testing.T) {
+		const refreshToken = "refresh-secret-8e02"
+		params := seed(t, refreshToken)
+		status, body = http.StatusBadRequest, `{"error":"invalid_client","error_description":"client `+refreshToken+` unknown"}`
+
+		document, text := refresh(t, params)
+		assert.Equal(t, "invalid_client", document["oauth_error_code"])
+		assert.Equal(t, false, document["reauthorization_required"])
+		assert.Equal(t, "Failed to refresh credentials: OpenAI returned the error {{code}}", document["message_key"])
+		assert.NotContains(t, text, refreshToken)
+	})
+
+	t.Run("a failure without an OAuth error keeps the generic message", func(t *testing.T) {
+		params := seed(t, "refresh-secret-c7aa")
+		status = 0
+
+		document, _ := refresh(t, params)
+		assert.Equal(t, false, document["success"])
+		assert.Equal(t, "Failed to refresh credentials. Please try again later", document["message_key"])
+		assert.NotContains(t, document, "oauth_error_code")
+	})
 }

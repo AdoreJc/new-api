@@ -44,7 +44,7 @@ var emailOAuthAppKeys = []string{common.EmailOAuthProviderOption, common.EmailOA
 func validateEmailDeliveryOption(key, value string) error {
 	switch key {
 	case common.EmailOAuthRefreshTokenOption, common.EmailOAuthEmailOption, common.EmailOAuthScopesOption,
-		common.EmailOAuthSecretConfiguredOption, common.EmailOAuthSharedSendGrantedOption:
+		common.EmailOAuthSecretConfiguredOption, common.EmailOAuthSharedSendGrantedOption, common.EmailOAuthRedirectURIOption:
 		return common.NewMessage("This setting is managed by the mailbox authorization flow")
 	case common.EmailOAuthFromOption:
 		if err := common.ValidateEmailOAuthSender(value); err != nil {

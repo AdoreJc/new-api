@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { describe, expect, test } from 'vitest'
 
 import {
+  bindableChannelStatusNoteKey,
   boundAccountLabelKey,
   isSubscriptionBound,
   isSubscriptionUsageWindow,
@@ -41,6 +42,26 @@ describe('subscriptionBoundGroupName', () => {
     expect(subscriptionBoundGroupName({ id: 12, type: 64 })).toBe('claude-ch12')
     expect(subscriptionBoundGroupName({ id: 12, type: 57 })).toBe('codex-ch12')
     expect(subscriptionBoundGroupName({ id: 12, type: 1 })).toBe('')
+  })
+})
+
+describe('bindableChannelStatusNoteKey', () => {
+  test('a manually disabled channel says binding enables it and release disables it again', () => {
+    expect(bindableChannelStatusNoteKey({ id: 12, status: 2 }, 0)).toBe(
+      'The channel is manually disabled. Binding enables it, and releasing the binding disables it again.'
+    )
+  })
+
+  test('an auto-disabled channel asks for a new authorization, also when it is the bound one', () => {
+    const note =
+      'The channel is auto-disabled. Authorize the account again and enable it manually before it can serve requests.'
+    expect(bindableChannelStatusNoteKey({ id: 12, status: 3 }, 0)).toBe(note)
+    expect(bindableChannelStatusNoteKey({ id: 12, status: 3 }, 12)).toBe(note)
+  })
+
+  test('an enabled channel and the already bound manually disabled channel get no note', () => {
+    expect(bindableChannelStatusNoteKey({ id: 12, status: 1 }, 0)).toBe('')
+    expect(bindableChannelStatusNoteKey({ id: 12, status: 2 }, 12)).toBe('')
   })
 })
 

@@ -115,12 +115,20 @@ func TestEmailOAuthAuthorizationStoresMailboxOnce(t *testing.T) {
 			options := httptest.NewRecorder()
 			context, _ := gin.CreateTestContext(options)
 			context.Request = httptest.NewRequest(http.MethodGet, "/api/option/", nil)
+			// The console is open on an alternate line; the redirect URI to
+			// register stays the one the authorization flow sent.
+			previousAlternates := system_setting.AlternateServerAddresses()
+			system_setting.SetAlternateServerAddresses([]string{"https://line2.example.com"})
+			t.Cleanup(func() { system_setting.SetAlternateServerAddresses(previousAlternates) })
+			context.Request.Host = "line2.example.com"
+			context.Request.Header.Set("Origin", "https://line2.example.com")
 			GetOptions(context)
 			assert.NotContains(t, options.Body.String(), "refresh-granted")
 			assert.NotContains(t, options.Body.String(), "client-secret")
 			assert.NotContains(t, options.Body.String(), common.EmailOAuthRefreshTokenOption)
 			assert.Contains(t, options.Body.String(), `"key":"EmailOAuthEmail","value":"`+test.email+`"`)
 			assert.Contains(t, options.Body.String(), `"key":"EmailOAuthSecretConfigured","value":"true"`)
+			assert.Contains(t, options.Body.String(), `"key":"EmailOAuthRedirectURI","value":"`+emailOAuthTestRedirectURI+`"`)
 
 			// Replaying the same state is rejected without a second exchange.
 			replay := completeEmailOAuth(identity, body)
@@ -304,7 +312,7 @@ func TestEmailOAuthSenderOptionAcceptsOneBareAddress(t *testing.T) {
 	assert.Empty(t, common.OptionMap[common.EmailOAuthFromOption])
 	assert.Contains(t, update(common.EmailOAuthFromOption, "shared@contoso.example"), `"success":true`)
 	assert.Contains(t, update(common.EmailOAuthFromOption, ""), `"success":true`)
-	for _, key := range []string{common.EmailOAuthScopesOption, common.EmailOAuthSharedSendGrantedOption} {
+	for _, key := range []string{common.EmailOAuthScopesOption, common.EmailOAuthSharedSendGrantedOption, common.EmailOAuthRedirectURIOption} {
 		assert.Contains(t, update(key, "https://graph.microsoft.com/Mail.Send.Shared"), `"message_key":"This setting is managed by the mailbox authorization flow"`, key)
 	}
 }

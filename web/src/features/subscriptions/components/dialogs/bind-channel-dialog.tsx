@@ -30,6 +30,7 @@ import { getServerMessage } from '@/lib/server-error-message'
 import { bindSubscriptionChannel, getBindableChannels } from '../../api'
 import {
   bindableChannelLabel,
+  bindableChannelStatusNoteKey,
   subscriptionBoundGroupName,
 } from '../../lib/channel-binding'
 import type { SubscriptionBindableChannel, UserSubscription } from '../../types'
@@ -99,6 +100,9 @@ export function BindChannelDialog(props: BindChannelDialogProps) {
         ? subscription.bound_group
         : subscriptionBoundGroupName(selectedChannel)
   }
+  const statusNoteKey = selectedChannel
+    ? bindableChannelStatusNoteKey(selectedChannel, currentChannelId)
+    : ''
   const channelLeavesGroup =
     selectedChannel &&
     selectedChannel.group &&
@@ -177,6 +181,11 @@ export function BindChannelDialog(props: BindChannelDialogProps) {
         aria-label={t('Select a channel')}
         disabled={loading}
       />
+      {statusNoteKey ? (
+        <p className='text-sm' role='status'>
+          {t(statusNoteKey)}
+        </p>
+      ) : null}
       {channelLeavesGroup ? (
         <Alert>
           <AlertTitle>{t('The channel leaves its current group')}</AlertTitle>

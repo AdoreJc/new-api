@@ -3,6 +3,7 @@ package common
 import (
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -39,6 +40,32 @@ func NormalizeOrigin(raw string) (string, error) {
 		return parsedURL.Scheme + "://" + normalizedHost, nil
 	}
 	return parsedURL.Scheme + "://" + net.JoinHostPort(hostname, port), nil
+}
+
+// RequestBrowserOrigin returns the normalized origin of the page that sent a
+// browser request, from a single Origin header or else a single Referer.
+func RequestBrowserOrigin(request *http.Request) (string, bool) {
+	originValues := request.Header.Values("Origin")
+	if len(originValues) > 1 {
+		return "", false
+	}
+	if len(originValues) == 1 {
+		if strings.Contains(originValues[0], ",") {
+			return "", false
+		}
+		origin, err := NormalizeOrigin(originValues[0])
+		return origin, err == nil
+	}
+	refererValues := request.Header.Values("Referer")
+	if len(refererValues) != 1 {
+		return "", false
+	}
+	referer, err := url.Parse(strings.TrimSpace(refererValues[0]))
+	if err != nil || referer.Scheme == "" || referer.Host == "" || referer.User != nil {
+		return "", false
+	}
+	origin, err := NormalizeOrigin(referer.Scheme + "://" + referer.Host)
+	return origin, err == nil
 }
 
 func InitSessionCookieSettings() error {

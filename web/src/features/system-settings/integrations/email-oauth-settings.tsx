@@ -38,12 +38,10 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { useStatus } from '@/hooks/use-status'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { OAuthSetupGuide } from '../components/oauth-setup-guide'
 import {
-  EMAIL_OAUTH_CALLBACK_PATH,
   revokeEmailOAuthAuthorization,
   sendEmailOAuthTestMessage,
   startEmailOAuthAuthorization,
@@ -70,6 +68,7 @@ type EmailOAuthSettingsProps = {
     | 'EmailOAuthEmail'
     | 'EmailOAuthFrom'
     | 'EmailOAuthSharedSendGranted'
+    | 'EmailOAuthRedirectURI'
   >
 }
 
@@ -77,7 +76,6 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const form = useFormContext<EmailFormValues>()
-  const { status } = useStatus()
   const [confirmRevoke, setConfirmRevoke] = useState(false)
   const [oauthProvider, clientId, tenant, secret, sender] = useWatch({
     control: form.control,
@@ -92,13 +90,9 @@ export function EmailOAuthSettings(props: EmailOAuthSettingsProps) {
 
   const authorizedEmail = props.saved.EmailOAuthEmail
   const authorized = authorizedEmail !== ''
-  const serverAddress =
-    typeof status?.server_address === 'string'
-      ? status.server_address.trim().replace(/\/+$/, '')
-      : ''
-  const redirectURI = serverAddress
-    ? `${serverAddress}${EMAIL_OAUTH_CALLBACK_PATH}`
-    : ''
+  // The server builds the redirect URI from the main server address, so the
+  // value to register never depends on the address this page was opened on.
+  const redirectURI = props.saved.EmailOAuthRedirectURI
   const appUnsaved =
     oauthProvider !== props.saved.EmailOAuthProvider ||
     clientId.trim() !== props.saved.EmailOAuthClientId.trim() ||

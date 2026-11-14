@@ -141,12 +141,12 @@ func TestStripeSubscriptionCheckoutParams(t *testing.T) {
 	configureStripeForTest(t, true, stripeRoutedPayMethods())
 	plan := &model.SubscriptionPlan{Title: "Pro", PriceAmount: 19.99, Currency: "USD", StripePriceId: "price_recurring"}
 
-	recurring := newStripeSubscriptionCheckoutParams("sub_ref_1", "", "", plan.StripePriceId)
+	recurring := newStripeSubscriptionCheckoutParams("sub_ref_1", "", "", plan.StripePriceId, "https://line2.example.com/wallet")
 	assert.Equal(t, "subscription", *recurring.Mode)
 	assert.Equal(t, "price_recurring", *recurring.LineItems[0].Price)
 	assert.Empty(t, recurring.PaymentMethodTypes)
 
-	oneTime, err := newStripeSubscriptionPaymentCheckoutParams("sub_ref_2", "", "", "wxpay", plan)
+	oneTime, err := newStripeSubscriptionPaymentCheckoutParams("sub_ref_2", "", "", "wxpay", plan, "https://line2.example.com/wallet")
 	require.NoError(t, err)
 	assert.Equal(t, "payment", *oneTime.Mode, "WeChat Pay cannot back a Stripe subscription")
 	require.Len(t, oneTime.LineItems, 1)
@@ -161,7 +161,7 @@ func TestStripeSubscriptionCheckoutParams(t *testing.T) {
 	assert.Equal(t, "web", *oneTime.PaymentMethodOptions.WeChatPay.Client)
 
 	plan.PriceAmount = 0.004
-	_, err = newStripeSubscriptionPaymentCheckoutParams("sub_ref_3", "", "", "alipay", plan)
+	_, err = newStripeSubscriptionPaymentCheckoutParams("sub_ref_3", "", "", "alipay", plan, "https://line2.example.com/wallet")
 	require.Error(t, err)
 	assert.Equal(t, "Plan amount is too low", err.Error())
 }

@@ -1,12 +1,10 @@
 package controller
 
 import (
-	"strings"
-
-	"github.com/QuantumNous/new-api/setting/system_setting"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-gonic/gin"
 )
 
-func paymentReturnPath(suffix string) string {
-	base := strings.TrimRight(system_setting.ServerAddress, "/")
-	return base + suffix
+func paymentReturnPath(c *gin.Context, suffix string) string {
+	return service.RequestServerAddress(c.Request) + suffix
 }
