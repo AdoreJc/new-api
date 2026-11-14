@@ -19,10 +19,6 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-// Matches controller/email_oauth.go. The provider redirects back to the email
-// settings page, which posts code and state with the console session.
-export const EMAIL_OAUTH_CALLBACK_PATH = '/system-settings/operations/email'
-
 type BackendBody<T> = { success: boolean; message?: string; data?: T }
 
 // sender is the sender address about to be saved; its permission is

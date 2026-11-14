@@ -623,16 +623,18 @@ func TestSecurityLoginRequiresConfiguredFactors(t *testing.T) {
 }
 
 type authFlowTestOAuthProvider struct {
-	exchangeErr   error
-	userInfoErr   error
-	exchangeCalls int
-	userInfoCalls int
+	exchangeErr     error
+	userInfoErr     error
+	exchangeCalls   int
+	userInfoCalls   int
+	callbackAddress string
 }
 
 func (*authFlowTestOAuthProvider) GetName() string { return "Auth Flow Test" }
 func (*authFlowTestOAuthProvider) IsEnabled() bool { return true }
-func (provider *authFlowTestOAuthProvider) ExchangeToken(context.Context, string, *gin.Context) (*oauth.OAuthToken, error) {
+func (provider *authFlowTestOAuthProvider) ExchangeToken(_ context.Context, _ string, c *gin.Context) (*oauth.OAuthToken, error) {
 	provider.exchangeCalls++
+	provider.callbackAddress = oauth.CallbackAddress(c)
 	if provider.exchangeErr != nil {
 		return nil, provider.exchangeErr
 	}
@@ -700,6 +702,68 @@ func TestGenerateOAuthCodeCarriesAffiliateInLoginFlow(t *testing.T) {
 	assert.Equal(t, "invite-code", payload.AffiliateCode)
 	assert.Zero(t, flow.UserId)
 	assert.Empty(t, flow.SessionId)
+}
+
+func TestOAuthCallbackRepeatsRedirectAddressOfStartingLine(t *testing.T) {
+	provider := setupAuthFlowControllerTest(t)
+	previousAddress, previousAlternates := system_setting.ServerAddress, system_setting.AlternateServerAddresses()
+	system_setting.ServerAddress = "https://main.example.com"
+	system_setting.SetAlternateServerAddresses([]string{"https://line2.example.com"})
+	t.Cleanup(func() {
+		system_setting.ServerAddress = previousAddress
+		system_setting.SetAlternateServerAddresses(previousAlternates)
+	})
+	router := gin.New()
+	router.POST("/api/oauth/state", GenerateOAuthCode)
+	router.GET("/api/oauth/:provider", HandleOAuth)
+
+	for _, test := range []struct {
+		name     string
+		origin   string
+		expected string
+	}{
+		{name: "alternate line", origin: "https://line2.example.com", expected: "https://line2.example.com"},
+		{name: "primary line", origin: "https://main.example.com", expected: "https://main.example.com"},
+		{name: "unconfigured origin", origin: "https://attacker.example", expected: "https://main.example.com"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/oauth/state", strings.NewReader(`{"provider":"auth-flow-test","intent":"login"}`))
+			request.Host = "main.example.com"
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Origin", test.origin)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			var result struct {
+				Data struct {
+					FlowToken string `json:"flow_token"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			require.NotEmpty(t, result.Data.FlowToken, response.Body.String())
+
+			// The callback reaches the server through another line; the flow decides.
+			request = httptest.NewRequest(http.MethodGet, "/api/oauth/auth-flow-test?state="+result.Data.FlowToken+"&code=test", nil)
+			request.Host = "main.example.com"
+			router.ServeHTTP(httptest.NewRecorder(), request)
+			assert.Equal(t, test.expected, provider.callbackAddress)
+		})
+	}
+
+	// A line removed after the flow started is no longer used as redirect_uri.
+	request := httptest.NewRequest(http.MethodPost, "/api/oauth/state", strings.NewReader(`{"provider":"auth-flow-test","intent":"login"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "https://line2.example.com")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	var result struct {
+		Data struct {
+			FlowToken string `json:"flow_token"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	system_setting.SetAlternateServerAddresses(nil)
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/oauth/auth-flow-test?state="+result.Data.FlowToken+"&code=test", nil))
+	assert.Equal(t, "https://main.example.com", provider.callbackAddress)
 }
 
 func TestGenerateOAuthCodeBindsFlowToAuthenticatedSession(t *testing.T) {

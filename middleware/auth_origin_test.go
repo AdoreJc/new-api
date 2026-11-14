@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
@@ -132,4 +133,45 @@ func TestSessionCookieOriginGuardDoesNotTrustForwardedProtoFromClient(t *testing
 	router.ServeHTTP(response, request)
 
 	assert.Equal(t, http.StatusForbidden, response.Code)
+}
+
+func TestSessionCookieOriginGuardTrustsOnlyHTTPSAlternateAddresses(t *testing.T) {
+	previousSecure, previousTrustedURLs := common.SessionCookieSecure, common.SessionCookieTrustedURLs
+	previousAddress, previousAlternates := system_setting.ServerAddress, system_setting.AlternateServerAddresses()
+	common.SessionCookieSecure = true
+	common.SessionCookieTrustedURLs = []string{"https://trusted.example.com"}
+	system_setting.ServerAddress = "https://main.example.com"
+	t.Cleanup(func() {
+		common.SessionCookieSecure, common.SessionCookieTrustedURLs = previousSecure, previousTrustedURLs
+		system_setting.ServerAddress = previousAddress
+		system_setting.SetAlternateServerAddresses(previousAlternates)
+	})
+
+	// Without alternate addresses the guard decides as before: ServerAddress is
+	// not trusted unless it is the request origin or in SESSION_COOKIE_TRUSTED_URL.
+	system_setting.SetAlternateServerAddresses(nil)
+	for _, origin := range []string{"https://main.example.com", "https://line2.example.com"} {
+		assert.Equal(t, http.StatusForbidden, runOriginGuardRequest(t, origin, "").Code, origin)
+	}
+	assert.Equal(t, http.StatusNoContent, runOriginGuardRequest(t, "https://panel.example.com", "").Code)
+
+	system_setting.SetAlternateServerAddresses([]string{"https://line2.example.com", "http://line3.example.com"})
+	tests := []struct {
+		name     string
+		origin   string
+		referer  string
+		expected int
+	}{
+		{name: "https alternate address", origin: "https://line2.example.com", expected: http.StatusNoContent},
+		{name: "https alternate address by referer", referer: "https://line2.example.com/profile", expected: http.StatusNoContent},
+		{name: "http alternate address", origin: "http://line3.example.com", expected: http.StatusForbidden},
+		{name: "server address is not an alternate", origin: "https://main.example.com", expected: http.StatusForbidden},
+		{name: "suffix of an alternate address", origin: "https://line2.example.com.evil.test", expected: http.StatusForbidden},
+		{name: "unconfigured origin", origin: "https://attacker.example", expected: http.StatusForbidden},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.expected, runOriginGuardRequest(t, test.origin, test.referer).Code)
+		})
+	}
 }
