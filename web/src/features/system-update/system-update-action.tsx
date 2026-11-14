@@ -39,6 +39,8 @@ type SystemUpdateActionProps = {
   /** Version labels expand when the header's system-brand container has room. */
   presentation?: 'action' | 'version'
   compact?: boolean
+  /** Render nothing when the current version is unknown (public pages). */
+  hideWhenVersionUnknown?: boolean
 }
 
 export function SystemUpdateAction(props: SystemUpdateActionProps) {
@@ -55,7 +57,9 @@ function AdminSystemUpdateAction(props: SystemUpdateActionProps) {
   const [open, setOpen] = useState(false)
   const compact = props.compact ?? true
   const versionPresentation = props.presentation === 'version'
-  const version = update.currentVersion?.trim() || t('Unknown version')
+  const knownVersion = update.currentVersion?.trim()
+  const version = knownVersion || t('Unknown version')
+  if (props.hideWhenVersionUnknown && !knownVersion) return null
   const label = update.shouldNotify
     ? t('Update available')
     : t('Check for updates')

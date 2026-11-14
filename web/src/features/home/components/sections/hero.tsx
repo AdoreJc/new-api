@@ -48,10 +48,11 @@ const MoreIcon = () => (
 export function Hero(props: HeroProps) {
   const { t } = useTranslation()
   const { status } = useStatus()
-  const docsUrl =
-    (status?.docs_link as string | undefined) || 'https://docs.newapi.pro'
+  const systemName = (status?.system_name as string | undefined)?.trim()
+  const docsUrl = (status?.docs_link as string | undefined)?.trim()
 
   const renderDocsButton = () => {
+    if (!docsUrl) return null
     const isExternal = docsUrl.startsWith('http')
     if (isExternal) {
       return (
@@ -111,25 +112,32 @@ export function Hero(props: HeroProps) {
               <span className='absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75' />
               <span className='relative inline-flex size-1.5 rounded-full bg-blue-500 dark:bg-blue-400' />
             </span>
-            <span>{t('AI Application Infrastructure Foundation')}</span>
+            <span>{t('Unified API gateway and SaaS platform')}</span>
           </div>
 
+          {systemName && (
+            <p
+              className='landing-animate-fade-up text-[clamp(2.75rem,6vw,4.25rem)] leading-none font-extrabold tracking-tight'
+              style={{ animationDelay: '30ms' }}
+            >
+              {systemName}
+            </p>
+          )}
           <h1
-            className='landing-animate-fade-up text-[clamp(2.25rem,4.5vw,3.25rem)] leading-[1.15] font-bold tracking-tight'
+            className='landing-animate-fade-up mt-4 text-[clamp(1.5rem,3vw,2.25rem)] leading-[1.2] font-bold tracking-tight'
             style={{ animationDelay: '60ms' }}
           >
-            {t('Unified API Gateway for')}
-            <br />
+            {t('Unified API Gateway for')}{' '}
             <span className='bg-gradient-to-r from-blue-400 via-violet-400 to-purple-500 bg-clip-text text-transparent'>
               {t('Vast Range of AI Models')}
             </span>
           </h1>
           <p
-            className='landing-animate-fade-up text-muted-foreground/80 mt-5 max-w-xl text-base leading-relaxed opacity-0 md:text-[15px]'
+            className='landing-animate-fade-up text-muted-foreground mt-5 max-w-xl text-base leading-relaxed opacity-0'
             style={{ animationDelay: '120ms' }}
           >
             {t(
-              'Access a vast selection of models via a standard, unified API protocol. Power AI applications, manage digital assets, and connect the Future.'
+              'A unified API gateway and SaaS platform for managing, routing, monitoring, and analyzing access to and use of AI models and APIs.'
             )}
           </p>
 
@@ -180,7 +188,7 @@ export function Hero(props: HeroProps) {
               </span>
               <p className='text-muted-foreground/60 text-xs leading-relaxed'>
                 {t(
-                  'Supports one-click configuration and perfectly adapts to NewAPI multi-protocol configuration.'
+                  'Supports one-click configuration for popular AI clients and standard API protocols.'
                 )}
               </p>
             </div>
