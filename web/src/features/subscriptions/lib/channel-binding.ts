@@ -64,6 +64,32 @@ export function bindableChannelLabel(
   return base
 }
 
+const CHANNEL_STATUS_MANUALLY_DISABLED = 2
+const CHANNEL_STATUS_AUTO_DISABLED = 3
+
+/**
+ * i18n key of the note shown when the channel picked for a binding is
+ * disabled, '' when there is nothing to say. Binding enables a manually
+ * disabled channel and the release disables it again; an auto-disabled
+ * channel keeps its status. Selecting the channel that is already bound
+ * changes nothing, so a manually disabled one gets no note.
+ */
+export function bindableChannelStatusNoteKey(
+  channel: Pick<SubscriptionBindableChannel, 'id' | 'status'>,
+  currentChannelId: number
+): string {
+  if (channel.status === CHANNEL_STATUS_AUTO_DISABLED) {
+    return 'The channel is auto-disabled. Authorize the account again and enable it manually before it can serve requests.'
+  }
+  if (
+    channel.status === CHANNEL_STATUS_MANUALLY_DISABLED &&
+    channel.id !== currentChannelId
+  ) {
+    return 'The channel is manually disabled. Binding enables it, and releasing the binding disables it again.'
+  }
+  return ''
+}
+
 const BOUND_GROUP_PREFIXES: Record<number, string> = {
   [BOUND_CHANNEL_TYPE_CLAUDE_OAUTH]: 'claude-ch',
   [BOUND_CHANNEL_TYPE_CODEX]: 'codex-ch',

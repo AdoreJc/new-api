@@ -8297,7 +8297,14 @@
     "Last redemption (any source)": "Lần dùng gần nhất (mọi nguồn)",
     "Redemption in progress": "Lần dùng đang chạy",
     "Automatic redemptions in the last 7 days": "Số lần dùng tự động trong 7 ngày qua",
-    "Interrupted redemption (outcome unknown, still counted)": "Lần dùng bị gián đoạn (chưa rõ kết quả, vẫn được tính)"
+    "Interrupted redemption (outcome unknown, still counted)": "Lần dùng bị gián đoạn (chưa rõ kết quả, vẫn được tính)",
+    "The channel is manually disabled. Binding enables it, and releasing the binding disables it again.": "Kênh đang bị vô hiệu hóa thủ công. Liên kết sẽ bật kênh, và khi giải phóng liên kết kênh sẽ bị vô hiệu hóa trở lại.",
+    "The channel is auto-disabled. Authorize the account again and enable it manually before it can serve requests.": "Kênh đang bị vô hiệu hóa tự động. Hãy ủy quyền lại tài khoản và bật kênh thủ công trước khi kênh có thể xử lý yêu cầu.",
+    "Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected. The channel was manually disabled and has been enabled; it will be disabled again when the binding is released": "Yêu cầu cho các mô hình trên kênh đã liên kết được định tuyến tới nhóm riêng {{group}}; các yêu cầu khác không bị ảnh hưởng. Kênh trước đó bị vô hiệu hóa thủ công và đã được bật; kênh sẽ bị vô hiệu hóa trở lại khi liên kết được giải phóng",
+    "Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected. The channel is auto-disabled and cannot serve requests: authorize the account again, then enable the channel manually": "Yêu cầu cho các mô hình trên kênh đã liên kết được định tuyến tới nhóm riêng {{group}}; các yêu cầu khác không bị ảnh hưởng. Kênh đang bị vô hiệu hóa tự động và không thể xử lý yêu cầu: hãy ủy quyền lại tài khoản, sau đó bật kênh thủ công",
+    "OpenAI rejected the refresh token ({{code}}). Authorize the account again": "OpenAI đã từ chối refresh token ({{code}}). Hãy ủy quyền lại tài khoản",
+    "Failed to refresh credentials: OpenAI returned the error {{code}}": "Làm mới thông tin xác thực thất bại: OpenAI trả về lỗi {{code}}",
+    "Authorization code exchange failed: OpenAI returned the error {{code}}. Generate a new authorization link and try again": "Trao đổi mã ủy quyền thất bại: OpenAI trả về lỗi {{code}}. Hãy tạo liên kết ủy quyền mới và thử lại"
   },
   "Requested groups": "Nhóm được yêu cầu",
   "Group the token asked for, for example auto": "Nhóm mà token yêu cầu, ví dụ auto",

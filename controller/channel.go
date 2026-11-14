@@ -718,7 +718,19 @@ func RefreshCodexChannelCredential(c *gin.Context) {
 	oauthKey, ch, err := service.RefreshCodexChannelCredential(ctx, channelId, service.CodexCredentialRefreshOptions{ResetCaches: true})
 	if err != nil {
 		common.SysError(common.LogText("failed to refresh codex channel credential: %s", err.Error()))
-		common.ApiErrorT(c, "Failed to refresh credentials. Please try again later")
+		code, reauthorize, ok := service.CodexOAuthErrorCode(err)
+		if !ok {
+			common.ApiErrorT(c, "Failed to refresh credentials. Please try again later")
+			return
+		}
+		key := "Failed to refresh credentials: OpenAI returned the error {{code}}"
+		if reauthorize {
+			key = "OpenAI rejected the refresh token ({{code}}). Authorize the account again"
+		}
+		common.ApiErrorStatus(c, http.StatusOK, common.NewMessage(key, map[string]any{"code": code}), gin.H{
+			"oauth_error_code":         code,
+			"reauthorization_required": reauthorize,
+		})
 		return
 	}
 
