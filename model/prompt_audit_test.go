@@ -2,8 +2,10 @@ package model
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -209,4 +211,66 @@ func TestPromptAuditDeletionHash(t *testing.T) {
 
 	_, err := PromptAuditEventFilter{KeywordFields: "password"}.DeletionHash(9)
 	assert.ErrorIs(t, err, ErrPromptAuditInvalidKeywordField)
+}
+
+// Several nodes flush request structure statistics at the same moment, each
+// in its own transaction: every node has a fingerprint of its own, so nothing
+// orders the transactions before they reach the daily counters, whose keys
+// none of them has stored yet. Each round is flushed a second time, when the
+// rows exist. Every flush must succeed on its first attempt and no counter
+// may be lost.
+func TestPromptAuditStructureStatsConcurrentFirstFlushes(t *testing.T) {
+	const nodes, rounds = 8, 40
+	for _, dialect := range []string{"mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			withPromptAuditEventDB(t, dialect, nil)
+			tables := []any{&PromptAuditFingerprint{}, &PromptAuditFingerprintUser{}, &PromptAuditStructureDaily{}}
+			require.NoError(t, DB.Migrator().DropTable(tables...))
+			require.NoError(t, DB.AutoMigrate(tables...))
+			t.Cleanup(func() { _ = DB.Migrator().DropTable(tables...) })
+
+			for flush := range rounds * 2 {
+				round := flush / 2
+				start := make(chan struct{})
+				errs := make([]error, nodes)
+				var wg sync.WaitGroup
+				for node := range nodes {
+					wg.Go(func() {
+						<-start
+						fingerprint := fmt.Sprintf("%032d%032d", round, node)
+						daily := make([]*PromptAuditStructureDaily, 0, 3)
+						for _, format := range []string{"openai_chat", "anthropic_messages", "gemini"} {
+							daily = append(daily, &PromptAuditStructureDaily{StatDay: 20260101 + round, RequestFormat: format,
+								ClientClass: "other", Requests: 1, TrailingAssistant: 2})
+						}
+						_, errs[node] = applyPromptAuditStructureStatsOnce([]*PromptAuditFingerprintDelta{{
+							Fingerprint: fingerprint, PrefixHash: fingerprint, FirstSeenAt: 1, LastSeenAt: 2, Requests: 1,
+							UserIds: []int{node + 1}, RequestFormat: "openai_chat", ClientClass: "other",
+						}}, daily)
+					})
+				}
+				close(start)
+				wg.Wait()
+				for node, err := range errs {
+					require.NoError(t, err, "flush %d node %d", flush, node)
+				}
+			}
+
+			days, err := ListPromptAuditStructureDaily(PromptAuditStructureFilter{})
+			require.NoError(t, err)
+			require.Len(t, days, rounds)
+			for _, day := range days {
+				assert.Equal(t, []int64{nodes * 6, nodes * 12}, []int64{day.Requests, day.TrailingAssistant}, "day %d", day.StatDay)
+			}
+			var fingerprints []PromptAuditFingerprint
+			require.NoError(t, DB.Find(&fingerprints).Error)
+			require.Len(t, fingerprints, nodes*rounds)
+			for _, fingerprint := range fingerprints {
+				assert.Equal(t, []int64{2, 1}, []int64{fingerprint.RequestCount, int64(fingerprint.UserCount)}, fingerprint.Fingerprint)
+			}
+			var userRows int64
+			require.NoError(t, DB.Model(&PromptAuditFingerprintUser{}).Count(&userRows).Error)
+			assert.Equal(t, int64(nodes*rounds), userRows)
+		})
+	}
 }

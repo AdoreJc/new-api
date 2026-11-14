@@ -2,8 +2,12 @@ package model
 
 import (
 	"cmp"
+	"errors"
 	"slices"
+	"time"
 
+	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -24,6 +28,9 @@ const (
 	PromptAuditFingerprintMaxRows = 100000
 
 	promptAuditStructureBatchSize = 200
+	// promptAuditStructureWriteRetries is how often a batch that hit a
+	// deadlock or lock timeout is written again.
+	promptAuditStructureWriteRetries = 3
 )
 
 // PromptAuditFingerprint aggregates the requests that share one normalized
@@ -126,9 +133,36 @@ type PromptAuditFingerprintDelta struct {
 // tables in one transaction, so SQLite takes its write lock once. Counters
 // are added with column arithmetic, which keeps several nodes correct. It
 // returns how many new fingerprints were left out because the table is full.
+// A batch the database rejected as a deadlock or lock timeout is tried again
+// a few times before it is given up.
 func ApplyPromptAuditStructureStats(fingerprints []*PromptAuditFingerprintDelta, daily []*PromptAuditStructureDaily) (int, error) {
-	// Rows are written in one order on every node, so concurrent flushes
-	// take their row locks in the same order and cannot deadlock.
+	for attempt := 0; ; attempt++ {
+		skipped, err := applyPromptAuditStructureStatsOnce(fingerprints, daily)
+		if err == nil || attempt >= promptAuditStructureWriteRetries || !isPromptAuditStructureLockConflict(err) {
+			return skipped, err
+		}
+		time.Sleep(time.Duration(attempt+1) * 50 * time.Millisecond)
+	}
+}
+
+// isPromptAuditStructureLockConflict reports a transaction the database
+// rolled back because of a deadlock, a serialization failure or a lock wait
+// timeout; running it again can succeed.
+func isPromptAuditStructureLockConflict(err error) bool {
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) {
+		return mysqlErr.Number == 1213 || mysqlErr.Number == 1205
+	}
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && (pgErr.Code == "40P01" || pgErr.Code == "40001")
+}
+
+func applyPromptAuditStructureStatsOnce(fingerprints []*PromptAuditFingerprintDelta, daily []*PromptAuditStructureDaily) (int, error) {
+	// Rows are written in one order on every node and every write is an
+	// insert, an update of an existing row or a single upsert statement, so
+	// concurrent flushes wait for each other instead of deadlocking in the
+	// cases tested. The database can still report a deadlock; the caller
+	// retries those.
 	fingerprints = slices.SortedFunc(slices.Values(fingerprints), func(a, b *PromptAuditFingerprintDelta) int {
 		return cmp.Compare(a.Fingerprint, b.Fingerprint)
 	})
@@ -196,7 +230,7 @@ func ApplyPromptAuditStructureStats(fingerprints []*PromptAuditFingerprintDelta,
 				return err
 			}
 			added := make([]PromptAuditFingerprintUser, 0, len(delta.UserIds))
-			for _, userId := range delta.UserIds {
+			for _, userId := range slices.Sorted(slices.Values(delta.UserIds)) {
 				if len(stored)+len(added) >= PromptAuditFingerprintUserCap {
 					break
 				}
@@ -215,35 +249,27 @@ func ApplyPromptAuditStructureStats(fingerprints []*PromptAuditFingerprintDelta,
 				}
 			}
 		}
+		// One upsert statement per row: an UPDATE of a missing row followed by
+		// an INSERT makes two transactions wait for each other's gap lock on
+		// MySQL.
 		for _, counters := range daily {
 			added := make(map[string]any)
 			for column, value := range counters.counters() {
 				if value != 0 {
-					added[column] = gorm.Expr(column+" + ?", value)
+					added[column] = gorm.Expr("prompt_audit_structure_daily."+column+" + ?", value)
 				}
 			}
 			if len(added) == 0 {
 				continue
 			}
-			key := tx.Model(&PromptAuditStructureDaily{}).Where("stat_day = ? AND request_format = ? AND client_class = ?",
-				counters.StatDay, counters.RequestFormat, counters.ClientClass)
-			updated := key.Session(&gorm.Session{}).Updates(added)
-			if updated.Error != nil {
-				return updated.Error
-			}
-			if updated.RowsAffected > 0 {
-				continue
-			}
 			row := *counters
 			row.Id = 0
-			created := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row)
-			if created.Error != nil {
-				return created.Error
-			}
-			if created.RowsAffected == 0 {
-				if err := key.Session(&gorm.Session{}).Updates(added).Error; err != nil {
-					return err
-				}
+			err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "stat_day"}, {Name: "request_format"}, {Name: "client_class"}},
+				DoUpdates: clause.Assignments(added),
+			}).Create(&row).Error
+			if err != nil {
+				return err
 			}
 		}
 		return nil
