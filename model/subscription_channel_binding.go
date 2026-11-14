@@ -141,6 +141,12 @@ type SubscriptionChannelBindingChange struct {
 	// Group is the dedicated group of the binding after a bind, "" after an
 	// unbind.
 	Group string
+	// EnabledChannelId is the manually disabled channel a bind enabled, 0
+	// when it enabled none.
+	EnabledChannelId int
+	// ChannelAutoDisabled is set when the bound channel is auto-disabled; a
+	// bind leaves that status alone.
+	ChannelAutoDisabled bool
 }
 
 func isUserSubscriptionActive(sub *UserSubscription, now int64) bool {
@@ -204,21 +210,37 @@ func lockBindableChannelTx(tx *gorm.DB, channelId int) (*Channel, error) {
 	return &channel, nil
 }
 
-func setChannelGroupTx(tx *gorm.DB, channelId int, group string) error {
-	if err := tx.Model(&Channel{}).Where("id = ?", channelId).Update("group", group).Error; err != nil {
-		return err
-	}
+// setChannelGroupTx moves the channel into group and rebuilds its abilities.
+// A non-zero status is written with the group, with the status_reason and
+// status_time bookkeeping of UpdateChannelStatus, so the rebuilt abilities
+// carry it; 0 keeps the current status.
+func setChannelGroupTx(tx *gorm.DB, channelId int, group string, status int) error {
 	var channel Channel
 	if err := tx.Where("id = ?", channelId).First(&channel).Error; err != nil {
+		return err
+	}
+	updates := map[string]any{"group": group}
+	channel.Group = group
+	if status != 0 && status != channel.Status {
+		info := channel.GetOtherInfo()
+		info["status_reason"] = "subscription binding"
+		info["status_time"] = common.GetTimestamp()
+		channel.SetOtherInfo(info)
+		channel.Status = status
+		updates["status"] = channel.Status
+		updates["other_info"] = channel.OtherInfo
+	}
+	if err := tx.Model(&Channel{}).Where("id = ?", channelId).Updates(updates).Error; err != nil {
 		return err
 	}
 	return channel.UpdateAbilities(tx)
 }
 
 // releaseBoundChannelTx moves the bound channel back to the group it had
-// before the binding. The channel is left alone when an administrator has
-// already moved it out of the dedicated group. The subscription fields are
-// not touched.
+// before the binding, and back to manually disabled when the binding had
+// enabled it (BoundChannelPrevStatus). The channel is left alone when an
+// administrator has already moved it out of the dedicated group. The
+// subscription fields are not touched.
 func releaseBoundChannelTx(tx *gorm.DB, sub *UserSubscription) (bool, error) {
 	if sub == nil || sub.BoundChannelId <= 0 {
 		return false, nil
@@ -238,7 +260,53 @@ func releaseBoundChannelTx(tx *gorm.DB, sub *UserSubscription) (bool, error) {
 	if target == "" || target == channel.Group {
 		target = "default"
 	}
-	if err := setChannelGroupTx(tx, channel.Id, target); err != nil {
+	status := 0
+	if sub.BoundChannelPrevStatus == common.ChannelStatusManuallyDisabled {
+		status = common.ChannelStatusManuallyDisabled
+	}
+	if err := setChannelGroupTx(tx, channel.Id, target, status); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// disableExpiredBoundChannelTx returns the channel of a subscription that is
+// expiring to manually disabled when the binding had enabled it. The channel
+// stays parked in its dedicated group and the subscription keeps pointing at
+// it with its restore mark, as for any expired binding.
+//
+// sub is a snapshot read without a lock, so a renewal may have been bound to
+// the channel since. The channel row is locked first and the subscription is
+// read again under that lock: a bind rewrites the subscriptions pointing at a
+// channel only while holding the channel's lock. tx must not have read
+// anything before this call (a MySQL transaction keeps the view of its first
+// plain read), and no subscription row is locked or written here, so this
+// cannot deadlock with a bind (channel, then subscriptions) or a release
+// (subscription, then channel).
+func disableExpiredBoundChannelTx(tx *gorm.DB, sub *UserSubscription) (bool, error) {
+	if sub == nil || sub.BoundChannelId <= 0 || sub.BoundChannelPrevStatus != common.ChannelStatusManuallyDisabled {
+		return false, nil
+	}
+	var channel Channel
+	err := lockForUpdate(tx).Where("id = ?", sub.BoundChannelId).First(&channel).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var current UserSubscription
+	if err := tx.Select("id", "bound_channel_id", "bound_group", "bound_channel_prev_status").
+		Where("id = ?", sub.Id).Limit(1).Find(&current).Error; err != nil {
+		return false, err
+	}
+	if current.BoundChannelId != channel.Id || current.BoundChannelPrevStatus != common.ChannelStatusManuallyDisabled {
+		return false, nil
+	}
+	if !isSubscriptionBoundGroupOf(&current, channel.Group) || channel.Status == common.ChannelStatusManuallyDisabled {
+		return false, nil
+	}
+	if err := setChannelGroupTx(tx, channel.Id, channel.Group, common.ChannelStatusManuallyDisabled); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -256,11 +324,12 @@ func clearSubscriptionChannelBindingTx(tx *gorm.DB, sub *UserSubscription) (bool
 		return false, err
 	}
 	if err := tx.Model(&UserSubscription{}).Where("id = ?", sub.Id).Updates(map[string]any{
-		"bound_channel_id":         0,
-		"bound_group":              "",
-		"bound_channel_prev_group": "",
-		"bound_prev_upgrade_group": "",
-		"updated_at":               common.GetTimestamp(),
+		"bound_channel_id":          0,
+		"bound_group":               "",
+		"bound_channel_prev_group":  "",
+		"bound_channel_prev_status": 0,
+		"bound_prev_upgrade_group":  "",
+		"updated_at":                common.GetTimestamp(),
 	}).Error; err != nil {
 		return false, err
 	}
@@ -283,7 +352,10 @@ func bindSubscriptionChannelTx(tx *gorm.DB, sub *UserSubscription, channelId int
 	if err != nil {
 		return nil, err
 	}
-	change := &SubscriptionChannelBindingChange{UserId: sub.UserId}
+	change := &SubscriptionChannelBindingChange{
+		UserId:              sub.UserId,
+		ChannelAutoDisabled: channel.Status == common.ChannelStatusAutoDisabled,
+	}
 	if sub.BoundChannelId == channel.Id {
 		change.Group = sub.BoundGroup
 		if change.Group == "" {
@@ -312,10 +384,15 @@ func bindSubscriptionChannelTx(tx *gorm.DB, sub *UserSubscription, channelId int
 		}
 	}
 
-	// Where the channel goes back to when released. A channel still parked in
-	// its dedicated group (current or legacy name) by an ended subscription
-	// keeps that older origin.
+	// Where the channel goes back to when released, and whether it goes back
+	// to manually disabled. A channel still parked in its dedicated group
+	// (current or legacy name) by an ended subscription keeps that older
+	// origin.
 	prevChannelGroup := strings.TrimSpace(channel.Group)
+	prevChannelStatus := 0
+	if channel.Status == common.ChannelStatusManuallyDisabled {
+		prevChannelStatus = common.ChannelStatusManuallyDisabled
+	}
 	if isChannelSubscriptionBoundGroup(prevChannelGroup, channel.Id) {
 		var lastBinding UserSubscription
 		query := tx.Where("bound_channel_id = ? AND id <> ?", channel.Id, sub.Id).
@@ -324,6 +401,9 @@ func bindSubscriptionChannelTx(tx *gorm.DB, sub *UserSubscription, channelId int
 			return nil, query.Error
 		}
 		prevChannelGroup = strings.TrimSpace(lastBinding.BoundChannelPrevGroup)
+		if lastBinding.BoundChannelPrevStatus == common.ChannelStatusManuallyDisabled {
+			prevChannelStatus = common.ChannelStatusManuallyDisabled
+		}
 	}
 	if prevChannelGroup == "" || isChannelSubscriptionBoundGroup(prevChannelGroup, channel.Id) {
 		prevChannelGroup = "default"
@@ -333,16 +413,24 @@ func bindSubscriptionChannelTx(tx *gorm.DB, sub *UserSubscription, channelId int
 	if err := tx.Model(&UserSubscription{}).
 		Where("bound_channel_id = ? AND id <> ?", channel.Id, sub.Id).
 		Updates(map[string]any{
-			"bound_channel_id":         0,
-			"bound_group":              "",
-			"bound_channel_prev_group": "",
-			"bound_prev_upgrade_group": "",
-			"updated_at":               common.GetTimestamp(),
+			"bound_channel_id":          0,
+			"bound_group":               "",
+			"bound_channel_prev_group":  "",
+			"bound_channel_prev_status": 0,
+			"bound_prev_upgrade_group":  "",
+			"updated_at":                common.GetTimestamp(),
 		}).Error; err != nil {
 		return nil, err
 	}
 
-	if err := setChannelGroupTx(tx, channel.Id, dedicated); err != nil {
+	// A manually disabled channel is enabled for the binding; an auto-disabled
+	// one has rejected credentials and stays as it is.
+	status := 0
+	if channel.Status == common.ChannelStatusManuallyDisabled {
+		status = common.ChannelStatusEnabled
+		change.EnabledChannelId = channel.Id
+	}
+	if err := setChannelGroupTx(tx, channel.Id, dedicated, status); err != nil {
 		return nil, err
 	}
 	change.ChannelChanged = true
@@ -351,6 +439,7 @@ func bindSubscriptionChannelTx(tx *gorm.DB, sub *UserSubscription, channelId int
 	sub.BoundChannelId = channel.Id
 	sub.BoundGroup = dedicated
 	sub.BoundChannelPrevGroup = prevChannelGroup
+	sub.BoundChannelPrevStatus = prevChannelStatus
 	sub.BoundPrevUpgradeGroup = ""
 	if err := tx.Save(sub).Error; err != nil {
 		return nil, err
@@ -378,6 +467,7 @@ func unbindSubscriptionChannelTx(tx *gorm.DB, sub *UserSubscription) (*Subscript
 	sub.BoundChannelId = 0
 	sub.BoundGroup = ""
 	sub.BoundChannelPrevGroup = ""
+	sub.BoundChannelPrevStatus = 0
 	sub.BoundPrevUpgradeGroup = ""
 	if err := tx.Save(sub).Error; err != nil {
 		return nil, err
@@ -414,6 +504,10 @@ func applySubscriptionChannelBindingChange(change *SubscriptionChannelBindingCha
 	if change == nil {
 		return
 	}
+	if change.EnabledChannelId > 0 {
+		// As in UpdateChannelStatus, enabling ends a usage-limit cooldown.
+		ClearCodexChannelCooldown(change.EnabledChannelId)
+	}
 	if change.ChannelChanged {
 		InitChannelCache()
 	}
@@ -424,7 +518,15 @@ func subscriptionBindingNotice(change *SubscriptionChannelBindingChange) *common
 	if change == nil || change.Group == "" {
 		return nil
 	}
-	return common.NewMessage("Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected", map[string]any{"group": change.Group})
+	params := map[string]any{"group": change.Group}
+	switch {
+	case change.ChannelAutoDisabled:
+		return common.NewMessage("Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected. The channel is auto-disabled and cannot serve requests: authorize the account again, then enable the channel manually", params)
+	case change.EnabledChannelId > 0:
+		return common.NewMessage("Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected. The channel was manually disabled and has been enabled; it will be disabled again when the binding is released", params)
+	default:
+		return common.NewMessage("Requests for models on the bound channel are routed to the dedicated group {{group}}; other requests are not affected", params)
+	}
 }
 
 // restoreSubscriptionUpgradeGroupFromBinding undoes what a bind made before

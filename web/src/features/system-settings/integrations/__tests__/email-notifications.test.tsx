@@ -44,6 +44,7 @@ function Fixture() {
             EmailOAuthEmail: '',
             EmailOAuthFrom: '',
             EmailOAuthSharedSendGranted: false,
+            EmailOAuthRedirectURI: '',
             ResendApiKey: '',
             ResendKeyConfigured: false,
             ResendFrom: '',

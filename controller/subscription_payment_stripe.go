@@ -98,11 +98,12 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 	reference := fmt.Sprintf("sub-stripe-ref-%d-%d-%s", user.Id, time.Now().UnixMilli(), randstr.String(4))
 	referenceId := "sub_ref_" + common.Sha1([]byte(reference))
 
+	returnURL := paymentReturnPath(c, "/wallet")
 	var params *stripe.CheckoutSessionParams
 	if recurring {
-		params = newStripeSubscriptionCheckoutParams(referenceId, user.StripeCustomer, user.Email, plan.StripePriceId)
+		params = newStripeSubscriptionCheckoutParams(referenceId, user.StripeCustomer, user.Email, plan.StripePriceId, returnURL)
 	} else {
-		params, err = newStripeSubscriptionPaymentCheckoutParams(referenceId, user.StripeCustomer, user.Email, paymentMethod, plan)
+		params, err = newStripeSubscriptionPaymentCheckoutParams(referenceId, user.StripeCustomer, user.Email, paymentMethod, plan, returnURL)
 		if err != nil {
 			common.ApiError(c, err)
 			return
@@ -141,12 +142,13 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 }
 
 // newStripeSubscriptionCheckoutParams buys a plan through its recurring Stripe
-// price in subscription mode.
-func newStripeSubscriptionCheckoutParams(referenceId string, customerId string, email string, priceId string) *stripe.CheckoutSessionParams {
+// price in subscription mode. returnURL is the console page Checkout sends the
+// browser back to.
+func newStripeSubscriptionCheckoutParams(referenceId string, customerId string, email string, priceId string, returnURL string) *stripe.CheckoutSessionParams {
 	params := &stripe.CheckoutSessionParams{
 		ClientReferenceID: stripe.String(referenceId),
-		SuccessURL:        stripe.String(paymentReturnPath("/wallet")),
-		CancelURL:         stripe.String(paymentReturnPath("/wallet")),
+		SuccessURL:        stripe.String(returnURL),
+		CancelURL:         stripe.String(returnURL),
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
 			{
 				Price:    stripe.String(priceId),
@@ -164,15 +166,15 @@ func newStripeSubscriptionCheckoutParams(referenceId string, customerId string, 
 // plan's list price in USD (plans are always priced in USD, the same amount the
 // order records as Money), not the plan's recurring StripePriceId, which
 // payment mode cannot use. The webhook completes it as a subscription order.
-func newStripeSubscriptionPaymentCheckoutParams(referenceId string, customerId string, email string, paymentMethod string, plan *model.SubscriptionPlan) (*stripe.CheckoutSessionParams, error) {
+func newStripeSubscriptionPaymentCheckoutParams(referenceId string, customerId string, email string, paymentMethod string, plan *model.SubscriptionPlan, returnURL string) (*stripe.CheckoutSessionParams, error) {
 	unitAmount := decimal.NewFromFloat(plan.PriceAmount).Mul(decimal.NewFromInt(100)).Round(0)
 	if unitAmount.LessThan(decimal.NewFromInt(1)) {
 		return nil, common.NewMessage("Plan amount is too low")
 	}
 	params := &stripe.CheckoutSessionParams{
 		ClientReferenceID: stripe.String(referenceId),
-		SuccessURL:        stripe.String(paymentReturnPath("/wallet")),
-		CancelURL:         stripe.String(paymentReturnPath("/wallet")),
+		SuccessURL:        stripe.String(returnURL),
+		CancelURL:         stripe.String(returnURL),
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
 			{
 				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{

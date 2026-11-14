@@ -41,6 +41,9 @@ const defaults: EmailValues = {
   EmailOAuthEmail: '',
   EmailOAuthFrom: '',
   EmailOAuthSharedSendGranted: false,
+  // What the server reports it sends to the provider (main server address).
+  EmailOAuthRedirectURI:
+    'https://console.example/system-settings/operations/email',
   ResendApiKey: '',
   ResendKeyConfigured: false,
   ResendFrom: '',
@@ -75,7 +78,9 @@ function renderEmail(values: Partial<EmailValues> = {}) {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   client.setQueryData(STATUS_QUERY_KEY, {
-    server_address: 'https://console.example/',
+    // The console is open on another website line; the redirect URI to
+    // register must not follow it.
+    server_address: 'https://line2.example/',
   })
   render(
     <QueryClientProvider client={client}>

@@ -100,6 +100,7 @@ func InitOptionMap() {
 	common.OptionMap["SystemName"] = common.SystemName
 	common.OptionMap["Logo"] = common.Logo
 	common.OptionMap["ServerAddress"] = ""
+	common.OptionMap["AlternateServerAddresses"] = ""
 	common.OptionMap["TaskPublicAddress"] = system_setting.TaskPublicAddress
 	common.OptionMap["WorkerUrl"] = system_setting.WorkerUrl
 	common.OptionMap["WorkerValidKey"] = system_setting.WorkerValidKey
@@ -285,6 +286,10 @@ func validateOptionValue(key string, value string) error {
 	}
 	if key == "MaxTokenAutoGroups" {
 		return setting.ValidateMaxTokenAutoGroups(value)
+	}
+	if key == "AlternateServerAddresses" {
+		_, err := system_setting.ParseAlternateServerAddresses(value)
+		return err
 	}
 	if err := system_setting.ValidateSiteContentI18nOption(key, value); err != nil {
 		return err
@@ -546,6 +551,11 @@ func updateOptionMap(key string, value string) (err error) {
 		common.SMTPToken = value
 	case "ServerAddress":
 		system_setting.ServerAddress = value
+	case "AlternateServerAddresses":
+		var addresses []string
+		if addresses, err = system_setting.ParseAlternateServerAddresses(value); err == nil {
+			system_setting.SetAlternateServerAddresses(addresses)
+		}
 	case "TaskPublicAddress":
 		system_setting.TaskPublicAddress = value
 	case "WorkerUrl":

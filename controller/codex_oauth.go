@@ -70,7 +70,14 @@ func ExchangeCodexOAuth(c *gin.Context) {
 	res, err := service.ExchangeCodexAuthorizationCodeWithProxy(ctx, code, session.Verifier, proxy)
 	if err != nil {
 		common.SysError(common.LogText("codex oauth code exchange failed: %s", err.Error()))
-		common.ApiErrorT(c, "Authorization code exchange failed. Generate a new authorization link and try again")
+		oauthCode, _, ok := service.CodexOAuthErrorCode(err)
+		if !ok {
+			common.ApiErrorT(c, "Authorization code exchange failed. Generate a new authorization link and try again")
+			return
+		}
+		common.ApiErrorStatus(c, http.StatusOK,
+			common.NewMessage("Authorization code exchange failed: OpenAI returned the error {{code}}. Generate a new authorization link and try again", map[string]any{"code": oauthCode}),
+			gin.H{"oauth_error_code": oauthCode})
 		return
 	}
 

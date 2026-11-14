@@ -2,10 +2,29 @@ package oauth
 
 import (
 	"context"
+	"strings"
 
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 )
+
+// SiteAddressContextKey carries the website address recorded in the OAuth
+// flow when it started, so the token request repeats the redirect_uri the
+// browser was sent to.
+const SiteAddressContextKey = "oauth_site_address"
+
+// CallbackAddress returns the website address an OAuth callback belongs to.
+// The recorded address is used only while it is still configured; flows from
+// before multiple addresses existed fall back to ServerAddress.
+func CallbackAddress(c *gin.Context) string {
+	if c != nil {
+		if address := c.GetString(SiteAddressContextKey); system_setting.IsConfiguredServerAddress(address) {
+			return strings.TrimRight(address, "/")
+		}
+	}
+	return strings.TrimRight(system_setting.ServerAddress, "/")
+}
 
 // Provider defines the interface for OAuth providers
 type Provider interface {

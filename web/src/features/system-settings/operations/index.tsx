@@ -42,6 +42,7 @@ const defaultOperationsSettings: OperationsSettings = {
   EmailOAuthEmail: '',
   EmailOAuthFrom: '',
   EmailOAuthSharedSendGranted: false,
+  EmailOAuthRedirectURI: '',
   ResendApiKey: '',
   ResendKeyConfigured: false,
   ResendFrom: '',

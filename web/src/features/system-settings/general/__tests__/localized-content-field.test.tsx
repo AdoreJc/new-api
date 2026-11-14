@@ -43,6 +43,7 @@ function Fixture(props: { userAgreementTranslations: string }) {
           defaultValues={{
             SystemName: 'New API',
             ServerAddress: '',
+            AlternateServerAddresses: '',
             TaskPublicAddress: '',
             Logo: '',
             Footer: '',
