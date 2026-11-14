@@ -77,6 +77,7 @@ const OPERATIONS_SECTIONS = [
           EmailOAuthEmail: settings.EmailOAuthEmail,
           EmailOAuthFrom: settings.EmailOAuthFrom,
           EmailOAuthSharedSendGranted: settings.EmailOAuthSharedSendGranted,
+          EmailOAuthRedirectURI: settings.EmailOAuthRedirectURI,
           ResendApiKey: settings.ResendApiKey,
           ResendKeyConfigured: settings.ResendKeyConfigured,
           ResendFrom: settings.ResendFrom,

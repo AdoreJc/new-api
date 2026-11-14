@@ -35,11 +35,12 @@ func TestPaymentReturnPathUsesDefaultDashboardRoutes(t *testing.T) {
 }
 
 func TestPaymentReturnPathFollowsConfiguredLineOnly(t *testing.T) {
-	previousAddress, previousAlternates := system_setting.ServerAddress, system_setting.AlternateServerAddresses
+	previousAddress, previousAlternates := system_setting.ServerAddress, system_setting.AlternateServerAddresses()
 	system_setting.ServerAddress = "https://main.example.com"
-	system_setting.AlternateServerAddresses = []string{"https://line2.example.com"}
+	system_setting.SetAlternateServerAddresses([]string{"https://line2.example.com"})
 	t.Cleanup(func() {
-		system_setting.ServerAddress, system_setting.AlternateServerAddresses = previousAddress, previousAlternates
+		system_setting.ServerAddress = previousAddress
+		system_setting.SetAlternateServerAddresses(previousAlternates)
 	})
 
 	for _, test := range []struct {
@@ -84,9 +85,9 @@ func TestPaymentReturnPathFollowsConfiguredLineOnly(t *testing.T) {
 func TestSubscriptionEpayReturnFollowsAlternateLineAndNotifyStays(t *testing.T) {
 	setupSubscriptionEpayTest(t, 7.3)
 	createEpayTestPlan(t, 10)
-	previousAlternates := system_setting.AlternateServerAddresses
-	system_setting.AlternateServerAddresses = []string{"https://line2.example.com"}
-	t.Cleanup(func() { system_setting.AlternateServerAddresses = previousAlternates })
+	previousAlternates := system_setting.AlternateServerAddresses()
+	system_setting.SetAlternateServerAddresses([]string{"https://line2.example.com"})
+	t.Cleanup(func() { system_setting.SetAlternateServerAddresses(previousAlternates) })
 	gin.SetMode(gin.TestMode)
 
 	for _, test := range []struct {

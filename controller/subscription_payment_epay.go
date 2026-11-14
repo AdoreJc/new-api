@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"slices"
 	"time"
 
 	"github.com/Calcium-Ion/go-epay/epay"
@@ -104,7 +103,7 @@ func SubscriptionRequestEpay(c *gin.Context) {
 	// The browser comes back through the alternate line the order was placed
 	// on; any other request keeps the callback address.
 	returnAddress := callBackAddress
-	if line := service.RequestServerAddress(c.Request); slices.Contains(system_setting.AlternateServerAddresses, line) {
+	if line := service.RequestServerAddress(c.Request); system_setting.IsAlternateServerAddress(line) {
 		returnAddress = line
 	}
 	returnUrl, err := url.Parse(returnAddress + "/api/subscription/epay/return")

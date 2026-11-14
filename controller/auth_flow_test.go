@@ -706,11 +706,12 @@ func TestGenerateOAuthCodeCarriesAffiliateInLoginFlow(t *testing.T) {
 
 func TestOAuthCallbackRepeatsRedirectAddressOfStartingLine(t *testing.T) {
 	provider := setupAuthFlowControllerTest(t)
-	previousAddress, previousAlternates := system_setting.ServerAddress, system_setting.AlternateServerAddresses
+	previousAddress, previousAlternates := system_setting.ServerAddress, system_setting.AlternateServerAddresses()
 	system_setting.ServerAddress = "https://main.example.com"
-	system_setting.AlternateServerAddresses = []string{"https://line2.example.com"}
+	system_setting.SetAlternateServerAddresses([]string{"https://line2.example.com"})
 	t.Cleanup(func() {
-		system_setting.ServerAddress, system_setting.AlternateServerAddresses = previousAddress, previousAlternates
+		system_setting.ServerAddress = previousAddress
+		system_setting.SetAlternateServerAddresses(previousAlternates)
 	})
 	router := gin.New()
 	router.POST("/api/oauth/state", GenerateOAuthCode)
@@ -760,7 +761,7 @@ func TestOAuthCallbackRepeatsRedirectAddressOfStartingLine(t *testing.T) {
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
-	system_setting.AlternateServerAddresses = nil
+	system_setting.SetAlternateServerAddresses(nil)
 	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/oauth/auth-flow-test?state="+result.Data.FlowToken+"&code=test", nil))
 	assert.Equal(t, "https://main.example.com", provider.callbackAddress)
 }

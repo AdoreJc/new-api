@@ -5,14 +5,37 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync/atomic"
 
 	"github.com/QuantumNous/new-api/common"
 )
 
-// AlternateServerAddresses holds the normalized origins of the extra website
+// alternateServerAddresses holds the normalized origins of the extra website
 // lines users may open besides ServerAddress. Only these exact origins may
 // replace ServerAddress in links and OAuth redirects built for a request.
-var AlternateServerAddresses []string
+// Requests read it while the option sync replaces it, hence the atomic pointer.
+var alternateServerAddresses atomic.Pointer[[]string]
+
+// AlternateServerAddresses returns the configured alternate origins. The
+// returned slice must not be modified.
+func AlternateServerAddresses() []string {
+	if addresses := alternateServerAddresses.Load(); addresses != nil {
+		return *addresses
+	}
+	return nil
+}
+
+// SetAlternateServerAddresses replaces the alternate origins with the result
+// of ParseAlternateServerAddresses.
+func SetAlternateServerAddresses(addresses []string) {
+	alternateServerAddresses.Store(&addresses)
+}
+
+// IsAlternateServerAddress reports whether origin is exactly one of the
+// configured alternate origins. ServerAddress itself is not one of them.
+func IsAlternateServerAddress(origin string) bool {
+	return slices.Contains(AlternateServerAddresses(), origin)
+}
 
 // ParseAlternateServerAddresses accepts origins separated by commas or line
 // breaks. Paths and wildcards are rejected and duplicates dropped, so a
@@ -49,7 +72,7 @@ func MatchServerAddress(origin string) string {
 			return primary
 		}
 	}
-	if slices.Contains(AlternateServerAddresses, origin) {
+	if IsAlternateServerAddress(origin) {
 		return origin
 	}
 	return ""
@@ -59,5 +82,5 @@ func MatchServerAddress(origin string) string {
 // or one of the alternate addresses, ignoring a trailing slash.
 func IsConfiguredServerAddress(address string) bool {
 	address = strings.TrimRight(address, "/")
-	return address != "" && (address == strings.TrimRight(ServerAddress, "/") || slices.Contains(AlternateServerAddresses, address))
+	return address != "" && (address == strings.TrimRight(ServerAddress, "/") || IsAlternateServerAddress(address))
 }

@@ -48,7 +48,7 @@ func isAllowedSessionOrigin(request *http.Request, origin string) bool {
 			return true
 		}
 	}
-	// Website lines configured by the administrator are trusted the same way as
-	// SESSION_COOKIE_TRUSTED_URL, but only over HTTPS like that list.
-	return strings.HasPrefix(origin, "https://") && system_setting.MatchServerAddress(origin) != ""
+	// Alternate website lines configured by the administrator are trusted the
+	// same way as SESSION_COOKIE_TRUSTED_URL, but only over HTTPS like that list.
+	return strings.HasPrefix(origin, "https://") && system_setting.IsAlternateServerAddress(origin)
 }

@@ -552,7 +552,10 @@ func updateOptionMap(key string, value string) (err error) {
 	case "ServerAddress":
 		system_setting.ServerAddress = value
 	case "AlternateServerAddresses":
-		system_setting.AlternateServerAddresses, err = system_setting.ParseAlternateServerAddresses(value)
+		var addresses []string
+		if addresses, err = system_setting.ParseAlternateServerAddresses(value); err == nil {
+			system_setting.SetAlternateServerAddresses(addresses)
+		}
 	case "TaskPublicAddress":
 		system_setting.TaskPublicAddress = value
 	case "WorkerUrl":

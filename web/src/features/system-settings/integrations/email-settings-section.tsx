@@ -365,6 +365,7 @@ export function EmailSettingsSection({
                 EmailOAuthFrom: defaultValues.EmailOAuthFrom,
                 EmailOAuthSharedSendGranted:
                   defaultValues.EmailOAuthSharedSendGranted,
+                EmailOAuthRedirectURI: defaultValues.EmailOAuthRedirectURI,
               }}
             />
           )}

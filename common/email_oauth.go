@@ -60,6 +60,10 @@ const (
 	// are derived for the console only.
 	EmailOAuthSecretConfiguredOption  = "EmailOAuthSecretConfigured"
 	EmailOAuthSharedSendGrantedOption = "EmailOAuthSharedSendGranted"
+	// EmailOAuthRedirectURIOption shows the console the redirect URI the
+	// authorization flow sends, so the one registered with the provider is
+	// the one in use whichever website address the console was opened on.
+	EmailOAuthRedirectURIOption = "EmailOAuthRedirectURI"
 )
 
 // EmailOAuthEndpoints holds every provider URL so tests can point them at a

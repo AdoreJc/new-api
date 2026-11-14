@@ -41,6 +41,7 @@ const defaults: EmailValues = {
   EmailOAuthEmail: '',
   EmailOAuthFrom: '',
   EmailOAuthSharedSendGranted: false,
+  EmailOAuthRedirectURI: '',
   ResendApiKey: '',
   ResendKeyConfigured: true,
   ResendFrom: 'notify@example.com',

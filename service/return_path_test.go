@@ -30,11 +30,12 @@ func TestParseAlternateServerAddresses(t *testing.T) {
 }
 
 func TestRequestServerAddressOnlySelectsConfiguredLines(t *testing.T) {
-	previousAddress, previousAlternates := system_setting.ServerAddress, system_setting.AlternateServerAddresses
+	previousAddress, previousAlternates := system_setting.ServerAddress, system_setting.AlternateServerAddresses()
 	system_setting.ServerAddress = "https://main.example.com/console/"
-	system_setting.AlternateServerAddresses = []string{"https://line2.example.com", "http://10.0.0.8:3000"}
+	system_setting.SetAlternateServerAddresses([]string{"https://line2.example.com", "http://10.0.0.8:3000"})
 	t.Cleanup(func() {
-		system_setting.ServerAddress, system_setting.AlternateServerAddresses = previousAddress, previousAlternates
+		system_setting.ServerAddress = previousAddress
+		system_setting.SetAlternateServerAddresses(previousAlternates)
 	})
 
 	tests := []struct {

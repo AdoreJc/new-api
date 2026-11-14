@@ -384,6 +384,7 @@ export type OperationsSettings = {
   EmailOAuthEmail: string
   EmailOAuthFrom: string
   EmailOAuthSharedSendGranted: boolean
+  EmailOAuthRedirectURI: string
   ResendApiKey: string
   ResendKeyConfigured: boolean
   ResendFrom: string
