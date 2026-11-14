@@ -32,6 +32,7 @@ type PaymentValues = PaymentProps['defaultValues']
 
 const defaults: PaymentValues = {
   PayAddress: 'https://pay.example.com',
+  EpayEnabled: true,
   EpayId: '1001',
   EpayKey: '',
   EpaySignType: 'MD5',
@@ -43,16 +44,19 @@ const defaults: PaymentValues = {
   PayMethods: '[]',
   AmountOptions: '[]',
   AmountDiscount: '{}',
+  StripeEnabled: true,
   StripeApiSecret: '',
   StripeWebhookSecret: '',
   StripePriceId: '',
   StripeUnitPrice: 8,
   StripeMinTopUp: 1,
   StripePromotionCodesEnabled: false,
+  CreemEnabled: true,
   CreemApiKey: '',
   CreemWebhookSecret: '',
   CreemTestMode: false,
   CreemProducts: '[]',
+  WaffoPancakeEnabled: true,
 }
 
 function PaymentFixture(props: { values: PaymentValues }) {
